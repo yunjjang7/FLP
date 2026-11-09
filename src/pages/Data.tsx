@@ -114,6 +114,10 @@ function ProfileForm() {
               {n('nationalPensionAge', '국민연금 개시 나이', '세', selfYear(p.nationalPensionAge))}
               {n('privatePension', '개인·퇴직연금 월액', '만원', '정기 수령액. 계좌 잔액은 자산에 입력')}
               {n('privatePensionAge', '개인연금 개시 나이', '세', selfYear(p.privatePensionAge))}
+              {n('birthMonth', '출생 월', '월', monthHint(p.birthMonth))}
+              <Labeled label="국민연금 연 인상률" hint={p.npGrowth === undefined ? `지금은 물가(${p.inflation}%)와 같게 계산` : `명목 · 물가 ${p.inflation}%`}>
+                <NumberField value={p.npGrowth ?? p.inflation} unit="%" step={0.1} onChange={(v) => save({ npGrowth: v })} />
+              </Labeled>
             </div>
           </div>
           <div className="rounded-xl border border-line p-3">
@@ -122,7 +126,7 @@ function ProfileForm() {
               {n('spouseBirthYear', '출생연도', '년', hasSpouse ? `본인보다 ${Math.abs(p.spouseBirthYear - p.birthYear)}살 ${p.spouseBirthYear > p.birthYear ? '적음' : p.spouseBirthYear < p.birthYear ? '많음' : '같음'}` : '0이면 배우자 없음(본인 나이로 계산)')}
               {n('spouseIncome', '세후 월소득', '만원', '가구 월소득 중 배우자 몫')}
               {n('spouseRetireAge', '은퇴 나이', '세', spouseYear(p.spouseRetireAge ?? 0))}
-              <div aria-hidden />
+              {n('spouseBirthMonth', '출생 월', '월', monthHint(p.spouseBirthMonth))}
               {n('spousePension', '국민연금 월액', '만원', '국민연금공단 예상액')}
               {n('spousePensionAge', '국민연금 개시 나이', '세', spouseYear(p.spousePensionAge))}
               {n('spousePrivatePension', '개인·퇴직연금 월액', '만원', '정기 수령액')}
@@ -464,6 +468,12 @@ function yearNoHint(a: Asset, p: Profile, nowYear: number) {
   if (n < 1) return `${a.pensionYear1 ? '' : '비우면 55세 · '}${year1}년부터 수령`;
   const limit = pensionLimit(a.amount, n);
   return `올해 ${n}년차 · 한도 ${limit === Infinity ? '없음' : won(limit)}`;
+}
+
+/** 출생 월 안내: 국민연금 첫해 수령 개월 수 */
+function monthHint(m?: number) {
+  const k = Math.round(m ?? 0);
+  return k >= 1 && k <= 12 ? `국민연금 첫해 ${12 - k}개월(생일 다음 달부터)` : '0이면 국민연금 첫해도 12개월';
 }
 
 function BackupPanel() {

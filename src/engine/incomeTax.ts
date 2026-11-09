@@ -1,5 +1,5 @@
 import type { ContribPlan, IncomeTaxSettings, Profile } from '../types';
-import { spouseToSelf } from './goals';
+import { npTerms, spouseToSelf } from './goals';
 import { incomeValue, type IncomeStream } from './montecarlo';
 
 /** 종합소득세·건보료 기본값(2026년 기준 요율) */
@@ -78,6 +78,10 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
   const rents: IncomeStream[] = (profile.incomes ?? [])
     .filter((i) => i.rent)
     .map((i) => ({ startAge: toSelf(i.startAge, i.owner), endAge: i.endAge > 0 ? toSelf(i.endAge, i.owner) : undefined, annual: i.monthly * 12, growth: i.growth, step: i.step, baseAge: currentAge }));
+  const npStreams: IncomeStream[] = [
+    { startAge: profile.nationalPensionAge, annual: profile.nationalPension * 12, ...npTerms(profile, profile.birthMonth, currentAge) },
+    { startAge: spouseToSelf(profile, profile.spousePensionAge), annual: profile.spouseBirthYear > 0 ? profile.spousePension * 12 : 0, ...npTerms(profile, profile.spouseBirthMonth, currentAge) },
+  ];
   const net = Math.max(1, s.npNet) / 100;
   const share = s.rentSpouseShare / 100;
   const keep = 1 - s.rentExpense / 100;
@@ -97,9 +101,8 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     const rent = rents.reduce((a, r) => a + incomeValue(r, age, profile.inflation), 0) * defl;
     const rentSpouse = rent * share * keep;
     const rentSelf = rent * (1 - share) * keep;
-    const npSelf = profile.nationalPension > 0 && age >= profile.nationalPensionAge ? (profile.nationalPension * 12 * defl) / net : 0;
-    const spouseAge = profile.spouseBirthYear > 0 ? year - profile.spouseBirthYear : -1;
-    const npSpouse = profile.spousePension > 0 && spouseAge >= profile.spousePensionAge ? (profile.spousePension * 12 * defl) / net : 0;
+    const npSelf = (incomeValue(npStreams[0], age, profile.inflation) * defl) / net;
+    const npSpouse = (incomeValue(npStreams[1], age, profile.inflation) * defl) / net;
     const incomeSelf = rentSelf + pensionIncomeAmount(npSelf * (s.npTaxable / 100));
     const incomeSpouse = rentSpouse + pensionIncomeAmount(npSpouse * (s.npTaxable / 100));
     const taxSelf = incomeTaxAmount(incomeSelf - s.dedSelf);

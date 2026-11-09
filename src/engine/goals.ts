@@ -50,13 +50,22 @@ export const spouseToSelf = (p: Profile, spouseAge: number) => spouseAge + spous
 /** 배우자 은퇴(근로소득이 끊기는) 본인 나이 */
 export const spouseRetireSelfAge = (p: Profile) => spouseToSelf(p, p.spouseRetireAge ?? 0);
 
+/** 국민연금 첫해 비율(생일 다음 달부터)과 연 인상률 */
+export function npTerms(profile: Profile, month: number | undefined, currentAge: number): Pick<IncomeStream, 'firstShare' | 'growth' | 'baseAge'> {
+  const m = Math.round(month ?? 0);
+  return {
+    ...(m >= 1 && m <= 12 ? { firstShare: (12 - m) / 12 } : {}),
+    ...(profile.npGrowth !== undefined && profile.npGrowth !== null && Number.isFinite(profile.npGrowth) ? { growth: profile.npGrowth, baseAge: currentAge } : {}),
+  };
+}
+
 /** 은퇴 후 소득 목록: 부부 국민연금·개인연금, 본인 은퇴 뒤 배우자 근로소득, 기타 소득(나이는 모두 본인 기준으로 변환) */
 export function retireIncomes(profile: Profile, currentAge: number): IncomeStream[] {
   const toSelf = (age: number, owner?: string) => (owner === 'spouse' ? spouseToSelf(profile, age) : age);
   const spouseWorkEnd = spouseRetireSelfAge(profile) - 1;
   const list: IncomeStream[] = [
-    { name: '국민연금', kind: 'pension', startAge: profile.nationalPensionAge, annual: profile.nationalPension * 12 },
-    { name: '배우자 국민연금', kind: 'pension', startAge: spouseToSelf(profile, profile.spousePensionAge), annual: profile.spousePension * 12 },
+    { name: '국민연금', kind: 'pension', startAge: profile.nationalPensionAge, annual: profile.nationalPension * 12, ...npTerms(profile, profile.birthMonth, currentAge) },
+    { name: '배우자 국민연금', kind: 'pension', startAge: spouseToSelf(profile, profile.spousePensionAge), annual: profile.spousePension * 12, ...npTerms(profile, profile.spouseBirthMonth, currentAge) },
     { name: '개인·퇴직연금', kind: 'pension', startAge: profile.privatePensionAge, annual: profile.privatePension * 12 },
     { name: '배우자 개인·퇴직연금', kind: 'pension', startAge: spouseToSelf(profile, profile.spousePrivatePensionAge ?? 0), annual: (profile.spousePrivatePension ?? 0) * 12 },
     // 본인이 먼저 은퇴하면 배우자가 은퇴할 때까지 배우자 소득이 생활비를 보탬

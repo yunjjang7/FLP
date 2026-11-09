@@ -16,3 +16,17 @@ export function won(v: number, withUnit = true) {
 export const pct = (v: number, digits = 0) => (Number.isFinite(v) ? `${v.toFixed(digits)}%` : '-');
 
 export const num = (v: number) => Math.round(v).toLocaleString('ko-KR');
+
+/** [2027, 2028, 2031, 2032] → "2027~2028, 2031~2032년" (세 구간부터는 ‘외’) */
+export function yearRanges(years: number[]) {
+  if (years.length === 0) return '';
+  const parts: string[] = [];
+  let a = years[0];
+  let b = years[0];
+  for (const y of [...years.slice(1), NaN]) {
+    if (y === b + 1) { b = y; continue; }
+    parts.push(a === b ? `${a}` : `${a}~${b}`);
+    a = b = y;
+  }
+  return `${parts.slice(0, 2).join(', ')}년${parts.length > 2 ? ' 외' : ''}`;
+}

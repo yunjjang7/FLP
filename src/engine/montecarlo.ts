@@ -16,15 +16,18 @@ export interface IncomeStream {
   baseAge?: number;
   /** pension: 국민연금·개인연금(인출액 고정 방식에서 고정액 안에 포함) · 그 밖(임대료·근로소득 등)은 고정액과 별도로 모두 씀 */
   kind?: 'pension';
+  /** 시작하는 해에 받는 비율(국민연금: 생일 다음 달부터 → (12 − 출생 월) / 12) */
+  firstShare?: number;
 }
 
 /** 해당 나이의 소득 실질 연액 */
 export function incomeValue(p: IncomeStream, age: number, inflation: number) {
   if (age < p.startAge || (p.endAge !== undefined && p.endAge > 0 && age > p.endAge)) return 0;
-  if (p.growth === undefined) return p.annual;
+  const share = age === p.startAge && p.firstShare !== undefined ? p.firstShare : 1;
+  if (p.growth === undefined) return p.annual * share;
   const t = Math.max(0, age - (p.baseAge ?? p.startAge));
   const step = Math.max(1, Math.round(p.step ?? 1));
-  return (p.annual * Math.pow(1 + p.growth / 100, Math.floor(t / step))) / Math.pow(1 + inflation / 100, t);
+  return (share * p.annual * Math.pow(1 + p.growth / 100, Math.floor(t / step))) / Math.pow(1 + inflation / 100, t);
 }
 
 /** 모든 금액은 현재가치(실질, 만원/년) 기준 */

@@ -7,9 +7,11 @@ import { db } from '../db/db';
 import { withdrawLevel } from '../engine/risk';
 import { ExpenseCompare } from '../components/ExpenseCompare';
 import { IncomeTaxCard } from '../components/IncomeTaxCard';
+import { OrderCompare } from '../components/OrderCompare';
+import type { CompareBase } from '../engine/orderCompare';
 import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
 import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
-import { pct, won } from '../lib/format';
+import { pct, won, yearRanges } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
 
@@ -72,6 +74,10 @@ function WithdrawInner() {
   const nowYear = p.birthYear + d.summary.age;
   const setup = useMemo(() => taxSetup(p, d.assets, nowYear, startBalance, retMean), [p, d.assets, nowYear, startBalance, retMean]);
   const tax = useMemo(() => (setup ? pensionTaxSchedule(sel.schedule, setup) : null), [setup, sel]);
+  const compareBase: CompareBase = useMemo(
+    () => ({ profile: p, assets: d.assets, liabilities: d.liabilities, goals: d.goals, summary: d.summary, input, strategy: selected, meanReturn: retMean }),
+    [p, d.assets, d.liabilities, d.goals, d.summary, input, selected, retMean],
+  );
   const hasSpouse = p.spouseBirthYear > 0;
   const hasInflow = sel.schedule.some((r) => r.inflow > 0);
   const hasIsa = !!tax && tax.rows.some((r) => r.reinvest > 0.5 || r.contrib > 0.5);
@@ -216,6 +222,7 @@ function WithdrawInner() {
       <BucketGuide firstNeed={firstNeed} balance={startBalance} />
 
       {tax && setup && <TaxSummary tax={tax} scheduleDepleted={sel.schedule.find((r) => r.endBalance <= 0 && r.withdrawal > 0)?.age ?? null} hasSpouse={hasSpouse} retireBase={setup.retireBase} />}
+      {tax && setup && <OrderCompare base={compareBase} tax={tax} setup={setup} />}
       {p.incomeTax?.on && <IncomeTaxCard tax={tax} />}
 
       <Card title={`연도별 인출 스케줄 — ${STRATEGIES[selected].label}`} className="mt-4" action={<span className="text-xs text-muted">평균수익 가정 · 연 단위</span>}>
@@ -388,19 +395,6 @@ function AccountLimits({ row, hasSpouse }: { row: TaxResult['rows'][number]; has
 }
 
 /** [2031, 2032, 2033, 2040] → "2031~2033, 2040년" */
-function yearRanges(years: number[]) {
-  if (years.length === 0) return '';
-  const parts: string[] = [];
-  let a = years[0];
-  let b = years[0];
-  for (const y of [...years.slice(1), NaN]) {
-    if (y === b + 1) { b = y; continue; }
-    parts.push(a === b ? `${a}` : `${a}~${b}`);
-    a = b = y;
-  }
-  return `${parts.slice(0, 2).join(', ')}${parts.length > 2 ? ' 외' : ''}년`;
-}
-
 /** 인출용 자산 배치 가이드: 현금성 2년 · 채권·배당 3~5년차 · 대체 10% · 나머지 성장 */
 function BucketGuide({ firstNeed, balance }: { firstNeed: number; balance: number }) {
   const cash = Math.min(balance, firstNeed * 2);

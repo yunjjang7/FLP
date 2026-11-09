@@ -128,6 +128,9 @@ export interface Profile {
   dependentYears: number; // 부양 필요 기간(년)
   nationalPension: number; // 국민연금 월 수령액(현재가치)
   nationalPensionAge: number;
+  birthMonth?: number; // 본인 출생 월(1~12): 국민연금 첫해를 생일 다음 달부터 계산. 0·없음이면 첫해도 12개월
+  spouseBirthMonth?: number; // 배우자 출생 월
+  npGrowth?: number; // 국민연금 연 인상률(명목 %). 없으면 물가상승률
   privatePension: number; // 개인·퇴직연금 월 수령액(현재가치)
   privatePensionAge: number;
   spouseBirthYear: number; // 배우자 출생연도(0이면 배우자 연금 없음)

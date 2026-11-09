@@ -5,6 +5,7 @@ import { buildPlanInput, loanEndAge, lockedInflow, planGoals, retireIncomes } fr
 import { insuranceGap } from './insurance';
 import { deterministicPath, expenseAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount } from './incomeTax';
+import { orderCombos, runCombo, summarizeTax } from './orderCompare';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
 import { summarize } from './portfolio';
 import { prescriptions } from './prescribe';
@@ -423,6 +424,33 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(at65(d) - at65(off)).toBeCloseTo(y33.npPart, 6);
   });
 
+  it('국민연금 생일 월(첫해 월할)·연 인상률: 엑셀처럼 생일 다음 달부터, 2% 인상', () => {
+    const d = retiree();
+    d.profile = {
+      ...d.profile, spouseBirthYear: 1973, nationalPension: 200, nationalPensionAge: 64, spousePension: 100, spousePensionAge: 65,
+      birthMonth: 7, spouseBirthMonth: 11, npGrowth: 2, incomes: [],
+      incomeTax: { on: true, rentSpouseShare: 100, rentExpense: 50, npTaxable: 80, npNet: 100, dedSelf: 150, dedSpouse: 150, hiNow: 0, hiRate: 7.19, hiLtc: 13.14, hiPublic: 50, hiPropGrowth: 0, hiPrivate: false, addToDraw: false },
+    };
+    const rows = incomeTaxSchedule(d.profile, 2026);
+    const y = (n: number) => rows.find((r) => r.year === n)!;
+    // 남편 2032년(64세): 7월생 → 8~12월 5개월, 명목 2%/년
+    expect(y(2032).npSelf).toBeCloseTo(200 * 5 * 1.02 ** 6, 6);
+    expect(y(2033).npSelf).toBeCloseTo(2400 * 1.02 ** 7, 6);
+    // 엑셀 2034년 남편 국민연금 세전 2,811.98만 → 종소세 91.39만
+    expect(y(2034).npSelf).toBeCloseTo(2811.9825144, 4);
+    expect(y(2034).taxSelf).toBeCloseTo(91.3854, 3);
+    // 아내 2038년(65세): 11월생 → 12월 1개월
+    expect(y(2037).npSpouse).toBe(0);
+    expect(y(2038).npSpouse).toBeCloseTo(100 * 1 * 1.02 ** 12, 6);
+    // 노후 계산(실질): 첫해는 5/12, 이후 명목 2% − 물가 2.5%
+    const np = retireIncomes(d.profile, 58).find((x) => x.name === '국민연금')!;
+    expect(incomeValue(np, 64, 2.5)).toBeCloseTo((2400 * (5 / 12) * 1.02 ** 6) / 1.025 ** 6, 6);
+    expect(incomeValue(np, 70, 2.5)).toBeCloseTo((2400 * 1.02 ** 12) / 1.025 ** 12, 6);
+    // 출생 월·인상률이 없으면 첫해도 12개월, 물가만큼
+    const plain = retireIncomes({ ...d.profile, birthMonth: 0, npGrowth: undefined }, 58).find((x) => x.name === '국민연금')!;
+    expect(incomeValue(plain, 64, 2.5)).toBe(2400);
+  });
+
   it('추가 납입 세액공제: 900만 한도·공제율·종소세 한도, 환급은 다음 해 유입', () => {
     const d = retiree();
     d.profile = {
@@ -479,5 +507,40 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(r3.contrib).toBeCloseTo(600, 6);
     expect(r3.isa).toBeCloseTo(400, 6);
     expect(r3.gross).toBe(0);
+  });
+
+  it('인출순서 조합 비교: ②는 지금 계획(납입 없음)과 같고, 납입 조합은 환급·납입이 생김', () => {
+    const d = retiree();
+    const base = { type: 'pension' as const, expectedReturn: 4, volatility: 0, purpose: 'long' as const, nature: 'safe' as const, pensionYear1: 2018 };
+    d.profile = { ...d.profile, spouseBirthYear: 1968, retireTaxRate: 10, retireTaxYear1: 2025, contrib: undefined, incomes: [{ name: '임대료', monthly: 400, startAge: 58, endAge: 0, growth: 0, step: 1, rent: true }],
+      incomeTax: { on: true, rentSpouseShare: 100, rentExpense: 50, npTaxable: 80, npNet: 100, dedSelf: 150, dedSpouse: 150, hiNow: 0, hiRate: 7.19, hiLtc: 13.14, hiPublic: 50, hiPropGrowth: 0, hiPrivate: false, addToDraw: false } };
+    d.assets = [
+      { ...base, name: 'IRP', amount: 30000, drawOrder: 2 },
+      { ...base, name: '키움', amount: 5000, drawStartYear: 2032, drawOrder: 3 },
+      { ...base, name: '교보', amount: 8000, drawOrder: 1 },
+      { ...base, name: '아내 IRP', amount: 6000, owner: 'spouse', drawStartYear: 2030 },
+    ];
+    const pi = plan(d);
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026);
+    const start = withdrawStart(pi);
+    const input = { startAge: start.age, endAge: d.profile.lifeExpectancy, startBalance: start.balance, expenseAnnual: pi.retireExpenseAnnual, inflows: pi.inflows, pensions: pi.pensions, meanReturn: 4, volatility: 10, inflation: 2.5, percentRate: 4, extras: pi.goals.filter((g) => g.age >= start.age), guardrail: DEFAULT_GUARDRAIL };
+    const cb = { profile: d.profile, assets: d.assets, liabilities: d.liabilities, goals: d.goals, summary: s, input, strategy: 'fixed' as const, meanReturn: 4 };
+    const combos = orderCombos(true);
+    expect(combos.map((c) => c.key)).toEqual(['1', '2', '3', '4', '5']);
+    expect(orderCombos(false).map((c) => c.key)).toEqual(['1', '2', '3']);
+    const c = { self: 900, spouse: 900, from: 2027, to: 2031 };
+    const setup = taxSetup(d.profile, d.assets, 2026, start.balance, 4)!;
+    const now = summarizeTax(pensionTaxSchedule(compareStrategy('fixed', input, 0).schedule, setup), setup, null);
+    const r = combos.map((k) => runCombo(cb, k, c)!);
+    expect(r[1].totalTax).toBeCloseTo(now.totalTax, 6);
+    expect(r[1].contrib).toBe(0);
+    // ①은 순서·시작 연도를 무시 → 첫해 키움·아내 IRP에서도 꺼냄
+    expect(r[0].tax.rows[0].accounts.find((a) => a.name === '아내 IRP')!.drawn).toBeGreaterThan(0);
+    expect(r[1].tax.rows[0].accounts.find((a) => a.name === '아내 IRP')!.drawn).toBe(0);
+    // ⑤ 아내 납입: 임대 종소세가 있어 공제 900 × 16.5%(자동) × 5년, 남편은 종합소득 없음
+    expect(r[4].contrib).toBeGreaterThan(0);
+    expect(r[4].credit).toBeGreaterThan(0);
+    expect(r[2].credit).toBe(0);
+    expect(r[4].netTax).toBeCloseTo(r[4].totalTax - r[4].credit, 6);
   });
 });
