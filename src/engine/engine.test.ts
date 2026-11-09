@@ -5,7 +5,7 @@ import { buildPlanInput, loanEndAge, lockedInflow, planGoals, retireIncomes } fr
 import { insuranceGap } from './insurance';
 import { deterministicPath, expenseAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount } from './incomeTax';
-import { orderCombos, runCombo, summarizeTax } from './orderCompare';
+import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
 import { summarize } from './portfolio';
 import { prescriptions } from './prescribe';
@@ -542,5 +542,31 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(r[4].credit).toBeGreaterThan(0);
     expect(r[2].credit).toBe(0);
     expect(r[4].netTax).toBeCloseTo(r[4].totalTax - r[4].credit, 6);
+    // 점검 나이: 90세 전에 바닥나는 조합이 있으면 모든 조합에 잔액이 남은 마지막 나이, 아니면 90세
+    const ck = checkAge(r)!;
+    expect(ck).toBeLessThanOrEqual(CHECK_AGE);
+    for (const x of r) expect(x.tax.rows.filter((y) => y.age <= ck).every((y) => y.left > 0.5)).toBe(true);
+    const dep = Math.min(...r.map((x) => x.depletedAge ?? Infinity));
+    const at = r[1].tax.rows.find((x) => x.age === ck)!;
+    const k = checkAt(r[1], ck);
+    expect(k.leftAt).toBeCloseTo(at.left, 6);
+    expect(k.taxTo).toBeCloseTo(r[1].tax.rows.filter((x) => x.age <= ck).reduce((a, x) => a + x.tax, 0), 6);
+    expect(k.taxTo).toBeLessThanOrEqual(r[1].totalTax + 1e-9);
+    // 모두 바닥나도 점검 나이 잔액은 0보다 큼
+    if (dep <= CHECK_AGE) expect(k.leftAt!).toBeGreaterThan(0);
+    expect(checkAge([{ ...r[1], depletedAge: null }])).toBe(CHECK_AGE);
+
+    // 비교 기준 순서: ①은 입력 순서 대신 이 순서(키움 → 교보 → IRP)로 꺼내고, ②는 영향 없음
+    const first = (x: ComboResult, name: string) => x.tax.rows[0].accounts.find((a) => a.name === name)!.drawn;
+    expect(hasCompareOrder(d.assets)).toBe(false);
+    expect(first(r[0], 'IRP')).toBeGreaterThan(0);
+    expect(first(r[0], '키움')).toBe(0);
+    const order: Record<string, number> = { 키움: 1, 교보: 2, IRP: 3 };
+    const cbo = { ...cb, assets: d.assets.map((a) => ({ ...a, compareOrder: order[a.name] ?? 0 })) };
+    expect(hasCompareOrder(cbo.assets)).toBe(true);
+    const r1 = runCombo(cbo, combos[0], c)!;
+    expect(first(r1, '키움')).toBeGreaterThan(0);
+    expect(first(r1, 'IRP')).toBe(0);
+    expect(runCombo(cbo, combos[1], c)!.totalTax).toBeCloseTo(r[1].totalTax, 6);
   });
 });

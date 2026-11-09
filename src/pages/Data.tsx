@@ -443,6 +443,9 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
             <Labeled label="꺼내는 순서" hint="같은 명의 안에서 작을수록 먼저 · 0이면 입력 순서">
               <NumberField value={a.drawOrder ?? 0} min={0} onChange={(v) => onChange('drawOrder', v)} />
             </Labeled>
+            <Labeled label="비교 기준 순서" hint="인출 순서 비교표 ①에서만 씀 · 0이면 입력 순서">
+              <NumberField value={a.compareOrder ?? 0} min={0} onChange={(v) => onChange('compareOrder', v)} />
+            </Labeled>
           </>
         )}
       </div>

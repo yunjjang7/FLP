@@ -13,7 +13,7 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['icon.svg'],
       manifest: {
-        name: 'FLP 자산관리',
+        name: 'Financial Life Planning',
         short_name: 'FLP',
         description: '내 자산 현황을 한눈에 확인하고 지속적으로 점검하는 재무 라이프 플래닝 앱',
         lang: 'ko',

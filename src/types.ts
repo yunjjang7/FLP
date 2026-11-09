@@ -23,6 +23,7 @@ export interface Asset {
   pensionYear1?: number; // 연금수령 1년차 연도(기산연도). 비우면 명의자가 55세가 되는 해
   drawStartYear?: number; // 이 해부터 인출(그 전에는 꺼내지 않고 추가 납입을 받는 계좌). 0이면 바로
   drawOrder?: number; // 같은 사람 계좌 중 꺼내는 순서(작을수록 먼저, 0이면 입력 순서)
+  compareOrder?: number; // 인출순서 비교표 ① 조합에서 쓸 기준 순서(작을수록 먼저, 0이면 입력 순서)
 }
 
 export interface Liability {

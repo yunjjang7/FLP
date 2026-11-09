@@ -27,8 +27,8 @@ export function Layout() {
         <div className="mb-6 flex items-center gap-2 px-2">
           <img src="./icon.svg" alt="" className="h-8 w-8" />
           <div>
-            <div className="text-[15px] font-bold leading-tight">FLP 자산관리</div>
-            <div className="text-[11px] text-muted">Financial Life Planning</div>
+            <div className="text-[15px] font-bold leading-tight">Financial Life Planning</div>
+            <div className="text-[11px] text-muted">자산관리</div>
           </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
@@ -50,7 +50,7 @@ export function Layout() {
         <header className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-surface/90 px-4 py-3 backdrop-blur md:hidden" style={{ paddingTop: 'max(0.75rem, env(safe-area-inset-top))' }}>
           <div className="flex items-center gap-2">
             <img src="./icon.svg" alt="" className="h-7 w-7" />
-            <span className="font-bold">FLP 자산관리</span>
+            <span className="font-bold">Financial Life Planning</span>
           </div>
           <NavLink to="/data" aria-label="데이터·설정" className={({ isActive }) => `rounded-lg p-1.5 ${isActive ? 'text-brand' : 'text-muted'}`}>
             {SettingsIcon}
