@@ -4,6 +4,7 @@ import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
 import { expenseAt, pensionAt, retireOutflowAt } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
+import { RE_USE, reUseOf, willSell } from '../engine/realestate';
 import { Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -24,6 +25,13 @@ export default function Retire() {
   const expenseNote = draw ? `연금 생활비 명목 고정(월 ${won((inp.fixedDraw ?? 0) / 12)})` : inp.expenseGrowth !== undefined ? `생활비 명목 ${inp.expenseGrowth}% 증가` : '물가 연동';
   const wLevel = withdrawLevel(start.rate, p.criteria.withdrawRateMax);
   const lateDebts = (inp.debts ?? []).filter((x) => x.endAge > inp.retireAge);
+  // 부동산: 보유 중엔 운용자산에서 빼고, 임대 월세는 소득, 매각 예정이면 매각 연도에 순매각대금 유입
+  const nowYear = p.birthYear + d.summary.age;
+  const re = d.assets.filter((a) => a.type === 'realestate');
+  const reNote =
+    re.length === 0
+      ? '없음'
+      : re.map((a) => `${a.name}(${RE_USE[reUseOf(a)]}${willSell(a, nowYear) ? ` · ${a.lockYear}년 매각` : ''}${reUseOf(a) === 'rental' && (a.rent ?? 0) > 0 ? ' · 월세 소득' : ''})`).join(' · ') + ' — 보유 중엔 시뮬레이션 제외';
   const readyLevel: Level = need.ratio >= 100 ? 'good' : need.ratio >= 70 ? 'caution' : 'danger';
 
   const verdict =
@@ -78,7 +86,7 @@ export default function Retire() {
             ))}
             <div className="border-t border-line pt-2.5"><Line label={draw ? `자산 인출액(${fullAge}세, 물가 반영 후)` : `자산에서 인출할 금액(${fullAge}세 기준)`} value={won(gapMonthly)} strong /></div>
             {(inp.inflows ?? []).map((x) => (
-              <Line key={`${x.name}-${x.age}`} label={x.kind === 'credit' ? `+ 세액공제 환급(${x.age}세)` : `+ ${x.name} 수령(${x.age}세, 세후 일시금)`} value={won(x.amount)} muted />
+              <Line key={`${x.name}-${x.age}`} label={x.kind === 'credit' ? `+ 세액공제 환급(${x.age}세)` : x.kind === 'sale' ? `+ ${x.name} 매각(${x.age}세, 비용·보증금·새 집 뺀 금액)` : `+ ${x.name} 수령(${x.age}세, 세후 일시금)`} value={won(x.amount)} muted />
             ))}
             {lateDebts.map((x) => (
               <Line key={x.name} label={`+ ${x.name} 상환 (${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '종료 없음'})`} value={won(x.annual / 12)} muted />
@@ -128,9 +136,9 @@ export default function Retire() {
           ))}
           <Assume k="물가상승률" v={`${inp.inflation}%`} />
           <Assume k="은퇴 후 생활비" v={expenseNote} />
-          {(inp.inflows ?? []).some((x) => x.kind !== 'credit') && <Assume k="수령 전 자산(시작 자산에서 제외)" v={(inp.inflows ?? []).filter((x) => x.kind !== 'credit').map((x) => `${x.name} ${x.age}세`).join(' · ')} />}
+          {(inp.inflows ?? []).some((x) => !x.kind) && <Assume k="수령 전 자산(시작 자산에서 제외)" v={(inp.inflows ?? []).filter((x) => !x.kind).map((x) => `${x.name} ${x.age}세`).join(' · ')} />}
           <Assume k="목적자금·반복 지출" v={`${d.goals.filter((g) => g.category !== 'retirement').length}건 · 총 ${won(inp.goals.reduce((a, g) => a + g.amount, 0))}`} />
-          <Assume k="부동산" v="시뮬레이션 제외(거주용 가정)" />
+          <Assume k="부동산" v={reNote} />
         </dl>
       </Card>
       <Disclaimer />

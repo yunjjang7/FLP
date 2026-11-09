@@ -72,7 +72,7 @@ describe('샘플 데이터 통합', () => {
     expect(s.totalDebt).toBe(30000);
     expect(s.netWorth).toBe(s.totalAssets - 30000);
     expect(s.savings).toBe(650 - (95 + 80) - 185 - 190);
-    expect(s.byPurpose.reduce((a, b) => a + b.value, 0)).toBe(s.totalAssets);
+    expect(s.byPurpose.reduce((a, b) => a + b.value, 0)).toBe(s.financialAssets);
   });
   it('목표·위험·보장·처방이 계산됨', () => {
     const gp = planGoals(d.goals, d.assets, s.age);

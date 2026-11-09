@@ -54,8 +54,8 @@ export interface PlanInput {
   expenseGrowth?: number;
   /** 연금으로 쓰는 금액 명목 고정(연, 인출 시작 시점 금액): 이 금액을 국민·개인연금과 자산 인출로 채우고(연금이 늘면 인출이 줄어듦), 임대료 등 그 밖의 소득은 모두 생활비로 씀 */
   fixedDraw?: number;
-  /** 수령 전 묶인 자산(노란우산 등): 해당 나이에 세후 일시금(실질)이 들어와 함께 운용됨 */
-  inflows?: { name?: string; age: number; amount: number; kind?: 'credit' }[];
+  /** 수령 전 묶인 자산(노란우산 등)·부동산 매각(sale)·세액공제 환급(credit): 해당 나이에 세후 금액(실질)이 들어와 함께 운용됨 */
+  inflows?: { name?: string; age: number; amount: number; kind?: 'credit' | 'sale' }[];
 }
 
 export interface SimResult {

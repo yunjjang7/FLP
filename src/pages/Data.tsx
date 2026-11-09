@@ -1,7 +1,8 @@
 import { useRef, useState } from 'react';
 import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
-import { TABLES } from '../db/schema';
+import { TABLES, type FieldDef } from '../db/schema';
+import { netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentYield, reUseOf, saleInflow, willSell } from '../engine/realestate';
 import { ASSET_TYPES, RISK_PROFILES } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, PageHeader } from '../components/ui';
@@ -11,7 +12,7 @@ import { useFlp } from '../store/FlpContext';
 import { loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
 import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX } from '../engine/incomeTax';
-import type { Asset, AssetType, ContribPlan, Criteria, ExpenseMode, Goal, IncomeOwner, IncomeTaxSettings, Liability, Profile, RetireIncome } from '../types';
+import type { Asset, AssetType, ReUse, ContribPlan, Criteria, ExpenseMode, Goal, IncomeOwner, IncomeTaxSettings, Liability, Profile, RetireIncome } from '../types';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
 const EXPENSE_HINT: Record<ExpenseMode, string> = {
@@ -217,7 +218,8 @@ function IncomeTaxForm() {
     </Labeled>
   );
   const hasSpouse = p.spouseBirthYear > 0;
-  const rentCount = (p.incomes ?? []).filter((i) => i.rent).length;
+  const { assets } = useFlp();
+  const rentCount = (p.incomes ?? []).filter((i) => i.rent).length + assets.filter((a) => a.type === 'realestate' && reUseOf(a) === 'rental' && (a.rent ?? 0) > 0).length;
   return (
     <Card
       title="종합소득세·건강보험료"
@@ -230,7 +232,7 @@ function IncomeTaxForm() {
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-            {hasSpouse && num('rentSpouseShare', '임대소득 중 배우자 몫', '%', '공동명의면 50')}
+            {hasSpouse && num('rentSpouseShare', '임대소득 중 배우자 몫', '%', '‘그 밖의 소득’ 임대료만. 부동산 자산은 명의·지분대로')}
             {num('rentExpense', '임대 필요경비율', '%', '실제 종소세와 맞도록 조정')}
             {num('npTaxable', '국민연금 과세대상 비율', '%', '2002년 이후 납입분 비율')}
             {num('npNet', '입력한 국민연금이 세전의', '%', '세후 금액을 넣었으면 97 등')}
@@ -245,7 +247,7 @@ function IncomeTaxForm() {
             {yn('addToDraw', '늘어나는 세금을 인출에 더하기', '국민연금 몫만큼 연금계좌 인출 증가')}
           </div>
           <p className="mt-3 text-xs text-muted">
-            {rentCount === 0 ? '‘그 밖의 은퇴 후 소득’에서 임대료 항목의 ‘임대소득’을 체크해야 임대소득이 계산에 들어갑니다. ' : ''}
+            {rentCount === 0 ? '임대소득은 ‘자산’ 탭의 임대용 부동산 월세나, ‘그 밖의 은퇴 후 소득’에서 ‘임대소득’을 체크한 항목만 계산에 들어갑니다. ' : ''}
             사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 지금 고지서에서 역산해 고정합니다(부부 한 세대). 첫해 부담은 이미 생활비에 들어 있다고 보고,
             ‘인출에 더하기’를 고르면 국민연금 때문에 늘어나는 금액만 해마다 연금계좌에서 더 꺼냅니다.
           </p>
@@ -278,7 +280,8 @@ function CriteriaForm() {
 
 /** 은퇴 후 소득(임대료 등) 목록 편집 */
 function IncomeList() {
-  const { profile: p } = useFlp();
+  const { profile: p, assets } = useFlp();
+  const rentals = assets.filter((a) => a.type === 'realestate' && reUseOf(a) === 'rental' && (a.rent ?? 0) > 0);
   const save = useSaveProfile();
   const list = p.incomes ?? [];
   const setAt = (i: number, patch: Partial<RetireIncome>) => save({ incomes: list.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
@@ -292,7 +295,12 @@ function IncomeList() {
   };
   return (
     <Card title="그 밖의 은퇴 후 소득" action={<Button variant="ghost" onClick={add}>+ 소득 추가</Button>}>
-      {list.length === 0 && <p className="text-sm text-muted">임대료·근로소득·사적연금처럼 은퇴 후 들어오는 돈이 있으면 추가하세요. 노후 진단과 노후 인출에 반영됩니다.</p>}
+      {list.length === 0 && <p className="text-sm text-muted">근로소득·사적연금처럼 은퇴 후 들어오는 돈이 있으면 추가하세요. 노후 진단과 노후 인출에 반영됩니다.</p>}
+      {rentals.length > 0 && (
+        <p className="mb-3 rounded-lg bg-sunken px-3 py-2 text-xs text-muted">
+          임대용 부동산 자산({rentals.map((a) => a.name).join(', ')})의 월세는 ‘자산’ 탭에서 넣은 금액으로 자동 반영됩니다. 같은 임대료를 여기에 또 넣으면 두 번 계산됩니다.
+        </p>
+      )}
       <div className="space-y-3">
         {list.map((x, i) => (
           <div key={i} className="rounded-xl border border-line p-3">
@@ -350,9 +358,24 @@ function ListEditor({ table }: { table: ListTable }) {
     if (table === 'assets' && key === 'type') {
       const d = ASSET_TYPES[v as AssetType];
       patch = { ...patch, expectedReturn: d.ret, volatility: d.vol, purpose: d.purpose, nature: d.nature } satisfies Partial<Asset>;
+      if (v === 'realestate') patch.reUse = (row as Asset).reUse ?? 'home';
+      // 공동명의는 부동산만: 다른 유형으로 바꾸면 본인 명의로
+      else if ((row as Asset).owner === 'joint') patch.owner = 'self';
     }
     tbl.update(row.id!, patch);
   };
+  /** 부동산은 용도·성격·변동성 대신 부동산 용도와 시세 상승률 */
+  const fieldsOf = (r: Record<string, unknown>): FieldDef[] =>
+    table === 'assets' && r.type === 'realestate'
+      ? fields
+          .filter((f) => f.key !== 'purpose' && f.key !== 'nature' && f.key !== 'volatility')
+          .map((f) =>
+            f.key === 'amount' ? { ...f, label: '현재 시세' }
+            : f.key === 'expectedReturn' ? { ...f, label: '연 시세 상승률', hint: '명목. 장기 물가+0~1%p 정도' }
+            : f,
+          )
+          .concat({ key: 'reUse', label: '부동산 용도', kind: 'select', options: RE_USE, hint: RE_USE_HINT[(r.reUse as ReUse) ?? 'home'] })
+      : fields;
 
   return (
     <div className="space-y-3">
@@ -366,13 +389,13 @@ function ListEditor({ table }: { table: ListTable }) {
       {rows.map((r) => (
         <Card key={r.id}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
-            {fields.map((f) => (
+            {fieldsOf(r).map((f) => (
               <div key={f.key} className={f.key === 'name' ? 'col-span-2 md:col-span-1' : ''}>
                 <Labeled label={f.unit ? `${f.label}(${f.unit})` : f.label} hint={f.hint}>
                   {f.kind === 'number' ? (
                     <NumberField value={Number(r[f.key] ?? 0)} step={f.step} onChange={(v) => update(r, f.key, v)} />
                   ) : f.kind === 'select' ? (
-                    <SelectField value={String(r[f.key])} options={f.options!} onChange={(v) => update(r, f.key, v)} />
+                    <SelectField value={String(r[f.key] ?? Object.keys(f.options!)[0])} options={f.options!} onChange={(v) => update(r, f.key, v)} />
                   ) : (
                     <TextField value={String(r[f.key] ?? '')} onChange={(v) => update(r, f.key, v)} />
                   )}
@@ -380,7 +403,9 @@ function ListEditor({ table }: { table: ListTable }) {
               </div>
             ))}
           </div>
-          {table === 'assets' && <AssetExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />}
+          {table === 'assets' && (r.type === 'realestate'
+            ? <RealEstateExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />
+            : <AssetExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />)}
           <div className="mt-3 flex items-center justify-between gap-3">
             <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}</span>
             <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
@@ -459,6 +484,86 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
           {inflow.year}년(본인 {inflow.age}세)까지 연 {a.expectedReturn}%로 불어나 세후 약 {won(inflow.nominal)}(현재가치 {won(inflow.amount)})을 받아, 그때부터 다른 금융자산과 함께 은퇴 후 수익률로 운용합니다. 그 전에는 인출률·인출 계산에서 뺍니다.
         </p>
       )}
+    </div>
+  );
+}
+
+/** 부동산 추가 설정: 명의·지분, 임대 조건(월세·보증금·갱신), 매각 계획 */
+function RealEstateExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v: unknown) => void }) {
+  const { profile: p, summary } = useFlp();
+  const nowYear = p.birthYear + summary.age;
+  const hasSpouse = p.spouseBirthYear > 0;
+  const use = reUseOf(a);
+  const rental = use === 'rental';
+  const owner = a.owner ?? 'self';
+  const sale = willSell(a, nowYear) ? saleInflow(a, p, nowYear) : null;
+  const pastSale = (a.lockYear ?? 0) > 0 && !sale;
+  const retireYear = p.birthYear + Math.max(p.retireAge, summary.age);
+  return (
+    <div className="mt-3 rounded-xl bg-sunken p-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
+        {hasSpouse && (
+          <Labeled label="명의" hint={rental ? '임대소득 종소세를 지분대로 나눔' : undefined}>
+            <SelectField value={owner} onChange={(v) => onChange('owner', v)} options={{ self: '본인', spouse: '배우자', joint: '공동명의' }} />
+          </Labeled>
+        )}
+        {hasSpouse && owner === 'joint' && (
+          <Labeled label="본인 지분(%)" hint={`배우자 ${100 - (a.ownerShare ?? 50)}%`}>
+            <NumberField value={a.ownerShare ?? 50} min={0} onChange={(v) => onChange('ownerShare', Math.min(100, Math.max(0, v)))} />
+          </Labeled>
+        )}
+        {rental && (
+          <>
+            <Labeled label="월세(만원)" hint="오늘 기준 · 전세면 0">
+              <NumberField value={a.rent ?? 0} onChange={(v) => onChange('rent', v)} />
+            </Labeled>
+            <Labeled label="임대보증금(만원)" hint="돌려줄 돈 → 부채로 계산">
+              <NumberField value={a.deposit ?? 0} onChange={(v) => onChange('deposit', v)} />
+            </Labeled>
+            <Labeled label="계약 갱신 주기(년)" hint="주택 2년 · 상가 1년 등">
+              <NumberField value={a.renewCycle ?? RENT_DEFAULT.renewCycle} min={1} onChange={(v) => onChange('renewCycle', Math.max(1, Math.round(v)))} />
+            </Labeled>
+            <Labeled label="갱신 때 인상률(%)" hint="주택 갱신 상한 5%">
+              <NumberField value={a.renewRate ?? RENT_DEFAULT.renewRate} step={0.1} onChange={(v) => onChange('renewRate', v)} />
+            </Labeled>
+            <Labeled label="공실·관리 경비율(%)" hint="월세 대비. 보유세·수선비 포함">
+              <NumberField value={a.rentCost ?? 0} step={1} min={0} onChange={(v) => onChange('rentCost', v)} />
+            </Labeled>
+          </>
+        )}
+        <Labeled label="매각 연도" hint={sale ? `${nowYear}~${sale.year - 1}년 보유 · 본인 ${sale.age}세에 매각` : pastSale ? '지난 연도는 무시(계속 보유)' : '0이면 팔지 않음'}>
+          <NumberField value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
+        </Labeled>
+        <Labeled label="매각 비용률(%)" hint={use === 'home' ? '1주택 비과세면 중개보수 등 0.5 안팎' : '양도세+중개보수 실효율'}>
+          <NumberField value={a.lockTax ?? 0} step={0.1} onChange={(v) => onChange('lockTax', v)} />
+        </Labeled>
+        {use === 'home' && (
+          <Labeled label="새 집 구입액(만원)" hint="다운사이징 · 오늘 시세. 0이면 매각 전액 노후 자금">
+            <NumberField value={a.reBuy ?? 0} onChange={(v) => onChange('reBuy', v)} />
+          </Labeled>
+        )}
+      </div>
+      <div className="mt-2 space-y-1 text-xs text-muted">
+        {rental && (a.rent ?? 0) > 0 && (
+          <p>
+            임대수익률 {rentYield(a).toFixed(1)}%(연 월세 ÷ 시세에서 보증금을 뺀 자기 돈) · 경비 뺀 순수입 월 {won(netRentOf(a))}.
+            {' '}은퇴 후({retireYear}년~){sale ? ` ${sale.year - 1}년까지` : ''} 노후 소득으로 들어가고, {a.renewCycle ?? RENT_DEFAULT.renewCycle}년마다 {a.renewRate ?? RENT_DEFAULT.renewRate}%씩 오릅니다(지금부터 셈). 은퇴 전 월세는 세후 월소득에 넣어 주세요.
+            {' '}‘그 밖의 은퇴 후 소득’에 같은 월세를 또 넣지 마세요.
+          </p>
+        )}
+        {rental && (a.rent ?? 0) === 0 && <p>월세를 넣으면 은퇴 후 소득·종합소득세·건강보험료에 반영됩니다. 전세는 보증금만 부채로 계산합니다.</p>}
+        {sale ? (
+          <p>
+            {sale.year}년 예상 시세 {won(sale.price)} − 매각 비용 {won(sale.cost)}{sale.deposit > 0 ? ` − 보증금 반환 ${won(sale.deposit)}` : ''}{sale.rebuy > 0 ? ` − 새 집 ${won(sale.rebuy)}` : ''} = <b className="text-ink">{won(sale.nominal)}</b>(현재가치 {won(sale.amount)})이
+            {sale.nominal >= 0 ? ' 금융자산으로 들어와 노후 진단·인출에 함께 운용됩니다.' : ' 부족해 그만큼 금융자산에서 더 나갑니다.'}
+          </p>
+        ) : (
+          <p>
+            {use === 'rental' ? '팔지 않으면 시세는 순자산에만 들어가고, 월세만 노후 현금흐름에 반영됩니다.' : '팔지 않는 동안 시세는 순자산·부동산 편중 점검에만 쓰고 노후 자금에는 넣지 않습니다.'}
+            {' '}부동산은 매일 사고팔 수 없어 노후 시뮬레이션의 운용자산(수익률·변동성)에서 빼므로 변동성은 입력하지 않습니다. 시세 상승률은 매각 연도를 넣으면 매각대금 계산에 씁니다.
+          </p>
+        )}
+      </div>
     </div>
   );
 }

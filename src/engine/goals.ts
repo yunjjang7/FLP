@@ -3,6 +3,7 @@ import { contribSchedule, creditInflows, incomeTaxSchedule, npCostOutflows } fro
 import { fvLump, monthlyRate, payoffMonths, pmtForTarget, realRate } from './finance';
 import type { IncomeStream, PlanInput } from './montecarlo';
 import { isFinancial, type Summary } from './portfolio';
+import { rentStreams, saleInflows } from './realestate';
 
 export interface GoalPlan {
   goal: Goal;
@@ -18,7 +19,7 @@ export interface GoalPlan {
  * 중기·목적자금 자산을 목표 시기가 빠른 순으로 배정한 뒤, 부족분을 월 적립액(PMT)으로 산출.
  */
 export function planGoals(goals: Goal[], assets: Asset[], currentAge: number): GoalPlan[] {
-  const mid = assets.filter((a) => a.purpose === 'mid');
+  const mid = assets.filter((a) => isFinancial(a) && a.purpose === 'mid');
   const midTotal = mid.reduce((s, a) => s + a.amount, 0);
   const midReturn = midTotal > 0 ? mid.reduce((s, a) => s + (a.amount / midTotal) * a.expectedReturn, 0) : 3;
   const r = monthlyRate(midReturn);
@@ -133,10 +134,11 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
   const liqReturn = locked.length && liqTotal > 0 ? liquid.reduce((a, x) => a + (x.amount / liqTotal) * x.expectedReturn, 0) : s.portfolioReturn;
   const liqVol = locked.length && liqTotal > 0 ? liquid.reduce((a, x) => a + (x.amount / liqTotal) * x.volatility, 0) : s.portfolioVol;
   // 종합소득세·건보료 추정과 추가 납입 세액공제: 환급은 다음 해 들어오고, 국민연금 몫 세금은 원하면 지출에 더함
-  const taxRows = profile.incomeTax?.on || profile.contrib ? incomeTaxSchedule(profile, nowYear) : [];
+  const taxRows = profile.incomeTax?.on || profile.contrib ? incomeTaxSchedule(profile, nowYear, undefined, assets) : [];
   const credits = creditInflows(profile, nowYear, contribSchedule(profile, taxRows));
   const npCost = profile.incomeTax?.on && profile.incomeTax.addToDraw ? npCostOutflows(taxRows) : [];
-  const inflows = [...locked.map((a) => lockedInflow(a, profile, nowYear)).map(({ name, age, amount }) => ({ name, age, amount })), ...credits];
+  // 매각 예정 부동산은 매각 연도에 순매각대금(비용·보증금·새 집 구입액 차감)이 금융자산으로 들어옴
+  const inflows = [...locked.map((a) => lockedInflow(a, profile, nowYear)).map(({ name, age, amount }) => ({ name, age, amount })), ...saleInflows(assets, profile, nowYear), ...credits];
   return {
     ...expenseRule(profile),
     inflows: inflows.length ? inflows : undefined,
@@ -160,7 +162,8 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
     volatility: o.volatility ?? liqVol,
     inflation,
     retireExpenseAnnual: (o.retireMonthlyExpense ?? profile.retireMonthlyExpense) * 12,
-    pensions: retireIncomes(profile, s.age),
+    // 임대용 부동산 월세(공실·관리 경비 차감, 매각 전 해까지)도 은퇴 후 소득
+    pensions: [...retireIncomes(profile, s.age), ...rentStreams(assets, profile, s.age).map(({ spouseShare: _, ...x }) => x)],
     goals: goals
       .filter((g) => g.category !== 'retirement')
       .flatMap((g) => {

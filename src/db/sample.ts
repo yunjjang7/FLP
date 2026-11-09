@@ -73,7 +73,7 @@ export function sampleData(year = new Date().getFullYear()) {
     { name: '채권형 펀드', type: 'bond', amount: 2000, expectedReturn: 4, volatility: 5, purpose: 'mid', nature: 'safe' },
     { name: '퇴직연금(DC)', type: 'pension', amount: 12000, expectedReturn: 5, volatility: 10, purpose: 'long', nature: 'invest' },
     { name: '연금저축', type: 'pension', amount: 3500, expectedReturn: 5.5, volatility: 12, purpose: 'long', nature: 'invest' },
-    { name: '거주 아파트', type: 'realestate', amount: 75000, expectedReturn: 3, volatility: 8, purpose: 'long', nature: 'invest' },
+    { name: '거주 아파트', type: 'realestate', amount: 75000, expectedReturn: 3, volatility: 8, purpose: 'long', nature: 'invest', reUse: 'home', owner: 'joint', ownerShare: 50 },
   ];
   const liabilities: Liability[] = [
     { name: '주택담보대출', balance: 28000, rate: 4.2, monthlyPayment: 150 },

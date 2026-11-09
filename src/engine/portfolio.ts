@@ -1,4 +1,5 @@
-import type { Asset, AssetType, Cashflow, Liability, Nature, Profile, Purpose, RiskProfile } from '../types';
+import type { Asset, AssetType, Cashflow, Liability, Nature, Profile, Purpose, ReUse, RiskProfile } from '../types';
+import { depositOf, RE_USE, reUseOf } from './realestate';
 
 export const ASSET_TYPES: Record<AssetType, { label: string; ret: number; vol: number; purpose: Purpose; nature: Nature; liquid: boolean }> = {
   cash: { label: '현금·입출금', ret: 1.5, vol: 0, purpose: 'short', nature: 'safe', liquid: true },
@@ -36,7 +37,8 @@ export interface Summary {
   totalAssets: number;
   financialAssets: number;
   realEstate: number;
-  totalDebt: number;
+  totalDebt: number; // 대출 + 임대보증금
+  depositDebt: number; // 임대보증금(돌려줄 돈)
   netWorth: number;
   income: number;
   fixed: number;
@@ -46,7 +48,8 @@ export interface Summary {
   savings: number; // 월 저축여력
   savingsRate: number; // %
   byType: { key: AssetType; label: string; value: number }[];
-  byPurpose: { key: Purpose; label: string; value: number }[];
+  byPurpose: { key: Purpose; label: string; value: number }[]; // 금융자산만
+  byReUse: { key: ReUse; label: string; value: number }[]; // 부동산 용도별
   byNature: { key: Nature; label: string; value: number }[];
   portfolioReturn: number; // 금융자산 가중 기대수익률 %
   portfolioVol: number; // 금융자산 가중 변동성 % (단순 가중, 보수적)
@@ -61,7 +64,8 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
   const fin = assets.filter(isFinancial);
   const financialAssets = sum(fin.map((a) => a.amount));
   const realEstate = totalAssets - financialAssets;
-  const totalDebt = sum(liabilities.map((l) => l.balance));
+  const depositDebt = sum(assets.map(depositOf));
+  const totalDebt = sum(liabilities.map((l) => l.balance)) + depositDebt;
   const fixed = sum(cashflows.filter((c) => c.kind === 'fixed').map((c) => c.monthly));
   const variable = sum(cashflows.filter((c) => c.kind === 'variable').map((c) => c.monthly));
   const debtPayment = sum(liabilities.map((l) => l.monthlyPayment));
@@ -79,13 +83,14 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
   const w = (f: (a: Asset) => number) => (financialAssets > 0 ? sum(fin.map((a) => (a.amount / financialAssets) * f(a))) : 0);
   const investAmt = sum(fin.filter((a) => a.nature === 'invest').map((a) => a.amount));
   const liquidAssets = sum(assets.filter((a) => ASSET_TYPES[a.type].liquid).map((a) => a.amount));
-  const emergencyFund = sum(assets.filter((a) => a.purpose === 'short' && ASSET_TYPES[a.type].liquid).map((a) => a.amount));
+  const emergencyFund = sum(fin.filter((a) => a.purpose === 'short' && ASSET_TYPES[a.type].liquid).map((a) => a.amount));
 
   return {
     totalAssets,
     financialAssets,
     realEstate,
     totalDebt,
+    depositDebt,
     netWorth: totalAssets - totalDebt,
     income,
     fixed,
@@ -95,7 +100,8 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
     savings,
     savingsRate: income > 0 ? (savings / income) * 100 : 0,
     byType: group((a) => a.type, typeLabels),
-    byPurpose: group((a) => a.purpose, PURPOSE_LABEL),
+    byPurpose: group((a) => a.purpose, PURPOSE_LABEL, fin),
+    byReUse: group(reUseOf, Object.fromEntries(Object.entries(RE_USE).map(([k, v]) => [k, `부동산·${v}`])) as Record<ReUse, string>, assets.filter((a) => !isFinancial(a))),
     byNature: group((a) => a.nature, NATURE_LABEL, fin),
     portfolioReturn: financialAssets > 0 ? w((a) => a.expectedReturn) : 3,
     portfolioVol: financialAssets > 0 ? w((a) => a.volatility) : 5,

@@ -130,7 +130,7 @@ function PrescribeInner() {
               );
             })}
           </div>
-          <p className="mt-3 text-xs text-muted">비상금 = 월 지출 × {p.criteria.emergencyMonths}개월, 목적자금 = 10년 이내 목표의 현재 필요액, 노후자금 = 나머지(부동산 포함).</p>
+          <p className="mt-3 text-xs text-muted">비상금 = 월 지출 × {p.criteria.emergencyMonths}개월, 목적자금 = 10년 이내 목표의 현재 필요액, 노후자금 = 나머지 금융자산(부동산은 제외 · 매각 계획은 노후 진단에 반영).</p>
         </Card>
 
         <Card title="보장 갭 분석" action={<Badge level={d.ins.premiumLevel}>보험료 {pct(d.ins.premiumRatio, 1)}</Badge>}>

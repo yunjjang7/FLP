@@ -26,7 +26,7 @@ export default function Home() {
           <div className="mt-1 text-4xl font-extrabold tracking-tight">{won(s.netWorth)}</div>
           <div className="mt-4 grid grid-cols-3 gap-3 border-t border-line pt-4">
             <Stat label="총자산" value={won(s.totalAssets)} />
-            <Stat label="부채" value={won(s.totalDebt)} />
+            <Stat label="부채" value={won(s.totalDebt)} sub={s.depositDebt > 0 ? `임대보증금 ${won(s.depositDebt)} 포함` : undefined} />
             <Stat label="금융자산" value={won(s.financialAssets)} sub={`부동산 ${won(s.realEstate)}`} />
           </div>
         </Card>
@@ -64,7 +64,7 @@ export default function Home() {
             </div>
           }
         >
-          <Donut data={view === 'type' ? s.byType : s.byPurpose} />
+          <Donut data={view === 'type' ? s.byType : [...s.byPurpose, ...s.byReUse]} />
         </Card>
 
         <Card title="월 현금흐름">

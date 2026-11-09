@@ -7,10 +7,10 @@ import { Card } from './ui';
 
 /** 종합소득세·지역 건강보험료 추정(명목)과 추가 납입 세액공제 */
 export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
-  const { profile: p, summary } = useFlp();
+  const { profile: p, summary, assets } = useFlp();
   const nowYear = p.birthYear + summary.age;
   const slotByYear = useMemo(() => (tax ? new Map(tax.rows.map((r) => [r.year, r.slot.self + r.slot.spouse])) : undefined), [tax]);
-  const rows = useMemo(() => incomeTaxSchedule(p, nowYear, slotByYear), [p, nowYear, slotByYear]);
+  const rows = useMemo(() => incomeTaxSchedule(p, nowYear, slotByYear, assets), [p, nowYear, slotByYear, assets]);
   const contrib = useMemo(() => contribSchedule(p, rows), [p, rows]);
   if (rows.length === 0) return null;
   const hasSpouse = p.spouseBirthYear > 0;

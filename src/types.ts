@@ -5,19 +5,31 @@ export type AssetType =
 export type Purpose = 'short' | 'mid' | 'long'; // 단기·비상금 / 중기·목적자금 / 장기·노후
 export type Nature = 'safe' | 'invest';
 export type RiskProfile = 'conservative' | 'moderate' | 'balanced' | 'growth' | 'aggressive';
+/** 부동산 용도: 거주용 · 임대용 · 투자·기타(토지 등) */
+export type ReUse = 'home' | 'rental' | 'land';
+/** 자산 명의: 공동명의는 부동산만 */
+export type AssetOwner = IncomeOwner | 'joint';
 
 export interface Asset {
   id?: number;
   name: string;
   type: AssetType;
-  amount: number;
-  expectedReturn: number;
-  volatility: number;
-  purpose: Purpose;
-  nature: Nature;
-  owner?: IncomeOwner; // 명의(기본 본인): 연금 세금·1,500만 한도를 사람별로 계산
-  lockYear?: number; // 수령 연도(노란우산 등): 그 전에는 인출할 수 없고 기대수익률로 불어난 뒤 일시금으로 들어옴
-  lockTax?: number; // 수령 시 실효세율(%)
+  amount: number; // 부동산은 현재 시세
+  expectedReturn: number; // 부동산은 연 시세 상승률(명목)
+  volatility: number; // 부동산은 쓰지 않음(노후 시뮬레이션 제외)
+  purpose: Purpose; // 금융자산만 사용
+  nature: Nature; // 금융자산만 사용
+  owner?: AssetOwner; // 명의(기본 본인): 연금 세금·1,500만 한도, 임대소득 종소세를 사람별로 계산
+  ownerShare?: number; // 공동명의일 때 본인 지분(%)
+  lockYear?: number; // 수령 연도(노란우산 등): 그 전에는 인출할 수 없고 기대수익률로 불어난 뒤 일시금으로 들어옴. 부동산은 매각 연도
+  lockTax?: number; // 수령 시 실효세율(%). 부동산은 매각 비용률(양도세·중개보수 등 %)
+  reUse?: ReUse; // 부동산 용도(기본 거주용)
+  rent?: number; // 임대용: 월세(만원, 오늘 기준)
+  deposit?: number; // 임대용: 임대보증금(만원) — 돌려줄 돈이라 부채로 계산
+  renewCycle?: number; // 임대용: 계약 갱신 주기(년)
+  renewRate?: number; // 임대용: 갱신 때 월세 인상률(%)
+  rentCost?: number; // 임대용: 공실·관리 경비율(월세 대비 %)
+  reBuy?: number; // 거주용: 매각 후 새로 살 집 가격(오늘 시세, 만원 · 다운사이징)
   taxFree?: number; // 연금계좌 중 과세제외 금액(비과세 원금, 만원)
   retirePart?: number; // 연금계좌 중 퇴직금 재원(이연퇴직소득, 만원)
   pensionYear1?: number; // 연금수령 1년차 연도(기산연도). 비우면 명의자가 55세가 되는 해

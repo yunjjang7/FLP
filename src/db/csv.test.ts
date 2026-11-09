@@ -9,7 +9,9 @@ describe('CSV 입출력', () => {
     expect(csv.split('\n')[0]).toContain('이름');
     const { rows, errors } = fromCSV('assets', csv);
     expect(errors).toEqual([]);
-    expect(rows).toEqual(assets);
+    // CSV는 기본 열만 주고받음(명의·매각·임대 조건 등 추가 설정은 JSON 백업으로)
+    const keys = ['name', 'type', 'amount', 'purpose', 'nature', 'expectedReturn', 'volatility'] as const;
+    expect(rows).toEqual(assets.map((a) => Object.fromEntries(keys.map((k) => [k, a[k]]))));
   });
   it('템플릿과 영문 키·쉼표 금액 허용', () => {
     expect(fromCSV('goals', templateCSV('goals')).rows).toHaveLength(1);

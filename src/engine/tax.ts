@@ -60,7 +60,7 @@ export function taxSetup(profile: Profile, assets: Asset[], nowYear: number, sta
   // 같은 사람 계좌는 ‘꺼내는 순서’대로(0이면 입력 순서)
   const sorted = pension.map((a, i) => ({ a, key: (a.drawOrder ?? 0) > 0 ? a.drawOrder! : 1000 + i })).sort((x, y) => x.key - y.key).map((x) => x.a);
   const accounts: AccountPot[] = sorted.map((a) => {
-    const owner = a.owner ?? 'self';
+    const owner = a.owner === 'spouse' ? 'spouse' : 'self';
     const free = Math.min(a.amount, a.taxFree ?? 0);
     const retire = Math.min(Math.max(0, a.amount - free), a.retirePart ?? 0);
     const year1 = a.pensionYear1 || (owner === 'spouse' ? spouseBirth : profile.birthYear) + PENSION_OPEN_AGE;
@@ -78,7 +78,7 @@ export function taxSetup(profile: Profile, assets: Asset[], nowYear: number, sta
     retireBase: profile.retireTaxRate ?? 0,
     retireYear1: profile.retireTaxYear1 || nowYear,
     slotFillFrom: profile.slotFill ? Math.max(nowYear, profile.slotFillFrom || nowYear) : Infinity,
-    contrib: contribSchedule(profile, incomeTaxSchedule(profile, nowYear)),
+    contrib: contribSchedule(profile, incomeTaxSchedule(profile, nowYear, undefined, assets)),
   };
 }
 

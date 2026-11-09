@@ -1,6 +1,7 @@
-import type { ContribPlan, IncomeTaxSettings, Profile } from '../types';
+import type { Asset, ContribPlan, IncomeTaxSettings, Profile } from '../types';
 import { npTerms, spouseToSelf } from './goals';
 import { incomeValue, type IncomeStream } from './montecarlo';
+import { rentStreams, type RentStream } from './realestate';
 
 /** 종합소득세·건보료 기본값(2026년 기준 요율) */
 export const DEFAULT_INCOME_TAX: IncomeTaxSettings = {
@@ -70,20 +71,24 @@ export interface IncomeTaxRow {
  * 건보료 소득분은 전년도 소득 기준, 재산분은 현재 고지서에서 역산해 고정(증가율 입력 가능).
  * slotByYear: 사적연금도 건보료에 반영할 때 연도별 과세재원 인출액(명목).
  */
-export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number>): IncomeTaxRow[] {
+export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number>, assets: Asset[] = []): IncomeTaxRow[] {
   const s = { ...DEFAULT_INCOME_TAX, ...(profile.incomeTax ?? {}) };
   const inf = profile.inflation / 100;
   const currentAge = nowYear - profile.birthYear;
   const toSelf = (age: number, owner?: string) => (owner === 'spouse' ? spouseToSelf(profile, age) : age);
-  const rents: IncomeStream[] = (profile.incomes ?? [])
-    .filter((i) => i.rent)
-    .map((i) => ({ startAge: toSelf(i.startAge, i.owner), endAge: i.endAge > 0 ? toSelf(i.endAge, i.owner) : undefined, annual: i.monthly * 12, growth: i.growth, step: i.step, baseAge: currentAge }));
+  // ‘그 밖의 은퇴 후 소득’ 임대료는 설정의 배우자 몫, 임대용 부동산 자산은 자산 명의·지분으로 나눔(세금은 경비 차감 전 월세 기준)
+  const hasSpouse = profile.spouseBirthYear > 0;
+  const rents: RentStream[] = [
+    ...(profile.incomes ?? [])
+      .filter((i) => i.rent)
+      .map((i) => ({ startAge: toSelf(i.startAge, i.owner), endAge: i.endAge > 0 ? toSelf(i.endAge, i.owner) : undefined, annual: i.monthly * 12, growth: i.growth, step: i.step, baseAge: currentAge, spouseShare: s.rentSpouseShare / 100 })),
+    ...rentStreams(assets, profile, currentAge, true),
+  ].map((r) => (hasSpouse ? r : { ...r, spouseShare: 0 }));
   const npStreams: IncomeStream[] = [
     { startAge: profile.nationalPensionAge, annual: profile.nationalPension * 12, ...npTerms(profile, profile.birthMonth, currentAge) },
     { startAge: spouseToSelf(profile, profile.spousePensionAge), annual: profile.spouseBirthYear > 0 ? profile.spousePension * 12 : 0, ...npTerms(profile, profile.spouseBirthMonth, currentAge) },
   ];
   const net = Math.max(1, s.npNet) / 100;
-  const share = s.rentSpouseShare / 100;
   const keep = 1 - s.rentExpense / 100;
   const ltc = 1 + s.hiLtc / 100;
   const rate = s.hiRate / 100;
@@ -98,9 +103,10 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     const n = year - nowYear;
     const age = year - profile.birthYear;
     const defl = Math.pow(1 + inf, n);
-    const rent = rents.reduce((a, r) => a + incomeValue(r, age, profile.inflation), 0) * defl;
-    const rentSpouse = rent * share * keep;
-    const rentSelf = rent * (1 - share) * keep;
+    const rentBy = rents.map((r) => ({ v: incomeValue(r, age, profile.inflation) * defl, w: r.spouseShare }));
+    const rent = rentBy.reduce((a, r) => a + r.v, 0);
+    const rentSpouse = rentBy.reduce((a, r) => a + r.v * r.w, 0) * keep;
+    const rentSelf = rentBy.reduce((a, r) => a + r.v * (1 - r.w), 0) * keep;
     const npSelf = (incomeValue(npStreams[0], age, profile.inflation) * defl) / net;
     const npSpouse = (incomeValue(npStreams[1], age, profile.inflation) * defl) / net;
     const incomeSelf = rentSelf + pensionIncomeAmount(npSelf * (s.npTaxable / 100));

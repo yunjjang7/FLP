@@ -232,7 +232,7 @@ function WithdrawInner() {
               <tr className="border-b border-line text-right text-xs text-muted">
                 <th className="py-2 text-left font-medium">나이</th>
                 <th className="font-medium">연금·소득</th>
-                {hasInflow && <th className="font-medium">일시금·환급</th>}
+                {hasInflow && <th className="font-medium">일시금·매각·환급</th>}
                 <th className="font-medium">자산 인출{tax ? '(세후)' : ''}</th>
                 {tax && <th className="font-medium">세금</th>}
                 {tax && <th className="font-medium">세전 인출</th>}

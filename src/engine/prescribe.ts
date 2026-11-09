@@ -156,7 +156,7 @@ export function bucketMap(profile: Profile, s: Summary, goalPlans: GoalPlan[]): 
   const cur = (k: string) => s.byPurpose.find((p) => p.key === k)?.value ?? 0;
   const shortTarget = s.expense * profile.criteria.emergencyMonths;
   const midTarget = goalPlans.filter((g) => g.years <= 10).reduce((a, g) => a + g.futureValue / Math.pow(1.03, g.years), 0);
-  const total = s.totalAssets;
+  const total = s.financialAssets; // 부동산은 바구니에 넣지 않음
   return [
     { key: 'short', label: '비상금 바구니', current: cur('short'), target: Math.min(total, shortTarget) },
     { key: 'mid', label: '목적자금 바구니', current: cur('mid'), target: Math.max(0, Math.min(total - shortTarget, midTarget)) },

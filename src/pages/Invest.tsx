@@ -68,7 +68,7 @@ export default function Invest() {
             세로선은 {target.label} 성향의 권장 투자형 비중({target.investShare}%)입니다. 성향은 ‘데이터·설정 → 프로필’에서 바꿀 수 있습니다.
           </p>
         </Card>
-        <Card title="용도별 배치">
+        <Card title="용도별 배치 (금융자산)">
           <Donut data={s.byPurpose} />
         </Card>
       </div>
