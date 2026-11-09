@@ -1,0 +1,7 @@
+node_modules
+dist
+dev-dist
+*.local
+
+# 개인 실데이터 백업(커밋·배포 금지)
+private/

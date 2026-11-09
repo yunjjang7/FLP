@@ -1,0 +1,528 @@
+import { useRef, useState } from 'react';
+import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
+import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
+import { TABLES } from '../db/schema';
+import { ASSET_TYPES, RISK_PROFILES } from '../engine/portfolio';
+import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
+import { Button, Card, PageHeader } from '../components/ui';
+import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
+import { won } from '../lib/format';
+import { useFlp } from '../store/FlpContext';
+import { loanEndAge } from '../engine/goals';
+import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
+import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX } from '../engine/incomeTax';
+import type { Asset, AssetType, ContribPlan, Criteria, ExpenseMode, Goal, IncomeOwner, IncomeTaxSettings, Liability, Profile, RetireIncome } from '../types';
+
+const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
+const EXPENSE_HINT: Record<ExpenseMode, string> = {
+  real: '물가만큼 올라 생활 수준 유지',
+  growth: '생활비가 정한 비율로만 오름',
+  draw: '연금계좌+국민연금은 같은 금액, 임대료 등은 모두 씀',
+};
+
+type Tab = 'profile' | ListTable | 'criteria' | 'backup';
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'profile', label: '프로필' },
+  { key: 'assets', label: '자산' },
+  { key: 'liabilities', label: '부채' },
+  { key: 'cashflows', label: '지출' },
+  { key: 'goals', label: '재무목표' },
+  { key: 'insurance', label: '보험' },
+  { key: 'criteria', label: '점검 기준' },
+  { key: 'backup', label: '가져오기·백업' },
+];
+
+export default function Data() {
+  const [tab, setTab] = useState<Tab>('profile');
+  return (
+    <>
+      <PageHeader title="데이터·설정" desc="모든 데이터는 이 기기의 브라우저 안에만 저장되며 외부로 전송되지 않습니다. 금액 단위는 만원입니다." />
+      <div className="-mx-4 mb-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+        <div className="flex w-max gap-1.5">
+          {TABS.map((t) => (
+            <button key={t.key} onClick={() => setTab(t.key)} className={`rounded-full px-3.5 py-1.5 text-sm font-medium ${tab === t.key ? 'bg-ink text-surface' : 'border border-line bg-surface text-muted'}`}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {tab === 'profile' && <ProfileForm />}
+      {tab === 'criteria' && <CriteriaForm />}
+      {tab === 'backup' && <BackupPanel />}
+      {tab !== 'profile' && tab !== 'criteria' && tab !== 'backup' && <ListEditor table={tab} />}
+    </>
+  );
+}
+
+function useSaveProfile() {
+  const { profile } = useFlp();
+  return (patch: Partial<Profile>) => db.profile.put({ ...profile, ...patch });
+}
+
+function ProfileForm() {
+  const { profile: p, summary, start } = useFlp();
+  const save = useSaveProfile();
+  const n = (key: keyof Profile, label: string, unit?: string, hint?: string, step = 1) => (
+    <Labeled label={label} hint={hint}>
+      <NumberField value={(p[key] as number) ?? 0} unit={unit} step={step} onChange={(v) => save({ [key]: v })} />
+    </Labeled>
+  );
+  const hasSpouse = p.spouseBirthYear > 0;
+  const spouseNow = hasSpouse ? summary.age + p.birthYear - p.spouseBirthYear : 0;
+  /** 본인 나이 → "2032년" */
+  const selfYear = (age: number) => `${p.birthYear + age}년`;
+  /** 배우자 나이 → "2038년 · 본인 70세" */
+  const spouseYear = (age: number) => (hasSpouse ? `${p.spouseBirthYear + age}년 · 본인 ${spouseToSelf(p, age)}세` : '배우자 나이 기준');
+  return (
+    <div className="space-y-4">
+      <Card title="기본 정보">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Labeled label="이름(선택)">
+            <TextField value={p.name} onChange={(v) => save({ name: v })} />
+          </Labeled>
+          {n('birthYear', '출생연도', '년', `현재 ${summary.age}세`)}
+          {n('monthlyIncome', '세후 월소득(가구)', '만원', hasSpouse ? '배우자 소득 포함, 부부 합계' : undefined)}
+          <Labeled label="투자 위험성향">
+            <SelectField value={p.riskProfile} onChange={(v) => save({ riskProfile: v as Profile['riskProfile'] })} options={Object.fromEntries(Object.entries(RISK_PROFILES).map(([k, v]) => [k, v.label]))} />
+          </Labeled>
+        </div>
+      </Card>
+      {start.retired && (
+        <p className="rounded-xl border border-brand/30 bg-brand-soft px-4 py-3 text-sm">
+          은퇴 희망 나이({p.retireAge}세)가 지났습니다. 지금({summary.age}세) 금융자산에서 바로 인출을 시작하는 것으로 계산합니다. 아직 일하고 있다면 은퇴 나이를 늦춰 주세요.
+        </p>
+      )}
+      <Card title="노후 계획">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {n('retireAge', '은퇴 희망 나이', '세', selfYear(p.retireAge))}
+          {n('lifeExpectancy', '계획 기간(기대수명)', '세', `${selfYear(p.lifeExpectancy)}${hasSpouse ? ` · 배우자 ${p.lifeExpectancy + p.birthYear - p.spouseBirthYear}세` : ''}`)}
+          {n('retireMonthlyExpense', '은퇴 후 월 생활비', '만원', hasSpouse ? '부부 합계, 현재 물가 기준' : '현재 물가 기준')}
+          {n('inflation', '물가상승률', '%', undefined, 0.1)}
+          <Labeled label="은퇴 후 생활비 변화" hint={EXPENSE_HINT[p.expenseMode ?? 'real']}>
+            <SelectField value={p.expenseMode ?? 'real'} onChange={(v) => save({ expenseMode: v as ExpenseMode })} options={EXPENSE_MODES} />
+          </Labeled>
+          {p.expenseMode === 'growth' && n('expenseGrowth', '생활비 명목 증가율', '%', `0이면 금액 고정 · 물가 ${p.inflation}%`, 0.1)}
+          {p.expenseMode === 'draw' && n('fixedDraw', '연금으로 쓰는 월 금액(세후)', '만원', '국민연금이 나오면 그만큼 계좌 인출 감소')}
+        </div>
+      </Card>
+      <Card title="부부 소득·연금" action={<span className="text-xs text-muted">금액은 세후·현재가치, 나이는 각자 나이</span>}>
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="rounded-xl border border-line p-3">
+            <div className="mb-2 text-sm font-semibold">본인 <span className="font-normal text-muted">· {p.birthYear}년생 · 현재 {summary.age}세</span></div>
+            <div className="grid grid-cols-2 gap-3">
+              {n('nationalPension', '국민연금 월액', '만원', '국민연금공단 예상액')}
+              {n('nationalPensionAge', '국민연금 개시 나이', '세', selfYear(p.nationalPensionAge))}
+              {n('privatePension', '개인·퇴직연금 월액', '만원', '정기 수령액. 계좌 잔액은 자산에 입력')}
+              {n('privatePensionAge', '개인연금 개시 나이', '세', selfYear(p.privatePensionAge))}
+            </div>
+          </div>
+          <div className="rounded-xl border border-line p-3">
+            <div className="mb-2 text-sm font-semibold">배우자 <span className="font-normal text-muted">{hasSpouse ? `· ${p.spouseBirthYear}년생 · 현재 ${spouseNow}세` : '· 출생연도를 넣으면 나이를 맞춰 계산'}</span></div>
+            <div className="grid grid-cols-2 gap-3">
+              {n('spouseBirthYear', '출생연도', '년', hasSpouse ? `본인보다 ${Math.abs(p.spouseBirthYear - p.birthYear)}살 ${p.spouseBirthYear > p.birthYear ? '적음' : p.spouseBirthYear < p.birthYear ? '많음' : '같음'}` : '0이면 배우자 없음(본인 나이로 계산)')}
+              {n('spouseIncome', '세후 월소득', '만원', '가구 월소득 중 배우자 몫')}
+              {n('spouseRetireAge', '은퇴 나이', '세', spouseYear(p.spouseRetireAge ?? 0))}
+              <div aria-hidden />
+              {n('spousePension', '국민연금 월액', '만원', '국민연금공단 예상액')}
+              {n('spousePensionAge', '국민연금 개시 나이', '세', spouseYear(p.spousePensionAge))}
+              {n('spousePrivatePension', '개인·퇴직연금 월액', '만원', '정기 수령액')}
+              {n('spousePrivatePensionAge', '개인연금 개시 나이', '세', spouseYear(p.spousePrivatePensionAge ?? 0))}
+            </div>
+          </div>
+        </div>
+        <p className="mt-3 text-xs text-muted">
+          배우자 소득은 가구 월소득에 포함된 것으로 봅니다. 배우자가 본인보다 먼저 은퇴하면 그때부터 저축이 줄고, 본인이 먼저 은퇴하면 배우자 은퇴 전까지 배우자 소득이 생활비를 보탭니다.
+        </p>
+      </Card>
+      <IncomeList />
+      <Card title="은퇴 후 자산 운용" action={<span className="text-xs text-muted">현재 포트폴리오 {summary.portfolioReturn.toFixed(1)}% / 변동성 {summary.portfolioVol.toFixed(1)}%</span>}>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          <Labeled label="운용 방식" hint="노후 진단·노후 인출에 반영">
+            <SelectField value={p.retireSeparate ? 'on' : 'off'} onChange={(v) => save({ retireSeparate: v === 'on' })} options={{ off: '은퇴 전과 동일', on: '따로 입력' }} />
+          </Labeled>
+          {p.retireSeparate && (
+            <>
+              {n('retireReturn', '은퇴 후 기대수익률', '%', '예: 채권 위주 3.5~4.5', 0.1)}
+              {n('retireVolatility', '은퇴 후 변동성', '%', '예: 5~8', 0.1)}
+            </>
+          )}
+        </div>
+      </Card>
+      <Card title="연금 세금" action={<span className="text-xs text-muted">노후 인출 스케줄의 세금 계산에 사용</span>}>
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+          {n('retireTaxRate', '퇴직소득세 실효세율', '%', '감면 전 세율(퇴직소득 원천징수영수증)', 0.01)}
+          {n('retireTaxYear1', '퇴직금 연금 실수령 1년차', '년', '11년차부터 감면 30%→40%')}
+          <Labeled label="1,500만 한도 매년 꽉 채우기" hint="남는 돈은 ISA·일반계좌로 재투자">
+            <SelectField value={p.slotFill ? 'on' : 'off'} onChange={(v) => save({ slotFill: v === 'on' })} options={{ off: '아니오(필요한 만큼만)', on: '예' }} />
+          </Labeled>
+          {p.slotFill && n('slotFillFrom', '꽉 채우기 시작 연도', '년', '0이면 올해부터')}
+        </div>
+        <p className="mt-3 text-xs text-muted">
+          연금계좌별 과세제외 금액·퇴직금 재원·명의·인출 시작 연도·꺼내는 순서는 ‘자산’ 탭의 각 연금 자산에서 입력합니다. 과세재원 인출은 1인 연 1,500만원까지 연금소득세(70세 미만 5.5%·70대 4.4%·80세 이상 3.3%)를 내고, 넘으면 16.5% 분리과세로 계산합니다.
+          ‘꽉 채우기’를 고르면 생활비보다 많아도 해마다 1인 1,500만원까지 과세재원을 꺼내(낮은 세율로 미리 꺼냄) 세후 금액을 ISA·일반계좌에 다시 넣습니다.
+        </p>
+      </Card>
+      <ContribForm />
+      <IncomeTaxForm />
+      <Card title="가족 보장">
+        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{n('dependentYears', '부양 필요 기간', '년', '막내 자녀 독립까지 등')}</div>
+      </Card>
+    </div>
+  );
+}
+
+/** 연금계좌 추가 납입(세액공제) */
+function ContribForm() {
+  const { profile: p } = useFlp();
+  const save = useSaveProfile();
+  const c = { ...DEFAULT_CONTRIB, ...(p.contrib ?? {}) };
+  const set = (k: keyof ContribPlan) => (v: number) => save({ contrib: { ...c, [k]: v } });
+  const hasSpouse = p.spouseBirthYear > 0;
+  return (
+    <Card title="연금계좌 추가 납입(세액공제)" action={<span className="text-xs text-muted">연 금액 · 만원</span>}>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
+        <Labeled label="본인 연 납입액" hint="인출 시작 전 본인 계좌로"><NumberField value={c.self} unit="만원" onChange={set('self')} /></Labeled>
+        {hasSpouse && <Labeled label="배우자 연 납입액" hint="배우자 연금계좌로"><NumberField value={c.spouse} unit="만원" onChange={set('spouse')} /></Labeled>}
+        <Labeled label="시작 연도"><NumberField value={c.from} unit="년" onChange={set('from')} /></Labeled>
+        <Labeled label="마지막 연도"><NumberField value={c.to} unit="년" onChange={set('to')} /></Labeled>
+        <Labeled label="본인 세액공제율" hint="0이면 자동(16.5 / 13.2)"><NumberField value={c.selfRate} unit="%" step={0.1} onChange={set('selfRate')} /></Labeled>
+        {hasSpouse && <Labeled label="배우자 세액공제율" hint="0이면 자동(16.5 / 13.2)"><NumberField value={c.spouseRate} unit="%" step={0.1} onChange={set('spouseRate')} /></Labeled>}
+      </div>
+      <p className="mt-3 text-xs text-muted">
+        납입금은 ISA·일반계좌에서 먼저 내고, 모자라면 연금계좌에서 더 꺼내 냅니다. 본인 납입은 ‘인출 시작 연도’가 아직 안 된 본인 연금계좌로 들어갑니다.
+        세액공제는 1인 연 {CREDIT_CAP}만원까지 납입액 × 공제율(종합소득금액 4,500만원 이하 16.5%, 초과 13.2%)이고, ‘종합소득세·건강보험료’ 추정을 켜면 그해 종합소득세까지만 공제합니다. 환급금은 다음 해 ISA·일반계좌로 들어오고, 공제받지 못한 납입액은 과세제외 금액이 됩니다.
+      </p>
+    </Card>
+  );
+}
+
+/** 종합소득세·지역 건강보험료 추정 설정 */
+function IncomeTaxForm() {
+  const { profile: p } = useFlp();
+  const save = useSaveProfile();
+  const t = { ...DEFAULT_INCOME_TAX, ...(p.incomeTax ?? {}) };
+  const set = (patch: Partial<IncomeTaxSettings>) => save({ incomeTax: { ...t, ...patch } });
+  const num = (k: keyof IncomeTaxSettings, label: string, unit: string, hint?: string, step = 1) => (
+    <Labeled label={label} hint={hint}>
+      <NumberField value={t[k] as number} unit={unit} step={step} onChange={(v) => set({ [k]: v })} />
+    </Labeled>
+  );
+  const yn = (k: 'hiPrivate' | 'addToDraw', label: string, hint: string) => (
+    <Labeled label={label} hint={hint}>
+      <SelectField value={t[k] ? 'on' : 'off'} onChange={(v) => set({ [k]: v === 'on' })} options={{ off: '아니오', on: '예' }} />
+    </Labeled>
+  );
+  const hasSpouse = p.spouseBirthYear > 0;
+  const rentCount = (p.incomes ?? []).filter((i) => i.rent).length;
+  return (
+    <Card
+      title="종합소득세·건강보험료"
+      action={
+        <SelectField value={t.on ? 'on' : 'off'} onChange={(v) => set({ on: v === 'on' })} options={{ off: '계산 안 함', on: '추정하기' }} />
+      }
+    >
+      {!t.on ? (
+        <p className="text-sm text-muted">임대소득·국민연금에 붙는 종합소득세와 지역 건강보험료를 해마다 추정해 노후 인출 화면에 보여 줍니다. 오른쪽 위에서 ‘추정하기’를 고르세요.</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            {hasSpouse && num('rentSpouseShare', '임대소득 중 배우자 몫', '%', '공동명의면 50')}
+            {num('rentExpense', '임대 필요경비율', '%', '실제 종소세와 맞도록 조정')}
+            {num('npTaxable', '국민연금 과세대상 비율', '%', '2002년 이후 납입분 비율')}
+            {num('npNet', '입력한 국민연금이 세전의', '%', '세후 금액을 넣었으면 97 등')}
+            {num('dedSelf', '본인 종합소득공제', '만원', '기본공제 150 등')}
+            {hasSpouse && num('dedSpouse', '배우자 종합소득공제', '만원', '기본공제 150 등')}
+            {num('hiNow', '현재 월 건강보험료', '만원', '고지서(장기요양 포함). 재산분 역산', 0.1)}
+            {num('hiRate', '건강보험료율', '%', '2026년 7.19', 0.01)}
+            {num('hiLtc', '장기요양보험료', '%', '건보료 대비, 2026년 13.14', 0.01)}
+            {num('hiPublic', '공적연금 건보료 반영률', '%', '지역가입자 50')}
+            {num('hiPropGrowth', '재산분 연 증가율', '%', '재산 과세표준이 오르면', 0.1)}
+            {yn('hiPrivate', '사적연금도 건보료에 반영', '제도가 바뀌면 예')}
+            {yn('addToDraw', '늘어나는 세금을 인출에 더하기', '국민연금 몫만큼 연금계좌 인출 증가')}
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            {rentCount === 0 ? '‘그 밖의 은퇴 후 소득’에서 임대료 항목의 ‘임대소득’을 체크해야 임대소득이 계산에 들어갑니다. ' : ''}
+            사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 지금 고지서에서 역산해 고정합니다(부부 한 세대). 첫해 부담은 이미 생활비에 들어 있다고 보고,
+            ‘인출에 더하기’를 고르면 국민연금 때문에 늘어나는 금액만 해마다 연금계좌에서 더 꺼냅니다.
+          </p>
+        </>
+      )}
+    </Card>
+  );
+}
+
+function CriteriaForm() {
+  const { profile } = useFlp();
+  const save = useSaveProfile();
+  const c = profile.criteria;
+  const set = (k: keyof Criteria) => (v: number) => save({ criteria: { ...c, [k]: v } });
+  return (
+    <Card title="점검 기준" action={<span className="text-xs text-muted">홈·투자 점검·처방에서 이 기준으로 판정합니다</span>}>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Labeled label="비상금 목표"><NumberField value={c.emergencyMonths} unit="개월" onChange={set('emergencyMonths')} /></Labeled>
+        <Labeled label="목표 저축률"><NumberField value={c.savingsRate} unit="%" onChange={set('savingsRate')} /></Labeled>
+        <Labeled label="부채비율 상한"><NumberField value={c.debtRatioMax} unit="%" onChange={set('debtRatioMax')} /></Labeled>
+        <Labeled label="노후 성공확률 목표"><NumberField value={c.successTarget} unit="%" onChange={set('successTarget')} /></Labeled>
+        <Labeled label="인출률 상한" hint="은퇴 첫해 인출액 / 금융자산"><NumberField value={c.withdrawRateMax} unit="%" step={0.5} onChange={set('withdrawRateMax')} /></Labeled>
+        <Labeled label="진단비 기준" hint="연소득의 몇 배"><NumberField value={c.criticalMultiple} unit="배" step={0.5} onChange={set('criticalMultiple')} /></Labeled>
+        <Labeled label="간병 필요 보장액"><NumberField value={c.careNeed} unit="만원" onChange={set('careNeed')} /></Labeled>
+        <Labeled label="유족 생활비 비율" hint="현재 지출 대비"><NumberField value={c.survivorRatio} unit="%" onChange={set('survivorRatio')} /></Labeled>
+      </div>
+    </Card>
+  );
+}
+
+/** 은퇴 후 소득(임대료 등) 목록 편집 */
+function IncomeList() {
+  const { profile: p } = useFlp();
+  const save = useSaveProfile();
+  const list = p.incomes ?? [];
+  const setAt = (i: number, patch: Partial<RetireIncome>) => save({ incomes: list.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  const add = () => save({ incomes: [...list, { name: '임대료', monthly: 100, startAge: p.retireAge, endAge: 0, growth: p.inflation, step: 1, owner: 'self' }] });
+  const hasSpouse = p.spouseBirthYear > 0;
+  /** 입력 나이 → "2032년" (배우자 기준이면 본인 나이도 함께) */
+  const when = (age: number, owner?: string) => {
+    if (age <= 0) return '';
+    if (owner === 'spouse' && hasSpouse) return `${p.spouseBirthYear + age}년 · 본인 ${spouseToSelf(p, age)}세`;
+    return `${p.birthYear + age}년`;
+  };
+  return (
+    <Card title="그 밖의 은퇴 후 소득" action={<Button variant="ghost" onClick={add}>+ 소득 추가</Button>}>
+      {list.length === 0 && <p className="text-sm text-muted">임대료·근로소득·사적연금처럼 은퇴 후 들어오는 돈이 있으면 추가하세요. 노후 진단과 노후 인출에 반영됩니다.</p>}
+      <div className="space-y-3">
+        {list.map((x, i) => (
+          <div key={i} className="rounded-xl border border-line p-3">
+            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
+              <div className="col-span-2 md:col-span-1"><Labeled label="이름"><TextField value={x.name} onChange={(v) => setAt(i, { name: v })} /></Labeled></div>
+              <Labeled label="나이 기준" hint={x.owner === 'spouse' && !hasSpouse ? '배우자 출생연도를 넣어 주세요' : undefined}>
+                <SelectField value={x.owner ?? 'self'} onChange={(v) => setAt(i, { owner: v as IncomeOwner })} options={{ self: '본인', spouse: '배우자' }} />
+              </Labeled>
+              <Labeled label="월액(만원)" hint="오늘 기준 금액"><NumberField value={x.monthly} onChange={(v) => setAt(i, { monthly: v })} /></Labeled>
+              <Labeled label="시작 나이(세)" hint={when(x.startAge, x.owner)}><NumberField value={x.startAge} onChange={(v) => setAt(i, { startAge: v })} /></Labeled>
+              <Labeled label="마지막 나이(세)" hint={x.endAge > 0 ? when(x.endAge, x.owner) : '0이면 평생'}><NumberField value={x.endAge} onChange={(v) => setAt(i, { endAge: v })} /></Labeled>
+              <Labeled label="1회 인상률(%)" hint={x.step > 1 ? `${x.step}년마다 이만큼 인상` : `매년 인상. 물가(${p.inflation}%)와 같으면 실질 유지`}><NumberField value={x.growth} step={0.1} onChange={(v) => setAt(i, { growth: v })} /></Labeled>
+              <Labeled label="인상 주기(년)" hint="예: 2년마다 5%"><NumberField value={x.step} min={1} onChange={(v) => setAt(i, { step: Math.max(1, Math.round(v)) })} /></Labeled>
+            </div>
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <input type="checkbox" checked={!!x.rent} onChange={(e) => setAt(i, { rent: e.target.checked })} />
+                임대소득(종합소득세·건강보험료 계산 대상)
+              </label>
+              <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${x.name}'을(를) 삭제할까요?`) && save({ incomes: list.filter((_, j) => j !== i) })}>삭제</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </Card>
+  );
+}
+
+/** 재무목표 카드 아래 안내: 반복 지출 */
+function goalNote(g: Goal) {
+  if (!isRecurring(g)) return `${g.targetAge}세에 한 번 지출`;
+  return `${g.targetAge}~${g.endAge}세 매년 ${won(g.amountPV)} 지출(${g.endAge! - g.targetAge + 1}회) — 노후 진단·인출에 반영, 목적자금 적립 계산에서는 제외`;
+}
+
+/** 대출 카드 아래 안내: 상환 종료 나이와 그 이후 효과 */
+function loanNote(l: Liability, age: number, retireAge: number) {
+  const { age: end, auto } = loanEndAge(l, age);
+  const src = auto ? '자동 계산' : '직접 입력';
+  if (!Number.isFinite(end)) return '월 상환액이 이자보다 적어 상환이 끝나지 않습니다. 상환 종료 나이를 직접 입력하세요.';
+  if (end < retireAge) return `${end}세에 상환 종료(${src}) → 이후 월 ${won(l.monthlyPayment)} 저축 증가로 계산`;
+  if (end === retireAge) return `${end}세에 상환 종료(${src}) → 은퇴와 함께 끝나 은퇴 후 부담 없음`;
+  return `${end}세에 상환 종료(${src}) → 은퇴 후에도 ${end - 1}세까지 상환액을 자산에서 인출`;
+}
+
+function ListEditor({ table }: { table: ListTable }) {
+  const data = useFlp();
+  const rows = data[table] as unknown as (Record<string, unknown> & { id?: number })[];
+  const { label, fields, example } = TABLES[table];
+  const tbl = db[table] as unknown as { add: (r: unknown) => Promise<unknown>; update: (id: number, p: unknown) => Promise<unknown>; delete: (id: number) => Promise<void> };
+  const amountKey = fields.find((f) => f.unit === '만원')?.key;
+  const total = amountKey ? rows.reduce((a, r) => a + Number(r[amountKey] ?? 0), 0) : 0;
+
+  const update = (row: { id?: number }, key: string, v: unknown) => {
+    let patch: Record<string, unknown> = { [key]: v };
+    if (table === 'assets' && key === 'type') {
+      const d = ASSET_TYPES[v as AssetType];
+      patch = { ...patch, expectedReturn: d.ret, volatility: d.vol, purpose: d.purpose, nature: d.nature } satisfies Partial<Asset>;
+    }
+    tbl.update(row.id!, patch);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm text-muted">
+          {label} {rows.length}건{amountKey && <> · 합계 <b className="text-ink">{won(total)}</b></>}
+        </div>
+        <Button onClick={() => tbl.add({ ...example, name: `새 ${label}` })}>+ {label} 추가</Button>
+      </div>
+      {rows.length === 0 && <Card><p className="py-6 text-center text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘가져오기·백업’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
+      {rows.map((r) => (
+        <Card key={r.id}>
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
+            {fields.map((f) => (
+              <div key={f.key} className={f.key === 'name' ? 'col-span-2 md:col-span-1' : ''}>
+                <Labeled label={f.unit ? `${f.label}(${f.unit})` : f.label} hint={f.hint}>
+                  {f.kind === 'number' ? (
+                    <NumberField value={Number(r[f.key] ?? 0)} step={f.step} onChange={(v) => update(r, f.key, v)} />
+                  ) : f.kind === 'select' ? (
+                    <SelectField value={String(r[f.key])} options={f.options!} onChange={(v) => update(r, f.key, v)} />
+                  ) : (
+                    <TextField value={String(r[f.key] ?? '')} onChange={(v) => update(r, f.key, v)} />
+                  )}
+                </Labeled>
+              </div>
+            ))}
+          </div>
+          {table === 'assets' && <AssetExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />}
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}</span>
+            <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
+              삭제
+            </button>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+/** 자산 추가 설정: 명의, 수령 전 묶인 자산(노란우산 등), 연금계좌 재원 구성 */
+function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v: unknown) => void }) {
+  const { profile: p, summary } = useFlp();
+  const nowYear = p.birthYear + summary.age;
+  const hasSpouse = p.spouseBirthYear > 0;
+  const pension = a.type === 'pension';
+  const locked = (a.lockYear ?? 0) > nowYear;
+  const [open, setOpen] = useState(pension || locked || (a.owner ?? 'self') !== 'self');
+  if (!open) {
+    return (
+      <button className="mt-2 text-xs font-medium text-brand hover:underline" onClick={() => setOpen(true)}>
+        + 명의·수령 시점{pension ? '·연금 재원' : ''} 설정
+      </button>
+    );
+  }
+  const inflow = locked ? lockedInflow(a, p, nowYear) : null;
+  return (
+    <div className="mt-3 rounded-xl bg-sunken p-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
+        {hasSpouse && (
+          <Labeled label="명의">
+            <SelectField value={a.owner ?? 'self'} onChange={(v) => onChange('owner', v)} options={{ self: '본인', spouse: '배우자' }} />
+          </Labeled>
+        )}
+        <Labeled label="수령 연도" hint={locked ? `${nowYear}~${a.lockYear! - 1}년 인출 불가` : '0이면 지금 인출 가능'}>
+          <NumberField value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
+        </Labeled>
+        <Labeled label="수령 시 세율(%)" hint="일시금 실효세율">
+          <NumberField value={a.lockTax ?? 0} step={0.1} onChange={(v) => onChange('lockTax', v)} />
+        </Labeled>
+        {pension && (
+          <>
+            <Labeled label="과세제외(만원)" hint="세액공제 안 받은 원금">
+              <NumberField value={a.taxFree ?? 0} onChange={(v) => onChange('taxFree', v)} />
+            </Labeled>
+            <Labeled label="퇴직금 재원(만원)" hint="IRP 이연퇴직소득">
+              <NumberField value={a.retirePart ?? 0} onChange={(v) => onChange('retirePart', v)} />
+            </Labeled>
+            <Labeled label="과세재원(만원)" hint="1,500만 한도 대상">
+              <div className="py-2 text-sm font-semibold">{won(Math.max(0, a.amount - (a.taxFree ?? 0) - (a.retirePart ?? 0)))}</div>
+            </Labeled>
+            <Labeled label="연금수령 1년차 연도" hint={yearNoHint(a, p, nowYear)}>
+              <NumberField value={a.pensionYear1 ?? 0} onChange={(v) => onChange('pensionYear1', v)} />
+            </Labeled>
+            <Labeled label="인출 시작 연도" hint={(a.drawStartYear ?? 0) > nowYear ? `${a.drawStartYear! - 1}년까지 꺼내지 않음 · 추가 납입 계좌` : '0이면 바로(55세부터)'}>
+              <NumberField value={a.drawStartYear ?? 0} onChange={(v) => onChange('drawStartYear', v)} />
+            </Labeled>
+            <Labeled label="꺼내는 순서" hint="같은 명의 안에서 작을수록 먼저 · 0이면 입력 순서">
+              <NumberField value={a.drawOrder ?? 0} min={0} onChange={(v) => onChange('drawOrder', v)} />
+            </Labeled>
+          </>
+        )}
+      </div>
+      {pension && (
+        <p className="mt-2 text-xs text-muted">
+          연금수령 1년차는 55세가 되고 가입 5년이 지난 해입니다(2013년 3월 전 가입 계좌는 55세에 6년차). 10년차까지는 해마다 ‘연초 평가액 ÷ (11 − 연차) × 120%’까지만 연금으로 받을 수 있고, 넘는 금액은 연금외수령으로 세금이 무거워집니다.
+        </p>
+      )}
+      {inflow && (
+        <p className="mt-2 text-xs text-muted">
+          {inflow.year}년(본인 {inflow.age}세)까지 연 {a.expectedReturn}%로 불어나 세후 약 {won(inflow.nominal)}(현재가치 {won(inflow.amount)})을 받아, 그때부터 다른 금융자산과 함께 은퇴 후 수익률로 운용합니다. 그 전에는 인출률·인출 계산에서 뺍니다.
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** 올해 연금수령연차·한도 안내 */
+function yearNoHint(a: Asset, p: Profile, nowYear: number) {
+  const birth = (a.owner ?? 'self') === 'spouse' && p.spouseBirthYear > 0 ? p.spouseBirthYear : p.birthYear;
+  const year1 = a.pensionYear1 || birth + PENSION_OPEN_AGE;
+  const n = pensionYearNo(nowYear, year1);
+  if (n < 1) return `${a.pensionYear1 ? '' : '비우면 55세 · '}${year1}년부터 수령`;
+  const limit = pensionLimit(a.amount, n);
+  return `올해 ${n}년차 · 한도 ${limit === Infinity ? '없음' : won(limit)}`;
+}
+
+function BackupPanel() {
+  const [table, setTable] = useState<ListTable>('assets');
+  const [msg, setMsg] = useState<string>('');
+  const [mode, setMode] = useState<'append' | 'replace'>('append');
+  const csvRef = useRef<HTMLInputElement>(null);
+  const jsonRef = useRef<HTMLInputElement>(null);
+  const data = useFlp();
+  const stamp = new Date().toLocaleDateString('sv-SE');
+
+  const onCSV = async (file: File) => {
+    const { rows, errors } = fromCSV(table, await file.text());
+    const tbl = db[table] as unknown as { clear: () => Promise<void>; bulkAdd: (r: unknown[]) => Promise<unknown> };
+    if (mode === 'replace') await tbl.clear();
+    await tbl.bulkAdd(rows);
+    setMsg(`${TABLES[table].label} ${rows.length}건을 가져왔습니다.${errors.length ? `\n확인 필요:\n- ${errors.join('\n- ')}` : ''}`);
+  };
+
+  return (
+    <div className="space-y-4">
+      <Card title="CSV 가져오기·내보내기" action={<span className="text-xs text-muted">엑셀에서 ‘CSV UTF-8’로 저장</span>}>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Labeled label="대상">
+            <SelectField value={table} onChange={(v) => setTable(v as ListTable)} options={Object.fromEntries(Object.entries(TABLES).map(([k, v]) => [k, v.label]))} />
+          </Labeled>
+          <Labeled label="가져오기 방식">
+            <SelectField value={mode} onChange={(v) => setMode(v as 'append' | 'replace')} options={{ append: '기존 데이터에 추가', replace: '기존 데이터를 지우고 교체' }} />
+          </Labeled>
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <Button variant="ghost" onClick={() => downloadText(`FLP_${TABLES[table].label}_양식.csv`, templateCSV(table))}>양식 내려받기</Button>
+          <Button onClick={() => csvRef.current?.click()}>CSV 가져오기</Button>
+          <Button variant="ghost" onClick={() => downloadText(`FLP_${TABLES[table].label}_${stamp}.csv`, toCSV(table, data[table] as never))}>CSV 내보내기</Button>
+        </div>
+        <input ref={csvRef} type="file" accept=".csv,text/csv" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onCSV(f).catch((err) => setMsg(String(err))); e.target.value = ''; }} />
+        {msg && <pre className="mt-3 whitespace-pre-wrap rounded-lg bg-sunken p-3 text-xs">{msg}</pre>}
+      </Card>
+
+      <Card title="전체 백업·복원">
+        <p className="mb-3 text-sm text-muted">기기를 바꾸거나 브라우저 데이터를 지우기 전에 전체 백업(JSON)을 받아 두세요.</p>
+        <div className="flex flex-wrap gap-2">
+          <Button onClick={async () => downloadText(`FLP_백업_${stamp}.json`, JSON.stringify(await exportBackup(), null, 2), 'application/json')}>백업 파일 받기</Button>
+          <Button variant="ghost" onClick={() => jsonRef.current?.click()}>백업에서 복원</Button>
+        </div>
+        <input ref={jsonRef} type="file" accept=".json,application/json" hidden onChange={async (e) => {
+          const f = e.target.files?.[0];
+          e.target.value = '';
+          if (!f || !confirm('현재 데이터를 모두 지우고 백업 내용으로 바꿉니다. 계속할까요?')) return;
+          try { await importBackup(JSON.parse(await f.text())); setMsg('백업을 복원했습니다.'); } catch (err) { setMsg(`복원 실패: ${(err as Error).message}`); }
+        }} />
+      </Card>
+
+      <Card title="샘플·초기화">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="ghost" onClick={() => confirm('현재 데이터를 지우고 샘플 데이터(45세 4인 가구 예시)를 불러올까요?') && loadSample().then(() => setMsg('샘플 데이터를 불러왔습니다.'))}>샘플 데이터 불러오기</Button>
+          <Button variant="danger" onClick={() => confirm('모든 데이터를 영구 삭제합니다. 되돌릴 수 없습니다. 계속할까요?') && resetAll().then(() => setMsg('모든 데이터를 삭제했습니다.'))}>모든 데이터 삭제</Button>
+        </div>
+      </Card>
+    </div>
+  );
+}

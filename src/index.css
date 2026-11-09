@@ -1,0 +1,101 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Pretendard Variable', Pretendard, -apple-system, 'Apple SD Gothic Neo', 'Malgun Gothic', system-ui, sans-serif;
+  --color-bg: var(--c-bg);
+  --color-surface: var(--c-surface);
+  --color-sunken: var(--c-sunken);
+  --color-line: var(--c-line);
+  --color-ink: var(--c-ink);
+  --color-muted: var(--c-muted);
+  --color-brand: var(--c-brand);
+  --color-brand-soft: var(--c-brand-soft);
+  --color-good: var(--c-good);
+  --color-good-soft: var(--c-good-soft);
+  --color-warn: var(--c-warn);
+  --color-warn-soft: var(--c-warn-soft);
+  --color-bad: var(--c-bad);
+  --color-bad-soft: var(--c-bad-soft);
+}
+
+:root {
+  --c-bg: #f4f6f9;
+  --c-surface: #ffffff;
+  --c-sunken: #eef1f5;
+  --c-line: #e1e6ed;
+  --c-ink: #17202e;
+  --c-muted: #5f6b7c;
+  --c-brand: #1f56d6;
+  --c-brand-soft: #e6eefc;
+  --c-good: #12805c;
+  --c-good-soft: #e3f4ed;
+  --c-warn: #b25e00;
+  --c-warn-soft: #fdf0dc;
+  --c-bad: #c8352f;
+  --c-bad-soft: #fbe6e5;
+  --chart-1: #1f56d6;
+  --chart-2: #12a08a;
+  --chart-3: #e0901d;
+  --chart-4: #8a5cd6;
+  --chart-5: #d6497a;
+  --chart-6: #5f8fb5;
+  --chart-7: #9aa5b4;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-bg: #0f141b;
+    --c-surface: #171e28;
+    --c-sunken: #111821;
+    --c-line: #283242;
+    --c-ink: #e7ecf3;
+    --c-muted: #98a3b3;
+    --c-brand: #6d9bff;
+    --c-brand-soft: #1b2a47;
+    --c-good: #3cc893;
+    --c-good-soft: #13312a;
+    --c-warn: #f0a640;
+    --c-warn-soft: #3a2a14;
+    --c-bad: #f2716a;
+    --c-bad-soft: #3d1c1c;
+    --chart-1: #6d9bff;
+    --chart-2: #3cc8b0;
+    --chart-3: #f0a640;
+    --chart-4: #b08cff;
+    --chart-5: #f27aa6;
+    --chart-6: #82b1d6;
+    --chart-7: #6b7686;
+    color-scheme: dark;
+  }
+}
+
+html,
+body {
+  background: var(--c-bg);
+  color: var(--c-ink);
+  -webkit-tap-highlight-color: transparent;
+}
+
+body {
+  font-feature-settings: 'tnum';
+}
+
+input,
+select {
+  font-variant-numeric: tabular-nums;
+}
+
+.recharts-cartesian-axis-tick-value {
+  fill: var(--c-muted);
+  font-size: 11px;
+}
+.recharts-cartesian-grid line {
+  stroke: var(--c-line);
+}
+.recharts-tooltip-wrapper .recharts-default-tooltip {
+  background: var(--c-surface) !important;
+  border: 1px solid var(--c-line) !important;
+  border-radius: 10px;
+  color: var(--c-ink);
+}

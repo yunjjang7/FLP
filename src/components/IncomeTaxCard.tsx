@@ -1,0 +1,113 @@
+import { useMemo } from 'react';
+import { contribSchedule, incomeTaxSchedule } from '../engine/incomeTax';
+import type { TaxResult } from '../engine/tax';
+import { won } from '../lib/format';
+import { useFlp } from '../store/FlpContext';
+import { Card } from './ui';
+
+/** 종합소득세·지역 건강보험료 추정(명목)과 추가 납입 세액공제 */
+export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
+  const { profile: p, summary } = useFlp();
+  const nowYear = p.birthYear + summary.age;
+  const slotByYear = useMemo(() => (tax ? new Map(tax.rows.map((r) => [r.year, r.slot.self + r.slot.spouse])) : undefined), [tax]);
+  const rows = useMemo(() => incomeTaxSchedule(p, nowYear, slotByYear), [p, nowYear, slotByYear]);
+  const contrib = useMemo(() => contribSchedule(p, rows), [p, rows]);
+  if (rows.length === 0) return null;
+  const hasSpouse = p.spouseBirthYear > 0;
+  const first = rows[0];
+  const npStart = rows.find((r) => r.npSelf + r.npSpouse > 0);
+  const after = npStart ? rows.find((r) => r.year === npStart.year + 2) ?? rows[rows.length - 1] : rows[Math.min(10, rows.length - 1)];
+  const npTotal = rows.reduce((a, r) => a + Math.max(0, r.npPart) / r.defl, 0);
+  const addToDraw = p.incomeTax?.addToDraw ?? false;
+  return (
+    <Card title="종합소득세·건강보험료" className="mt-4" action={<span className="text-xs text-muted">추정 · 명목 금액</span>}>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <div className="rounded-xl bg-sunken p-3">
+          <div className="text-xs text-muted">{first.year}년 연 부담</div>
+          <div className="mt-0.5 text-lg font-bold">{won(first.total)}</div>
+          <div className="text-xs text-muted">종소세 {won(first.taxSelf + first.taxSpouse)} · 건보료 월 {won(first.hiMonth)}</div>
+        </div>
+        <div className="rounded-xl bg-sunken p-3">
+          <div className="text-xs text-muted">{after.year}년 연 부담{npStart ? ' (국민연금 2년 뒤)' : ''}</div>
+          <div className="mt-0.5 text-lg font-bold">{won(after.total)}</div>
+          <div className="text-xs text-muted">첫해보다 {won(after.increase)} · 건보료 월 {won(after.hiMonth)}</div>
+        </div>
+        <div className="rounded-xl bg-sunken p-3">
+          <div className="text-xs text-muted">그중 국민연금 몫(합계)</div>
+          <div className="mt-0.5 text-lg font-bold">{won(npTotal)}</div>
+          <div className="text-xs text-muted">오늘 물가 · {addToDraw ? '연금계좌 인출에 더함' : '인출에는 넣지 않음'}</div>
+        </div>
+        <div className="rounded-xl bg-sunken p-3">
+          <div className="text-xs text-muted">추가 납입 세액공제</div>
+          <div className="mt-0.5 text-lg font-bold">{contrib.length ? won(contrib.reduce((a, c) => a + c.creditSelf + c.creditSpouse, 0)) : '없음'}</div>
+          <div className="text-xs text-muted">{contrib.length ? `${contrib[0].year}~${contrib[contrib.length - 1].year}년 납입 · 다음 해 환급` : '데이터·설정에서 입력'}</div>
+        </div>
+      </div>
+
+      {contrib.length > 0 && (
+        <div className="mt-3 -mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
+          <table className="w-full min-w-[520px] text-sm">
+            <thead>
+              <tr className="border-b border-line text-right text-xs text-muted">
+                <th className="py-1.5 text-left font-medium">납입 연도</th>
+                <th className="font-medium">본인 납입 · 공제율</th>
+                {hasSpouse && <th className="font-medium">배우자 납입 · 공제율</th>}
+                <th className="font-medium">세액공제(환급)</th>
+                <th className="font-medium">과세제외로 쌓임</th>
+              </tr>
+            </thead>
+            <tbody>
+              {contrib.map((c) => (
+                <tr key={c.year} className="border-b border-line text-right last:border-0">
+                  <td className="py-1.5 text-left">{c.year}년</td>
+                  <td>{c.self > 0 ? `${won(c.self)} · ${c.rateSelf}%` : '-'}</td>
+                  {hasSpouse && <td>{c.spouse > 0 ? `${won(c.spouse)} · ${c.rateSpouse}%` : '-'}</td>}
+                  <td className="font-semibold">{won(c.creditSelf + c.creditSpouse)}</td>
+                  <td className="text-muted">{won(c.self + c.spouse - c.taxedSelf - c.taxedSpouse)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      <div className="mt-3 -mx-4 max-h-[360px] overflow-auto px-4 sm:-mx-5 sm:px-5">
+        <table className="w-full min-w-[860px] text-sm">
+          <thead className="sticky top-0 bg-surface">
+            <tr className="border-b border-line text-right text-xs text-muted">
+              <th className="py-2 text-left font-medium">연도</th>
+              <th className="font-medium">임대수입</th>
+              <th className="font-medium">국민연금(세전)</th>
+              <th className="font-medium">종소세{hasSpouse ? ' 본인/배우자' : ''}</th>
+              <th className="font-medium">5월 추가납부</th>
+              <th className="font-medium">월 건보료</th>
+              <th className="font-medium">연 부담</th>
+              <th className="font-medium">첫해 대비</th>
+              <th className="font-medium">국민연금 몫</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.year} className="border-b border-line text-right last:border-0">
+                <td className="py-1.5 text-left font-medium">{r.year}<span className="ml-1 text-xs font-normal text-muted">{r.age}세</span></td>
+                <td>{won(r.rent)}</td>
+                <td>{won(r.npSelf + r.npSpouse)}</td>
+                <td className="whitespace-nowrap">{won(r.taxSelf, false)}{hasSpouse && <> / {won(r.taxSpouse, false)}</>}</td>
+                <td>{won(r.due)}</td>
+                <td>{won(r.hiMonth)}</td>
+                <td className="font-semibold">{won(r.total)}</td>
+                <td className={r.increase > 0.5 ? 'text-warn' : ''}>{won(r.increase)}</td>
+                <td className="text-muted">{won(r.npPart)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">
+        <li>사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 들어가지 않습니다(2026년 기준). 부부 한 세대 지역가입자로 계산하고, 세율·보험료율은 지금 기준으로 고정합니다.</li>
+        <li>건보료 소득분은 전년도 소득(임대 사업소득 + 공적연금 × 반영률)으로, 재산분은 지금 고지서에서 역산합니다. 국민연금 몫 = 국민연금 때문에 늘어난 종소세(원천징수 뺌) + 건보료 소득분.</li>
+        <li>첫해 부담은 이미 생활비에 들어 있다고 봅니다. 늘어나는 금액은 {addToDraw ? '국민연금 몫만큼 해마다 연금계좌에서 더 꺼내도록 노후 진단·인출에 반영했습니다.' : '생활비 안에서 쓰는 것으로 보고 인출에는 넣지 않았습니다(데이터·설정에서 바꿀 수 있음).'}</li>
+      </ul>
+    </Card>
+  );
+}
