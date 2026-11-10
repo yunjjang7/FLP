@@ -54,6 +54,7 @@ function WithdrawInner() {
       startBalance,
       expenseAnnual: planInput.retireExpenseAnnual,
       expenseGrowth: planInput.expenseGrowth,
+      expenseSteps: planInput.expenseSteps,
       fixedDraw: planInput.fixedDraw,
       inflows: planInput.inflows?.filter((x) => x.age >= startAge),
       pensions: planInput.pensions,
@@ -141,7 +142,7 @@ function WithdrawInner() {
         </div>
 
         <p className="mt-3 text-xs text-muted">
-          {retired ? `이미 은퇴 나이(${p.retireAge}세)가 지나 현재 ${startAge}세부터 인출합니다` : `은퇴 ${p.retireAge}세부터 인출`} · 월 생활비 {won(p.retireMonthlyExpense)} · 은퇴 후 기대수익률 {retMean.toFixed(1)}% / 변동성 {retVol.toFixed(1)}%{planInput.retireMeanReturn === undefined && ' (은퇴 전과 같음)'} (‘데이터·설정 → 프로필’에서 변경)
+          {retired ? `이미 은퇴 나이(${p.retireAge}세)가 지나 현재 ${startAge}세부터 인출합니다` : `은퇴 ${p.retireAge}세부터 인출`} · 월 생활비 {won(p.retireMonthlyExpense)}{planInput.expenseSteps?.length ? '(나이 구간별로 바뀜)' : ''} · 은퇴 후 기대수익률 {retMean.toFixed(1)}% / 변동성 {retVol.toFixed(1)}%{planInput.retireMeanReturn === undefined && ' (은퇴 전과 같음)'} (‘데이터·설정 → 프로필’에서 변경)
         </p>
         {others.length > 0 && (
           <p className="mt-1 text-xs text-muted">

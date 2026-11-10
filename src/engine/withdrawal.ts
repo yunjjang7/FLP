@@ -1,5 +1,5 @@
 import type { PlanBase, YearEnd } from '../types';
-import { debtPaymentAt, incomeValue, nominalFactor, publicPensionAt, type Debt, type IncomeStream } from './montecarlo';
+import { debtPaymentAt, expenseRatioAt, incomeValue, nominalFactor, publicPensionAt, type Debt, type ExpenseStep, type IncomeStream } from './montecarlo';
 import { normalGen, percentile } from './random';
 
 export type StrategyKey = 'fixed' | 'percent' | 'bucket' | 'guardrail';
@@ -43,6 +43,7 @@ export interface WithdrawInput {
   extras?: { age: number; amount: number }[]; // 은퇴 후 목적자금·매년 반복 지출
   guardrail?: GuardrailOptions;
   expenseGrowth?: number; // 생활비 명목 증가율 %(없으면 물가 연동)
+  expenseSteps?: ExpenseStep[]; // 나이 구간별 생활비 배율
   fixedDraw?: number; // 자산 인출액 명목 고정(연, 인출 시작 시점 금액)
   inflows?: { name?: string; age: number; amount: number }[]; // 노란우산 등 묶인 자산 수령액(실질)
 }
@@ -71,7 +72,7 @@ const extraAt = (inp: WithdrawInput, age: number) => (inp.extras ?? []).filter((
 export const inflowOf = (inp: WithdrawInput, age: number) => (inp.inflows ?? []).filter((e) => e.age === age).reduce((a, e) => a + e.amount, 0);
 /** 해당 나이의 생활비(실질) */
 const livingAt = (inp: WithdrawInput, age: number) =>
-  inp.expenseGrowth === undefined ? inp.expenseAnnual : inp.expenseAnnual * nominalFactor(inp.expenseGrowth, inp.inflation, age - inp.startAge);
+  inp.expenseAnnual * expenseRatioAt(inp.expenseSteps, age) * (inp.expenseGrowth === undefined ? 1 : nominalFactor(inp.expenseGrowth, inp.inflation, age - inp.startAge));
 /** 인출액 고정일 때 그해 고정액(실질): 국민·개인연금 + 자산 인출로 채움 */
 const drawAt = (inp: WithdrawInput, age: number) => (inp.fixedDraw ?? 0) * nominalFactor(0, inp.inflation, age - inp.startAge);
 /** 해당 나이에 자산에서 꺼내야 할 금액 */

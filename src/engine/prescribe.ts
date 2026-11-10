@@ -192,7 +192,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
   }
 
   for (const l of ins.lines) {
-    if (l.level !== 'good') out.push({ area: '보장', level: l.level, title: `${l.label} ${fmt(l.gap)}원 부족`, detail: `필요 ${fmt(l.need)}원 대비 현재 ${fmt(l.current)}원(${l.ratio.toFixed(0)}%).` });
+    if (l.level !== 'good') out.push({ area: '보장', level: l.level, title: `${ins.people.length > 1 ? `${l.person} ` : ''}${l.label} ${fmt(l.gap)}원 부족`, detail: `필요 ${fmt(l.need)}원 대비 현재 ${fmt(l.current)}원(${l.ratio.toFixed(0)}%).` });
   }
   for (const n of ins.notes) out.push({ area: '보장', level: 'caution', title: '보험 구조 점검', detail: n });
 

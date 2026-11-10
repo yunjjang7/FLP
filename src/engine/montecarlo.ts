@@ -53,6 +53,8 @@ export interface PlanInput {
   savingsChanges?: { fromAge: number; annual: number; name?: string }[];
   /** 은퇴 후 생활비 명목 증가율(%). 없으면 물가만큼 올라 실질 금액이 일정 */
   expenseGrowth?: number;
+  /** 나이 구간별 생활비: fromAge 나이부터 기본 생활비 × ratio(나이순 정렬) */
+  expenseSteps?: ExpenseStep[];
   /** 연금으로 쓰는 금액 명목 고정(연, 인출 시작 시점 금액): 이 금액을 국민·개인연금과 자산 인출로 채우고(연금이 늘면 인출이 줄어듦), 임대료 등 그 밖의 소득은 모두 생활비로 씀 */
   fixedDraw?: number;
   /** 수령 전 묶인 자산(노란우산 등)·부동산 매각(sale)·세액공제 환급(credit): 해당 나이에 세후 금액(실질)이 들어와 함께 운용됨 */
@@ -80,12 +82,22 @@ export const publicPensionAt = (input: { pensions: IncomeStream[]; inflation: nu
 /** 실질 배율: 명목으로 해마다 growth% 오를 때 t년 뒤 금액의 현재가치 배율 */
 export const nominalFactor = (growth: number, inflation: number, t: number) => Math.pow((1 + growth / 100) / (1 + inflation / 100), Math.max(0, t));
 
+/** 나이 구간별 생활비 배율: fromAge 나이부터 기본 생활비의 ratio배 */
+export interface ExpenseStep { fromAge: number; ratio: number }
+
+/** 해당 나이의 생활비 배율(구간이 없거나 첫 구간 전이면 1) */
+export function expenseRatioAt(steps: ExpenseStep[] | undefined, age: number) {
+  let r = 1;
+  for (const x of steps ?? []) if (age >= x.fromAge) r = x.ratio;
+  return r;
+}
+
 /** 생활비 변화가 시작되는 나이(은퇴 또는 지금 중 늦은 쪽). 그 전까지는 물가만큼 오름 */
 const expenseBaseAge = (input: PlanInput) => Math.max(input.currentAge, input.retireAge);
 
 /** 해당 나이의 은퇴 후 생활비(실질) */
 export const expenseAt = (input: PlanInput, age: number) =>
-  input.expenseGrowth === undefined ? input.retireExpenseAnnual : input.retireExpenseAnnual * nominalFactor(input.expenseGrowth, input.inflation, age - expenseBaseAge(input));
+  input.retireExpenseAnnual * expenseRatioAt(input.expenseSteps, age) * (input.expenseGrowth === undefined ? 1 : nominalFactor(input.expenseGrowth, input.inflation, age - expenseBaseAge(input)));
 
 /** 해당 나이에 들어오는 묶인 자산 수령액(실질) */
 export const inflowAt = (input: PlanInput, age: number) => (input.inflows ?? []).filter((x) => x.age === age).reduce((a, x) => a + x.amount, 0);

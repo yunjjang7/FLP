@@ -12,7 +12,7 @@ import { useFlp } from '../store/FlpContext';
 import { equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
 import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX } from '../engine/incomeTax';
-import type { Asset, AssetType, ReUse, ContribPlan, Criteria, ExpenseMode, Goal, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
+import type { Asset, AssetType, ReUse, ContribPlan, Criteria, ExpenseBand, ExpenseMode, Goal, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
 const EXPENSE_HINT: Record<ExpenseMode, string> = {
@@ -105,6 +105,7 @@ function ProfileForm() {
           {p.expenseMode === 'growth' && n('expenseGrowth', '생활비 명목 증가율', '%', `0이면 금액 고정 · 물가 ${p.inflation}%`, 0.1)}
           {p.expenseMode === 'draw' && n('fixedDraw', '연금으로 쓰는 월 금액(세후)', '만원', '국민연금이 나오면 그만큼 계좌 인출 감소')}
         </div>
+        <ExpenseBands />
       </Card>
       <Card title="부부 소득·연금" action={<span className="text-xs text-muted">금액은 세후·현재가치, 나이는 각자 나이</span>}>
         <div className="grid gap-4 lg:grid-cols-2">
@@ -287,6 +288,63 @@ function CriteriaForm() {
         <Labeled label="유족 생활비 비율" hint="현재 지출 대비"><NumberField value={c.survivorRatio} unit="%" onChange={set('survivorRatio')} /></Labeled>
       </div>
     </Card>
+  );
+}
+
+/** 나이 구간별 은퇴 후 생활비: 활동기에는 많이, 나이 들수록 적게 */
+function ExpenseBands() {
+  const { profile: p } = useFlp();
+  const save = useSaveProfile();
+  const list = p.expenseSteps ?? [];
+  const draw = p.expenseMode === 'draw';
+  const setAt = (i: number, patch: Partial<ExpenseBand>) => save({ expenseSteps: list.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
+  const add = () => {
+    const last = list.reduce((a, x) => Math.max(a, x.fromAge), p.retireAge);
+    const prev = list.length ? list[list.length - 1].monthly : p.retireMonthlyExpense;
+    save({ expenseSteps: [...list, { fromAge: Math.min(p.lifeExpectancy, last + 10), monthly: Math.round(prev * 0.8) }] });
+  };
+  // 은퇴 ~ 첫 구간 전은 기본 생활비, 그 뒤는 구간마다 바뀜(나이순)
+  const sorted = [...list].filter((x) => x.fromAge > 0).sort((a, b) => a.fromAge - b.fromAge);
+  // 은퇴 나이 이전에 시작하는 구간은 은퇴부터 기본 생활비를 대신함
+  const atRetire = sorted.filter((x) => x.fromAge <= p.retireAge).pop()?.monthly ?? p.retireMonthlyExpense;
+  const bands = [{ from: p.retireAge, monthly: atRetire }, ...sorted.filter((x) => x.fromAge > p.retireAge).map((x) => ({ from: x.fromAge, monthly: x.monthly }))];
+  const summaryText = bands
+    .map((b, i) => {
+      const to = i + 1 < bands.length ? bands[i + 1].from - 1 : p.lifeExpectancy;
+      return to >= b.from ? `${b.from}~${to}세 월 ${won(b.monthly)}` : '';
+    })
+    .filter(Boolean)
+    .join(' → ');
+  return (
+    <div className="mt-4 border-t border-line pt-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm font-semibold">
+          나이 구간별 생활비 <span className="font-normal text-muted">· 선택</span>
+        </div>
+        {!draw && <Button variant="ghost" onClick={add}>+ 구간 추가</Button>}
+      </div>
+      {draw ? (
+        <p className="text-xs text-muted">‘연금으로 쓰는 금액 고정’ 방식에서는 나이 구간별 생활비를 쓰지 않습니다.</p>
+      ) : list.length === 0 ? (
+        <p className="text-xs text-muted">
+          건강하고 활동이 많은 은퇴 초기에는 더 쓰고, 나이가 들면 덜 쓰도록 나이마다 월 생활비를 바꿀 수 있습니다. 예: 은퇴~69세 월 400만원, 70세부터 330만원, 80세부터 270만원. 구간을 추가하지 않으면 은퇴 후 월 생활비를 평생 씁니다.
+        </p>
+      ) : (
+        <div className="space-y-2">
+          {list.map((x, i) => (
+            <div key={i} className="flex flex-wrap items-end gap-3">
+              <div className="w-32"><Labeled label="시작 나이(세)" hint={`${p.birthYear + x.fromAge}년`}><NumberField value={x.fromAge} onChange={(v) => setAt(i, { fromAge: v })} /></Labeled></div>
+              <div className="w-40"><Labeled label="월 생활비(만원)" hint={p.retireMonthlyExpense > 0 ? `기본의 ${Math.round((x.monthly / p.retireMonthlyExpense) * 100)}% · 오늘 물가 기준` : '오늘 물가 기준'}><NumberField value={x.monthly} onChange={(v) => setAt(i, { monthly: v })} /></Labeled></div>
+              <button className="mb-2 text-xs font-medium text-bad hover:underline" onClick={() => save({ expenseSteps: list.filter((_, j) => j !== i) })}>삭제</button>
+            </div>
+          ))}
+          <p className="rounded-lg bg-sunken px-3 py-2 text-xs text-muted">
+            {summaryText}
+            {p.expenseMode === 'growth' && ' · 여기에 생활비 명목 증가율을 함께 적용'}
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 

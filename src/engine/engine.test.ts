@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { sampleData } from '../db/sample';
 import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, realRate, scale } from './finance';
-import { buildPlanInput, loanEndAge, lockedInflow, planGoals, retireIncomes } from './goals';
-import { insuranceGap } from './insurance';
-import { deterministicPath, expenseAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
+import { buildPlanInput, expenseSteps, loanEndAge, lockedInflow, planGoals, retireIncomes } from './goals';
+import { CRITICAL_BASE, insuranceGap } from './insurance';
+import { deterministicPath, expenseAt, expenseRatioAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
@@ -126,7 +126,8 @@ describe('샘플 데이터 통합', () => {
     expect(sim.successRate).toBeGreaterThanOrEqual(0);
     expect(sim.successRate).toBeLessThanOrEqual(100);
     const ins = insuranceGap(d.profile, s, d.insurance, d.goals);
-    expect(ins.lines).toHaveLength(3);
+    expect(ins.people[0].lines).toHaveLength(3); // 본인은 사망·진단비·간병 세 줄
+    expect(ins.people.map((g) => g.person)).toEqual(['본인', '배우자']);
     const score = financialScore(d.profile, d.assets, s, sim.successRate, ins);
     expect(score.total).toBeGreaterThanOrEqual(0);
     expect(score.total).toBeLessThanOrEqual(100);
@@ -611,5 +612,61 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(first(r1, '키움')).toBeGreaterThan(0);
     expect(first(r1, 'IRP')).toBe(0);
     expect(runCombo(cbo, combos[1], c)!.totalTax).toBeCloseTo(r[1].totalTax, 6);
+  });
+});
+
+describe('피보험자별 보장 진단', () => {
+  const d = sampleData(2026);
+  const p = { ...d.profile, spouseIncome: 250 };
+  const s = summarize(p, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+  const base = { death: 0, critical: 0, care: 0, monthlyPremium: 5 };
+  const policies = [
+    { ...base, name: '본인 종신', death: 10000 },
+    { ...base, name: '배우자 암', insured: 'spouse' as const, critical: 2000 },
+    { ...base, name: '첫째 실손', insured: 'child' as const, insuredBirthYear: 2015, critical: 1000 },
+    { ...base, name: '둘째 암', insured: 'child' as const, insuredBirthYear: 2018, critical: 3000, care: 500 },
+  ];
+  const ins = insuranceGap(p, s, policies, d.goals);
+  it('사람마다 따로 묶고 그 사람 보험만 더함', () => {
+    expect(ins.people.map((g) => g.person)).toEqual(['본인', '배우자', '자녀(2015년생)', '자녀(2018년생)']);
+    expect(ins.people[0].lines.find((l) => l.key === 'death')!.current).toBe(10000);
+    expect(ins.people[0].lines.find((l) => l.key === 'critical')!.current).toBe(0);
+    expect(ins.people[1].lines.find((l) => l.key === 'critical')!.current).toBe(2000);
+    expect(ins.people[2].count).toBe(1);
+  });
+  it('필요액: 본인 진단비는 본인 소득, 배우자는 배우자 소득, 자녀는 기준액', () => {
+    const need = (i: number, k: string) => ins.people[i].lines.find((l) => l.key === k)?.need;
+    expect(need(0, 'critical')).toBe((s.income - 250) * 12 * p.criteria.criticalMultiple);
+    expect(need(1, 'critical')).toBe(Math.max(CRITICAL_BASE, 250 * 12 * p.criteria.criticalMultiple));
+    expect(need(1, 'death')).toBe(250 * 12 * p.dependentYears);
+    expect(need(2, 'critical')).toBe(CRITICAL_BASE);
+    expect(need(2, 'death')).toBeUndefined(); // 자녀 사망·간병은 가입한 경우에만 표시
+    expect(need(3, 'care')).toBe(0);
+    expect(ins.lines).toHaveLength(ins.people.reduce((a, g) => a + g.lines.length, 0));
+  });
+});
+
+describe('나이 구간별 은퇴 후 생활비', () => {
+  const d = sampleData(2026);
+  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+  const base = d.profile.retireMonthlyExpense;
+  const p = { ...d.profile, expenseSteps: [{ fromAge: 80, monthly: base * 0.6 }, { fromAge: 70, monthly: base * 0.8 }] };
+  const inp = buildPlanInput(p, d.assets, d.liabilities, d.goals, s);
+  it('나이순 배율로 바꿔 구간마다 생활비 적용', () => {
+    expect(inp.expenseSteps).toEqual([{ fromAge: 70, ratio: 0.8 }, { fromAge: 80, ratio: 0.6 }]);
+    expect(expenseAt(inp, 65)).toBeCloseTo(base * 12, 6);
+    expect(expenseAt(inp, 70)).toBeCloseTo(base * 12 * 0.8, 6);
+    expect(expenseAt(inp, 85)).toBeCloseTo(base * 12 * 0.6, 6);
+    expect(expenseRatioAt(undefined, 90)).toBe(1);
+  });
+  it('구간이 있으면 필요자금이 줄고, 인출액 고정 방식에서는 쓰지 않음', () => {
+    const flat = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
+    expect(retirementNeed(inp).need).toBeLessThan(retirementNeed(flat).need);
+    expect(expenseSteps({ ...p, expenseMode: 'draw' })).toBeUndefined();
+    expect(expenseSteps({ ...p, expenseSteps: [] })).toBeUndefined();
+  });
+  it('기본 생활비를 바꾸는 시나리오에서는 구간도 같은 비율로 따라감', () => {
+    const more = buildPlanInput(p, d.assets, d.liabilities, d.goals, s, { retireMonthlyExpense: base * 2 });
+    expect(expenseAt(more, 75)).toBeCloseTo(base * 2 * 12 * 0.8, 6);
   });
 });

@@ -175,6 +175,7 @@ export interface Profile {
   planBase?: PlanBase; // 가드레일 기준선(연말결산 비교용)
   expenseMode?: ExpenseMode; // 은퇴 후 생활비가 해마다 어떻게 변하는지(기본 물가 연동)
   expenseGrowth?: number; // expenseMode='growth': 생활비 명목 증가율(%)
+  expenseSteps?: ExpenseBand[]; // 나이 구간별 은퇴 후 생활비(인출액 고정 방식에서는 쓰지 않음)
   fixedDraw?: number; // expenseMode='draw': 자산에서 꺼내는 월 금액(세후, 명목 고정, 만원)
   retireTaxRate?: number; // 퇴직소득세 실효세율(감면 전, %): 연금계좌 퇴직금 재원 인출 세금
   retireTaxYear1?: number; // 퇴직금 연금 실수령 1년차 연도(11년차부터 감면 30%→40%)
@@ -182,6 +183,12 @@ export interface Profile {
   slotFillFrom?: number; // 꽉 채우기 시작 연도(0이면 올해)
   incomeTax?: IncomeTaxSettings; // 종합소득세·건강보험료 추정
   contrib?: ContribPlan; // 연금계좌 추가 납입(세액공제)
+}
+
+/** 나이 구간별 은퇴 후 생활비: fromAge(본인 나이)부터 월 monthly(오늘 물가 기준, 만원) */
+export interface ExpenseBand {
+  fromAge: number;
+  monthly: number;
 }
 
 /** 종합소득세·지역 건강보험료 추정(임대소득·국민연금). 비율은 %, 금액은 만원 */

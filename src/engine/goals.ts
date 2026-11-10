@@ -1,7 +1,7 @@
 import type { Asset, Goal, Liability, Profile } from '../types';
 import { contribSchedule, creditInflows, incomeTaxSchedule, npCostOutflows } from './incomeTax';
 import { fvLump, monthlyRate, payoffMonths, pmtForTarget, realRate } from './finance';
-import { debtAnnualAt, type Debt, type IncomeStream, type PlanInput } from './montecarlo';
+import { debtAnnualAt, type Debt, type ExpenseStep, type IncomeStream, type PlanInput } from './montecarlo';
 import { isFinancial, type Summary } from './portfolio';
 import { hpStreams, rentStreams, saleInflows } from './realestate';
 
@@ -206,6 +206,14 @@ export function lockedInflow(a: Asset, profile: Profile, nowYear: number) {
 }
 
 /** 은퇴 후 생활비 방식 → 시뮬레이션 입력 */
+/** 프로필의 나이 구간별 생활비 → 기본 생활비 대비 배율(나이순). 인출액 고정 방식이거나 기본 생활비가 0이면 없음 */
+export function expenseSteps(profile: Profile): ExpenseStep[] | undefined {
+  const base = profile.retireMonthlyExpense;
+  const list = (profile.expenseSteps ?? []).filter((x) => x.fromAge > 0 && x.monthly >= 0);
+  if (profile.expenseMode === 'draw' || !(base > 0) || !list.length) return undefined;
+  return [...list].sort((a, b) => a.fromAge - b.fromAge).map((x) => ({ fromAge: x.fromAge, ratio: x.monthly / base }));
+}
+
 export function expenseRule(profile: Profile): Pick<PlanInput, 'expenseGrowth' | 'fixedDraw'> {
   if (profile.expenseMode === 'growth') return { expenseGrowth: profile.expenseGrowth ?? 0 };
   if (profile.expenseMode === 'draw') return { fixedDraw: (profile.fixedDraw ?? 0) * 12 };
@@ -261,6 +269,8 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
     volatility: o.volatility ?? liqVol,
     inflation,
     retireExpenseAnnual: (o.retireMonthlyExpense ?? profile.retireMonthlyExpense) * 12,
+    // 나이 구간별 생활비는 기본 생활비 대비 배율로 넣어 기본 생활비를 바꿔 보는 시나리오에도 같은 비율로 따라감
+    expenseSteps: expenseSteps(profile),
     // 임대용 부동산 월세(공실·관리 경비 차감, 매각 전 해까지)도 은퇴 후 소득
     pensions: [...retireIncomes(profile, s.age), ...rentStreams(assets, profile, s.age).map(({ spouseShare: _, ...x }) => x), ...hpStreams(assets, profile, s.age)],
     goals: goals

@@ -2,14 +2,16 @@ import { Bar as RBar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAx
 import { ExpenseCompare } from '../components/ExpenseCompare';
 import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
-import { debtAnnualAt, expenseAt, incomeValue, pensionAt, retireOutflowAt } from '../engine/montecarlo';
+import { debtAnnualAt, expenseAt, expenseRatioAt, incomeValue, pensionAt, retireOutflowAt } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
 import { loanEndAge, loanSchedule } from '../engine/goals';
 import { hpEstate, housePension, RE_USE, reUseOf, usesHp, willSell } from '../engine/realestate';
 import { Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
-import type { Level, Liability } from '../types';
+import type { Insurance, Level, Liability, Profile } from '../types';
+import { INSURED_WHO } from '../db/schema';
+import { payEndSelfAge } from '../engine/portfolio';
 
 export default function Retire() {
   const d = useFlp();
@@ -33,6 +35,17 @@ export default function Retire() {
     return { name, first: rows[0], last: rows[rows.length - 1].age, total: rows.reduce((a, g) => a + g.amount, 0) };
   });
   const goalRows = inp.goals.filter((g) => !g.loan && !g.premium);
+  // 나이 구간별 생활비: 은퇴 이후에 시작하는 구간만 표시
+  const steps = draw ? [] : (inp.expenseSteps ?? []).filter((x) => x.fromAge > inp.retireAge && x.fromAge <= p.lifeExpectancy);
+  // 은퇴 전 저축 변화: 보험 납입 완료·배우자 은퇴(저축 증감)와 은퇴 전에 끝나는 대출 상환
+  const preChanges = retired
+    ? []
+    : [
+        ...(inp.savingsChanges ?? []).filter((x) => x.fromAge > inp.currentAge && x.fromAge < inp.retireAge).map((x) => ({ age: x.fromAge, label: changeLabel(x.name ?? '', x.fromAge, d.insurance, p), monthly: x.annual / 12 })),
+        ...(inp.debts ?? [])
+          .filter((x) => x.endAge > inp.currentAge && x.endAge < inp.retireAge && !x.bullet)
+          .map((x) => ({ age: x.endAge, label: `${x.name ?? '대출'} 상환 완료 (본인 ${x.endAge}세)`, monthly: debtAnnualAt(x, x.endAge - 1) / 12 })),
+      ].sort((a, b) => a.age - b.age);
   // 부동산: 보유 중엔 운용자산에서 빼고, 임대 월세는 소득, 매각 예정이면 매각 연도에 순매각대금 유입
   const nowYear = p.birthYear + d.summary.age;
   const re = d.assets.filter((a) => a.type === 'realestate');
@@ -89,8 +102,11 @@ export default function Retire() {
             {draw ? (
               <Line label="연금계좌 + 국민·개인연금(명목 고정, 오늘 가치)" value={won((inp.fixedDraw ?? 0) / 12)} />
             ) : (
-              <Line label={`목표 생활비${inp.expenseGrowth !== undefined ? ` (${fullAge}세)` : ''}`} value={won(expenseAt(inp, fullAge) / 12)} />
+              <Line label={`목표 생활비${inp.expenseGrowth !== undefined || steps.length ? ` (${fullAge}세)` : ''}`} value={won(expenseAt(inp, fullAge) / 12)} />
             )}
+            {steps.map((x) => (
+              <Line key={`step-${x.fromAge}`} label={`· ${x.fromAge}세부터 생활비`} value={won(expenseAt(inp, x.fromAge) / 12)} muted />
+            ))}
             {inp.pensions.map((x, i) => (
               // 인상률 0(주택연금 등 명목 고정)은 받기 시작할 때의 현재가치로 표시
               <Line key={i} label={`− ${x.name} (${x.startAge}세~${x.endAge ? `${x.endAge}세` : ''}${x.growth === 0 ? ', 명목 고정' : ''})`} value={won((x.growth === 0 ? incomeValue(x, x.startAge, inp.inflation) : x.annual) / 12)} muted />
@@ -106,6 +122,14 @@ export default function Retire() {
               <Line key={x.name} label={`+ ${x.name} 상환 (${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '종료 없음'}${x.decline ? ', 해마다 줄어듦' : ''})`} value={won(debtAnnualAt(x, inp.retireAge) / 12)} muted />
             ))}
           </div>
+          {preChanges.length > 0 && (
+            <div className="mt-3 space-y-1.5 border-t border-line pt-2.5 text-sm">
+              <div className="text-xs font-semibold text-muted">은퇴 전 저축 변화 (월, 그 나이부터)</div>
+              {preChanges.map((x) => (
+                <Line key={`${x.label}-${x.age}`} label={x.label} value={`${x.monthly >= 0 ? '+' : '−'}${won(Math.abs(x.monthly))}`} muted />
+              ))}
+            </div>
+          )}
           <div className="mt-3 rounded-lg bg-sunken px-3 py-2 text-sm">
             <Line label={`${retired ? '현재' : `은퇴 첫해(${start.age}세)`} 인출률`} value={`${pct(start.rate, 1)} · 상한 ${p.criteria.withdrawRateMax}%`} />
             <div className="mt-0.5 text-xs text-muted">연 {won(start.outflow)} ÷ {retired ? '현재 금융자산' : '평균수익 가정 은퇴 시점 금융자산'} {won(start.balance)} · 노후 인출 화면과 같은 기준</div>
@@ -151,7 +175,7 @@ export default function Retire() {
             />
           ))}
           <Assume k="물가상승률" v={`${inp.inflation}%`} />
-          <Assume k="은퇴 후 생활비" v={expenseNote} />
+          <Assume k="은퇴 후 생활비" v={expenseNote + (steps.length ? ` · 나이 구간별(${[{ fromAge: inp.retireAge, ratio: expenseRatioAt(inp.expenseSteps, inp.retireAge) }, ...steps].map((x) => `${x.fromAge}세~ ${won((inp.retireExpenseAnnual * x.ratio) / 12)}`).join(' → ')})` : '')} />
           {(inp.inflows ?? []).some((x) => !x.kind) && <Assume k="수령 전 자산(시작 자산에서 제외)" v={(inp.inflows ?? []).filter((x) => !x.kind).map((x) => `${x.name} ${x.age}세`).join(' · ')} />}
           <Assume k="목적자금·반복 지출" v={`${d.goals.filter((g) => g.category !== 'retirement').length}건 · 총 ${won(goalRows.reduce((a, g) => a + g.amount, 0))}`} />
           {premiums.length > 0 && <Assume k="은퇴 후 보험료" v={premiums.map((x) => `${x.name} ${x.first.age}~${x.last}세 · 총 ${won(x.total)}`).join(' · ')} />}
@@ -162,6 +186,13 @@ export default function Retire() {
       <Disclaimer />
     </>
   );
+}
+
+/** 저축 변화 이름 → "종신보험 납입 완료 (배우자 60세 · 본인 62세)" */
+function changeLabel(name: string, age: number, policies: Insurance[], p: Profile) {
+  const pol = name.endsWith(' 납입 완료') ? policies.find((x) => `${x.name} 납입 완료` === name && payEndSelfAge(x, p) === age) : undefined;
+  if (pol && (pol.insured ?? 'self') !== 'self' && payEndSelfAge(pol, p) !== pol.payEndAge) return `${name} (${INSURED_WHO[pol.insured!]} ${pol.payEndAge}세 · 본인 ${age}세)`;
+  return `${name} (본인 ${age}세)`;
 }
 
 function Line({ label, value, muted, strong }: { label: string; value: string; muted?: boolean; strong?: boolean }) {

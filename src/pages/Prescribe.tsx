@@ -134,8 +134,18 @@ function PrescribeInner() {
         </Card>
 
         <Card title="보장 갭 분석" action={<Badge level={d.ins.premiumLevel}>보험료 {pct(d.ins.premiumRatio, 1)}</Badge>}>
-          <div className="space-y-4">
-            {d.ins.lines.map((l) => (
+          <div className="space-y-5">
+            {d.ins.people.map((g) => (
+              <div key={g.person}>
+                {d.ins.people.length > 1 && (
+                  <div className="mb-2 flex items-baseline justify-between gap-2 border-b border-line pb-1">
+                    <span className="text-sm font-bold">{g.person}</span>
+                    <span className="text-xs text-muted">{g.count}건 · 월 {won(g.premium)}</span>
+                  </div>
+                )}
+                {g.count === 0 && g.who !== 'self' && <p className="mb-2 text-xs text-muted">가입한 보험이 없습니다. 보험 탭에서 피보험자를 {g.person}로 지정하면 여기에 모입니다.</p>}
+                <div className="space-y-4">
+            {g.lines.map((l) => (
               <div key={l.key}>
                 <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-2 text-sm">
                   <span className="font-semibold">{l.label}</span>
@@ -147,8 +157,11 @@ function PrescribeInner() {
                 <div className="mt-1 text-xs text-muted">{l.gap > 0 ? `${won(l.gap)} 부족` : l.gap < 0 ? `${won(-l.gap)} 초과` : '적정'}</div>
               </div>
             ))}
+                </div>
+              </div>
+            ))}
           </div>
-          <p className="mt-3 text-xs text-muted">필요 사망보장 = 유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산. 진단비 = 연소득 × {p.criteria.criticalMultiple}배.</p>
+          <p className="mt-3 text-xs text-muted">필요 사망보장 = 유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산. 진단비 = 그 사람 연소득 × {p.criteria.criticalMultiple}배(소득이 없으면 3,000만원). 배우자 사망보장 = 배우자 연소득 × 부양기간, 자녀는 진단비만 필요액으로 봅니다.</p>
         </Card>
       </div>
       <Disclaimer />
