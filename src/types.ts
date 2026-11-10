@@ -118,10 +118,15 @@ export interface RetireIncome {
   growth: number; // 1회 명목 인상률(%). 매년 인상하며 물가상승률과 같으면 실질 가치 유지
   step: number; // 인상 주기(년): step 년마다 growth% 인상
   owner?: IncomeOwner; // 나이를 누구 기준으로 입력했는지(기본 본인)
-  rent?: boolean; // 임대소득(종합소득세·건강보험료 계산 대상)
+  kind?: IncomeKind; // 소득 종류(종합소득세·건강보험료 계산 방식). 없으면 rent 로 판단
+  rent?: boolean; // 예전 데이터: 임대소득(kind 가 없을 때만 씀)
+  expense?: number; // 사업소득 필요경비율(%)
 }
 
 export type IncomeOwner = 'self' | 'spouse';
+
+/** 은퇴 후 소득 종류: 임대 · 근로 · 사업 · 공적연금(공무원·사학·군인) · 사적연금 · 그 밖(비과세·분리과세) */
+export type IncomeKind = 'rent' | 'wage' | 'business' | 'publicPension' | 'privatePension' | 'other';
 
 /** 연말결산: 그 해 12월 말 실제 금융자산과 그 해 실제 인출액(명목, 만원) */
 export interface YearEnd {
@@ -191,7 +196,7 @@ export interface ExpenseBand {
   monthly: number;
 }
 
-/** 종합소득세·지역 건강보험료 추정(임대소득·국민연금). 비율은 %, 금액은 만원 */
+/** 종합소득세·지역 건강보험료 추정(임대·근로·사업소득, 국민연금 등 공적연금). 비율은 %, 금액은 만원 */
 export interface IncomeTaxSettings {
   on: boolean;
   rentSpouseShare: number; // 임대소득 중 배우자 몫(%)

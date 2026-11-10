@@ -4,7 +4,7 @@ import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, re
 import { buildPlanInput, expenseSteps, loanEndAge, lockedInflow, planGoals, retireIncomes } from './goals';
 import { CRITICAL_BASE, insuranceGap } from './insurance';
 import { deterministicPath, expenseAt, expenseRatioAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
-import { contribSchedule, creditInflows, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount } from './incomeTax';
+import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, wageIncomeAmount } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
 import { isPaying, payEndSelfAge, summarize } from './portfolio';
@@ -12,6 +12,8 @@ import { prescriptions } from './prescribe';
 import { financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
 import type { PlanBase } from '../types';
+
+const DEFAULT_TAX_ON = { on: true, rentSpouseShare: 0, rentExpense: 0, npTaxable: 100, npNet: 100, dedSelf: 150, dedSpouse: 150, hiNow: 50, hiRate: 7.19, hiLtc: 13.14, hiPublic: 50, hiPropGrowth: 0, hiPrivate: false, addToDraw: false };
 
 describe('재무함수', () => {
   it('엑셀 FV/PV 와 일치', () => {
@@ -466,6 +468,42 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     const at65 = (x: typeof d) => plan(x).goals.filter((g) => g.age === 65).reduce((a, g) => a + g.amount, 0);
     const off = { ...d, profile: { ...d.profile, incomeTax: { ...d.profile.incomeTax!, addToDraw: false } } };
     expect(at65(d) - at65(off)).toBeCloseTo(y33.npPart, 6);
+  });
+
+  it('그 밖의 은퇴 후 소득: 종류별로 종소세·건보료 반영', () => {
+    // 근로소득공제: 총급여 3,000만 → 공제 975만 → 근로소득금액 2,025만, 공제 한도 2,000만
+    expect(wageIncomeAmount(3000)).toBeCloseTo(2025, 6);
+    expect(wageIncomeAmount(400)).toBeCloseTo(120, 6);
+    expect(wageIncomeAmount(50000)).toBeCloseTo(48000, 6);
+    // 예전 데이터: kind 없으면 rent 체크로 판단
+    expect(incomeKindOf({ name: '', monthly: 0, startAge: 0, endAge: 0, growth: 0, step: 1, rent: true })).toBe('rent');
+    expect(incomeKindOf({ name: '', monthly: 0, startAge: 0, endAge: 0, growth: 0, step: 1 })).toBe('other');
+    const d = retiree();
+    const base = { ...DEFAULT_TAX_ON };
+    const at = (incomes: typeof d.profile.incomes, extra = {}) =>
+      incomeTaxSchedule({ ...d.profile, spouseBirthYear: 1973, inflation: 0, nationalPension: 0, spousePension: 0, incomes, incomeTax: { ...base, ...extra } }, 2026);
+    const one = (kind: 'wage' | 'business' | 'publicPension' | 'privatePension' | 'other', owner: 'self' | 'spouse' = 'self', expense?: number) =>
+      [{ name: 'x', monthly: 250, startAge: 50, endAge: 0, growth: 0, step: 1, owner, kind, expense }];
+    // 근로 3,000만(본인): 종소세 = (2,025 − 150) 누진, 건보료 소득분은 다음 해부터 총급여 × 50%
+    const w = at(one('wage'));
+    expect(w[0].other).toBeCloseTo(3000, 6);
+    expect(w[0].taxSelf).toBeCloseTo(incomeTaxAmount(2025 - 150), 6);
+    expect(w[0].taxSpouse).toBe(0);
+    expect(w[1].hiMonth - w[0].hiMonth).toBeCloseTo(0, 6); // 첫해 고지서 역산, 둘째 해부터 같은 소득이면 그대로
+    // 배우자 사업소득: 필요경비 40% 뺀 1,800만이 배우자 종합소득, 건보료 100%
+    const b = at(one('business', 'spouse', 40));
+    expect(b[0].taxSpouse).toBeCloseTo(incomeTaxAmount(1800 - 150), 6);
+    expect(b[0].taxSelf).toBe(0);
+    // 공적연금 3,000만: 연금소득공제 뒤 과세
+    expect(at(one('publicPension'))[0].taxSelf).toBeCloseTo(incomeTaxAmount(pensionIncomeAmount(3000) - 150), 6);
+    // 사적연금·그 밖: 종소세 없음, 사적연금은 hiPrivate 켜면 다음 해 건보료에 50% 반영
+    expect(at(one('privatePension'))[0].taxSelf).toBe(0);
+    expect(at(one('other'))[0].other).toBe(0);
+    const priv = at(one('privatePension'), { hiNow: 0, hiPrivate: true });
+    expect(priv[1].hiMonth).toBeCloseTo(((3000 * 0.5) / 12) * 0.0719 * 1.1314, 6);
+    expect(at(one('privatePension'), { hiNow: 0 })[1].hiMonth).toBe(0);
+    // 근로소득 건보료(고지서 0에서 시작): 다음 해 총급여 × 50%
+    expect(at(one('wage'), { hiNow: 0 })[1].hiMonth).toBeCloseTo(((3000 * 0.5) / 12) * 0.0719 * 1.1314, 6);
   });
 
   it('국민연금 생일 월(첫해 월할)·연 인상률: 엑셀처럼 생일 다음 달부터, 2% 인상', () => {

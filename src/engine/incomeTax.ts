@@ -1,4 +1,4 @@
-import type { Asset, ContribPlan, IncomeTaxSettings, Liability, Profile } from '../types';
+import type { Asset, ContribPlan, IncomeKind, IncomeTaxSettings, Liability, Profile, RetireIncome } from '../types';
 import { loanBalanceAt, npTerms, spouseToSelf } from './goals';
 import { incomeValue, type IncomeStream } from './montecarlo';
 import { rentStreams, reUseOf, usesHp, type RentStream } from './realestate';
@@ -89,6 +89,36 @@ export function pensionIncomeAmount(x: number) {
   return x - Math.min(900, ded);
 }
 
+/** 소득 종류 이름 */
+export const INCOME_KIND: Record<IncomeKind, string> = {
+  rent: '임대소득',
+  wage: '근로소득',
+  business: '사업소득',
+  publicPension: '공적연금(공무원·사학·군인)',
+  privatePension: '사적연금',
+  other: '그 밖(비과세·분리과세)',
+};
+
+/** 소득 종류별 세금 계산 방식 안내 */
+export const INCOME_KIND_HINT: Record<IncomeKind, string> = {
+  rent: '임대 필요경비율을 뺀 사업소득 → 종소세·건보료',
+  wage: '근로소득공제 뒤 종소세 · 건보료는 총급여 × 반영률',
+  business: '수입 − 필요경비 = 사업소득 → 종소세·건보료',
+  publicPension: '국민연금과 합쳐 연금소득공제 · 건보료는 × 반영률',
+  privatePension: '1,500만 이하 분리과세로 종소세 제외 · 건보료는 ‘사적연금도 반영’일 때만',
+  other: '이자·비과세 등: 종소세·건보료 계산에서 뺌',
+};
+
+/** 소득 종류(예전 데이터는 rent 체크 여부로 판단) */
+export const incomeKindOf = (i: RetireIncome): IncomeKind => i.kind ?? (i.rent ? 'rent' : 'other');
+
+/** 근로소득금액 = 총급여 − 근로소득공제(한도 2,000만). 만원 */
+export function wageIncomeAmount(x: number) {
+  if (x <= 0) return 0;
+  const ded = x <= 500 ? x * 0.7 : x <= 1500 ? 350 + (x - 500) * 0.4 : x <= 4500 ? 750 + (x - 1500) * 0.15 : x <= 10000 ? 1200 + (x - 4500) * 0.05 : 1475 + (x - 10000) * 0.02;
+  return x - Math.min(2000, ded);
+}
+
 /** 종합소득세 산출세액(2023년~ 누진공제) × 지방소득세 1.1. 과세표준·세액 만원 */
 export function incomeTaxAmount(t: number) {
   if (t <= 0) return 0;
@@ -107,7 +137,8 @@ export interface IncomeTaxRow {
   rentSpouse: number; // 배우자 임대 사업소득금액
   npSelf: number; // 본인 국민연금(연, 세전, 명목)
   npSpouse: number;
-  incomeSelf: number; // 본인 종합소득금액(임대 사업소득 + 연금소득금액)
+  other: number; // ‘그 밖의 은퇴 후 소득’ 중 근로·사업·공적연금·사적연금 수입(연, 세전, 명목)
+  incomeSelf: number; // 본인 종합소득금액(임대·사업소득 + 근로소득금액 + 연금소득금액)
   incomeSpouse: number;
   taxSelf: number; // 본인 종합소득세(지방세 포함)
   taxSpouse: number;
@@ -127,6 +158,9 @@ export interface IncomeTaxRow {
 /**
  * 연도별 종합소득세·지역 건강보험료(명목, 만원). 엑셀 ‘종합소득·건보료’ 시트와 같은 방식:
  * 사적연금(1,500만 이하 분리과세)·퇴직소득·노란우산은 종합소득·건보료에 넣지 않음.
+ * ‘그 밖의 은퇴 후 소득’은 종류별로: 임대 = 필요경비율 차감(설정의 배우자 몫), 근로 = 근로소득공제·건보료 총급여 × 반영률,
+ * 사업 = 항목별 필요경비율 차감·건보료 100%, 공적연금 = 국민연금과 합쳐 연금소득공제·건보료 × 반영률,
+ * 사적연금 = 종소세 제외·건보료는 hiPrivate 일 때만, 그 밖 = 계산 제외. 임대 외에는 ‘나이 기준’ 사람의 소득으로 봄.
  * 건보료 소득분은 전년도 소득 기준, 재산분은 현재 고지서에서 역산해 고정(증가율 입력 가능)하거나 부동산 자산으로 연도별 추정(hiPropAuto).
  * slotByYear: 사적연금도 건보료에 반영할 때 연도별 과세재원 인출액(명목).
  * liabilities: 자산별 추정에서 주택 구입 대출 공제(hiLoanDeduct)를 켰을 때 쓰는 부채 목록.
@@ -140,10 +174,18 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
   const hasSpouse = profile.spouseBirthYear > 0;
   const rents: RentStream[] = [
     ...(profile.incomes ?? [])
-      .filter((i) => i.rent)
+      .filter((i) => incomeKindOf(i) === 'rent')
       .map((i) => ({ startAge: toSelf(i.startAge, i.owner), endAge: i.endAge > 0 ? toSelf(i.endAge, i.owner) : undefined, annual: i.monthly * 12, growth: i.growth, step: i.step, baseAge: currentAge, spouseShare: s.rentSpouseShare / 100 })),
     ...rentStreams(assets, profile, currentAge, true),
   ].map((r) => (hasSpouse ? r : { ...r, spouseShare: 0 }));
+  const others = (profile.incomes ?? [])
+    .map((i) => ({
+      kind: incomeKindOf(i),
+      spouse: hasSpouse && i.owner === 'spouse' ? 1 : 0,
+      keep: 1 - Math.min(100, Math.max(0, i.expense ?? 0)) / 100,
+      s: { startAge: toSelf(i.startAge, i.owner), endAge: i.endAge > 0 ? toSelf(i.endAge, i.owner) : undefined, annual: i.monthly * 12, growth: i.growth, step: i.step, baseAge: currentAge } as IncomeStream,
+    }))
+    .filter((o) => o.kind !== 'rent' && o.kind !== 'other');
   const npStreams: IncomeStream[] = [
     { startAge: profile.nationalPensionAge, annual: profile.nationalPension * 12, ...npTerms(profile, profile.birthMonth, currentAge) },
     { startAge: spouseToSelf(profile, profile.spousePensionAge), annual: profile.spouseBirthYear > 0 ? profile.spousePension * 12 : 0, ...npTerms(profile, profile.spouseBirthMonth, currentAge) },
@@ -158,6 +200,7 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
   let prevP = 0;
   let prevNP = 0;
   let prevSlot = 0;
+  let prevPriv = 0;
   const lastYear = profile.birthYear + profile.lifeExpectancy;
   for (let year = nowYear; year <= lastYear; year++) {
     const n = year - nowYear;
@@ -169,18 +212,31 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     const rentSelf = rentBy.reduce((a, r) => a + r.v * (1 - r.w), 0) * keep;
     const npSelf = (incomeValue(npStreams[0], age, profile.inflation) * defl) / net;
     const npSpouse = (incomeValue(npStreams[1], age, profile.inflation) * defl) / net;
-    const incomeSelf = rentSelf + pensionIncomeAmount(npSelf * (s.npTaxable / 100));
-    const incomeSpouse = rentSpouse + pensionIncomeAmount(npSpouse * (s.npTaxable / 100));
+    // 근로(총급여)·사업(경비 뺀 소득금액)·공적연금·사적연금 수입, [본인, 배우자]
+    const by: Record<string, [number, number]> = { wage: [0, 0], business: [0, 0], publicPension: [0, 0], privatePension: [0, 0] };
+    let other = 0;
+    for (const o of others) {
+      const v = incomeValue(o.s, age, profile.inflation) * defl;
+      other += v;
+      by[o.kind][o.spouse] += o.kind === 'business' ? v * o.keep : v;
+    }
+    const sum = (k: string) => by[k][0] + by[k][1];
+    // 사람별 종합소득금액(np: 그 사람 국민연금 세전 연액)
+    const incomeOf = (k: 0 | 1, rentK: number, npK: number) =>
+      rentK + wageIncomeAmount(by.wage[k]) + by.business[k] + pensionIncomeAmount(npK * (s.npTaxable / 100) + by.publicPension[k]);
+    const incomeSelf = incomeOf(0, rentSelf, npSelf);
+    const incomeSpouse = incomeOf(1, rentSpouse, npSpouse);
     const taxSelf = incomeTaxAmount(incomeSelf - s.dedSelf);
     const taxSpouse = incomeTaxAmount(incomeSpouse - s.dedSpouse);
     const np = npSelf + npSpouse;
     const withheld = np * (1 - net);
     const due = taxSelf + taxSpouse - withheld;
-    const P = rentSelf + rentSpouse + np * pub;
+    const P = rentSelf + rentSpouse + sum('business') + (np + sum('publicPension') + sum('wage')) * pub;
     if (n === 0) {
       prevP = P;
       prevNP = np;
       prevSlot = slotByYear?.get(year) ?? 0;
+      prevPriv = sum('privatePension');
       prop = Math.max(0, s.hiNow / ltc - (P / 12) * rate);
     }
     const Q = (prevP / 12) * rate;
@@ -188,17 +244,18 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     const loanDed = s.hiPropAuto && s.hiLoanDeduct ? Math.min(gross, hiLoanDeduct(assets, liabilities, nowYear, year, currentAge)) : 0;
     const propBase = gross - loanDed;
     const R = s.hiPropAuto ? hiPropMonthly(propBase) : prop * Math.pow(1 + s.hiPropGrowth / 100, n);
-    const Z = s.hiPrivate ? (prevSlot * pub * rate) / 12 : 0;
+    const Z = s.hiPrivate ? ((prevSlot + prevPriv) * pub * rate) / 12 : 0;
     const hiMonth = (Q + R + Z) * ltc;
     const hiYear = hiMonth * 12;
     const total = due + hiYear;
     const increase = n === 0 ? 0 : total - rows[0].total;
-    const taxNoNP = incomeTaxAmount(rentSelf - s.dedSelf) + incomeTaxAmount(rentSpouse - s.dedSpouse);
+    const taxNoNP = incomeTaxAmount(incomeOf(0, rentSelf, 0) - s.dedSelf) + incomeTaxAmount(incomeOf(1, rentSpouse, 0) - s.dedSpouse);
     const npPart = due - taxNoNP + prevNP * pub * rate * ltc;
-    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, npPart, rentPart: increase - npPart });
+    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, npPart, rentPart: increase - npPart });
     prevP = P;
     prevNP = np;
     prevSlot = slotByYear?.get(year) ?? 0;
+    prevPriv = sum('privatePension');
   }
   return rows;
 }

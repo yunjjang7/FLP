@@ -11,8 +11,8 @@ import { won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import { equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
-import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX } from '../engine/incomeTax';
-import type { Asset, AssetType, ReUse, ContribPlan, Criteria, ExpenseBand, ExpenseMode, Goal, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
+import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf } from '../engine/incomeTax';
+import type { Asset, AssetType, ReUse, ContribPlan, Criteria, ExpenseBand, ExpenseMode, Goal, IncomeKind, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
 const EXPENSE_HINT: Record<ExpenseMode, string> = {
@@ -221,7 +221,7 @@ function IncomeTaxForm() {
   const hasSpouse = p.spouseBirthYear > 0;
   const { assets, liabilities } = useFlp();
   const loanCount = liabilities.filter((l) => l.homeLoan === 'buy').length;
-  const rentCount = (p.incomes ?? []).filter((i) => i.rent).length + assets.filter((a) => a.type === 'realestate' && reUseOf(a) === 'rental' && (a.rent ?? 0) > 0).length;
+  const rentCount = (p.incomes ?? []).filter((i) => incomeKindOf(i) === 'rent').length + assets.filter((a) => a.type === 'realestate' && reUseOf(a) === 'rental' && (a.rent ?? 0) > 0).length;
   return (
     <Card
       title="종합소득세·건강보험료"
@@ -230,7 +230,7 @@ function IncomeTaxForm() {
       }
     >
       {!t.on ? (
-        <p className="text-sm text-muted">임대소득·국민연금에 붙는 종합소득세와 지역 건강보험료를 해마다 추정해 노후 인출 화면에 보여 줍니다. 오른쪽 위에서 ‘추정하기’를 고르세요.</p>
+        <p className="text-sm text-muted">임대·근로·사업소득과 국민연금 등 공적연금에 붙는 종합소득세와 지역 건강보험료를 해마다 추정해 노후 인출 화면에 보여 줍니다. 오른쪽 위에서 ‘추정하기’를 고르세요.</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -254,14 +254,14 @@ function IncomeTaxForm() {
             )}
             {num('hiRate', '건강보험료율', '%', '2026년 7.19', 0.01)}
             {num('hiLtc', '장기요양보험료', '%', '건보료 대비, 2026년 13.14', 0.01)}
-            {num('hiPublic', '공적연금 건보료 반영률', '%', '지역가입자 50')}
+            {num('hiPublic', '연금·근로소득 건보료 반영률', '%', '지역가입자 50')}
             {!t.hiPropAuto && num('hiPropGrowth', '재산분 연 증가율', '%', '재산 과세표준이 오르면', 0.1)}
             {yn('hiPrivate', '사적연금도 건보료에 반영', '제도가 바뀌면 예')}
             {yn('addToDraw', '늘어난 세금 인출에 더하기', '국민연금 몫만큼 연금계좌 인출 증가')}
           </div>
           <p className="mt-3 text-xs text-muted">
-            {rentCount === 0 ? '임대소득은 ‘자산’ 탭의 임대용 부동산 월세나, ‘그 밖의 은퇴 후 소득’에서 ‘임대소득’을 체크한 항목만 계산에 들어갑니다. ' : ''}
-            사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 {t.hiPropAuto ? '부동산 자산의 해마다 오르는 시세로 재산 과세표준을 구해 기본공제 1억을 빼고 2026년 재산등급 점수 × 211.5원으로 추정합니다(매각 연도부터 제외, 임대보증금은 빼지 않음, 자동차·전월세로 사는 집은 넣지 않음, 부부 한 세대)' + (t.hiLoanDeduct ? '. 주택 구입 대출 공제는 표시한 대출의 해마다 줄어드는 잔액(원리금 균등 상환) × 60%를 5,000만 한도로 빼고, 그 해 주택이 2채 이상이면 넣지 않습니다. 실제로는 공시가격 5억 이하 주택을 취득 전후 3개월 안에 빌린 대출이어야 하고 공단에 신청해야 합니다' : '') : '지금 고지서에서 역산해 고정합니다(부부 한 세대)'}. 첫해 부담은 이미 생활비에 들어 있다고 보고,
+            {rentCount === 0 ? '임대소득은 ‘자산’ 탭의 임대용 부동산 월세나, ‘그 밖의 은퇴 후 소득’에서 종류를 ‘임대소득’으로 고른 항목만 계산에 들어갑니다. ' : ''}
+            ‘그 밖의 은퇴 후 소득’은 고른 종류대로 계산합니다(근로소득은 근로소득공제, 사업소득은 항목별 필요경비율, 공무원·사학·군인연금은 국민연금과 합쳐 연금소득공제, 지역가입자 건보료는 근로·공적연금 × 반영률, 사업·임대 100%). 사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 {t.hiPropAuto ? '부동산 자산의 해마다 오르는 시세로 재산 과세표준을 구해 기본공제 1억을 빼고 2026년 재산등급 점수 × 211.5원으로 추정합니다(매각 연도부터 제외, 임대보증금은 빼지 않음, 자동차·전월세로 사는 집은 넣지 않음, 부부 한 세대)' + (t.hiLoanDeduct ? '. 주택 구입 대출 공제는 표시한 대출의 해마다 줄어드는 잔액(원리금 균등 상환) × 60%를 5,000만 한도로 빼고, 그 해 주택이 2채 이상이면 넣지 않습니다. 실제로는 공시가격 5억 이하 주택을 취득 전후 3개월 안에 빌린 대출이어야 하고 공단에 신청해야 합니다' : '') : '지금 고지서에서 역산해 고정합니다(부부 한 세대)'}. 첫해 부담은 이미 생활비에 들어 있다고 보고,
             ‘인출에 더하기’를 고르면 국민연금 때문에 늘어나는 금액만 해마다 연금계좌에서 더 꺼냅니다.
           </p>
         </>
@@ -355,7 +355,7 @@ function IncomeList() {
   const save = useSaveProfile();
   const list = p.incomes ?? [];
   const setAt = (i: number, patch: Partial<RetireIncome>) => save({ incomes: list.map((x, j) => (j === i ? { ...x, ...patch } : x)) });
-  const add = () => save({ incomes: [...list, { name: '임대료', monthly: 100, startAge: p.retireAge, endAge: 0, growth: p.inflation, step: 1, owner: 'self' }] });
+  const add = () => save({ incomes: [...list, { name: '기타 소득', monthly: 100, startAge: p.retireAge, endAge: 0, growth: p.inflation, step: 1, owner: 'self', kind: 'other', rent: false }] });
   const hasSpouse = p.spouseBirthYear > 0;
   /** 입력 나이 → "2032년" (배우자 기준이면 본인 나이도 함께) */
   const when = (age: number, owner?: string) => {
@@ -365,7 +365,12 @@ function IncomeList() {
   };
   return (
     <Card title="그 밖의 은퇴 후 소득" action={<Button variant="ghost" onClick={add}>+ 소득 추가</Button>}>
-      {list.length === 0 && <p className="text-sm text-muted">근로소득·사적연금처럼 은퇴 후 들어오는 돈이 있으면 추가하세요. 노후 진단과 노후 인출에 반영됩니다.</p>}
+      {list.length === 0 && (
+        <div className="space-y-1 text-sm text-muted">
+          <p>근로소득·사업소득·임대료처럼 <b>은퇴 후</b> 들어오는 돈이 있으면 추가하세요. 노후 진단과 노후 인출에 반영되고, 종류를 고르면 종합소득세·건강보험료에도 종류대로 들어갑니다.</p>
+          <p className="text-xs">은퇴 전 소득은 위 ‘세후 월소득(가구)’에 합쳐 넣고, 국민연금·개인·퇴직연금은 프로필의 전용 칸에 넣으세요. 여기에 또 넣으면 두 번 계산됩니다.</p>
+        </div>
+      )}
       {rentals.length > 0 && (
         <p className="mb-3 rounded-lg bg-sunken px-3 py-2 text-xs text-muted">
           임대용 부동산 자산({rentals.map((a) => a.name).join(', ')})의 월세는 ‘자산’ 탭에서 넣은 금액으로 자동 반영됩니다. 같은 임대료를 여기에 또 넣으면 두 번 계산됩니다.
@@ -376,7 +381,7 @@ function IncomeList() {
           <div key={i} className="rounded-xl border border-line p-3">
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
               <div className="col-span-2 md:col-span-1"><Labeled label="이름"><TextField value={x.name} onChange={(v) => setAt(i, { name: v })} /></Labeled></div>
-              <Labeled label="나이 기준" hint={x.owner === 'spouse' && !hasSpouse ? '배우자 출생연도를 넣어 주세요' : undefined}>
+              <Labeled label="나이 기준" hint={x.owner === 'spouse' && !hasSpouse ? '배우자 출생연도를 넣어 주세요' : !['rent', 'other'].includes(incomeKindOf(x)) ? '세금도 이 사람 소득으로' : undefined}>
                 <SelectField value={x.owner ?? 'self'} onChange={(v) => setAt(i, { owner: v as IncomeOwner })} options={{ self: '본인', spouse: '배우자' }} />
               </Labeled>
               <Labeled label="월액(만원)" hint="오늘 기준 금액"><NumberField value={x.monthly} onChange={(v) => setAt(i, { monthly: v })} /></Labeled>
@@ -385,11 +390,21 @@ function IncomeList() {
               <Labeled label="1회 인상률(%)" hint={x.step > 1 ? `${x.step}년마다 이만큼 인상` : `매년 인상. 물가(${p.inflation}%)와 같으면 실질 유지`}><NumberField value={x.growth} step={0.1} onChange={(v) => setAt(i, { growth: v })} /></Labeled>
               <Labeled label="인상 주기(년)" hint="예: 2년마다 5%"><NumberField value={x.step} min={1} onChange={(v) => setAt(i, { step: Math.max(1, Math.round(v)) })} /></Labeled>
             </div>
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <label className="flex items-center gap-2 text-xs text-muted">
-                <input type="checkbox" checked={!!x.rent} onChange={(e) => setAt(i, { rent: e.target.checked })} />
-                임대소득(종합소득세·건강보험료 계산 대상)
-              </label>
+            <div className="mt-3 flex flex-wrap items-end justify-between gap-3">
+              <div className="flex flex-wrap items-end gap-3">
+                <div className="w-56">
+                  <Labeled label="소득 종류" hint={INCOME_KIND_HINT[incomeKindOf(x)]}>
+                    <SelectField value={incomeKindOf(x)} onChange={(v) => setAt(i, { kind: v as IncomeKind, rent: v === 'rent' })} options={INCOME_KIND} />
+                  </Labeled>
+                </div>
+                {incomeKindOf(x) === 'business' && (
+                  <div className="w-40">
+                    <Labeled label="필요경비율(%)" hint="단순경비율 등">
+                      <NumberField value={x.expense ?? 0} step={0.1} onChange={(v) => setAt(i, { expense: Math.min(100, Math.max(0, v)) })} />
+                    </Labeled>
+                  </div>
+                )}
+              </div>
               <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${x.name}'을(를) 삭제할까요?`) && save({ incomes: list.filter((_, j) => j !== i) })}>삭제</button>
             </div>
           </div>
