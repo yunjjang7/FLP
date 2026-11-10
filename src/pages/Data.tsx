@@ -256,7 +256,7 @@ function IncomeTaxForm() {
             {num('hiPublic', '공적연금 건보료 반영률', '%', '지역가입자 50')}
             {!t.hiPropAuto && num('hiPropGrowth', '재산분 연 증가율', '%', '재산 과세표준이 오르면', 0.1)}
             {yn('hiPrivate', '사적연금도 건보료에 반영', '제도가 바뀌면 예')}
-            {yn('addToDraw', '늘어나는 세금을 인출에 더하기', '국민연금 몫만큼 연금계좌 인출 증가')}
+            {yn('addToDraw', '늘어난 세금 인출에 더하기', '국민연금 몫만큼 연금계좌 인출 증가')}
           </div>
           <p className="mt-3 text-xs text-muted">
             {rentCount === 0 ? '임대소득은 ‘자산’ 탭의 임대용 부동산 월세나, ‘그 밖의 은퇴 후 소득’에서 ‘임대소득’을 체크한 항목만 계산에 들어갑니다. ' : ''}
@@ -403,7 +403,7 @@ function ListEditor({ table }: { table: ListTable }) {
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
             {fieldsOf(r).map((f) => (
               <div key={f.key} className={f.key === 'name' ? 'col-span-2 md:col-span-1' : ''}>
-                <Labeled label={f.unit ? `${f.label}(${f.unit})` : f.label} hint={f.hint}>
+                <Labeled label={f.unit ? `${f.short ?? f.label}(${f.unit})` : f.short ?? f.label} hint={f.hint}>
                   {f.kind === 'number' ? (
                     <NumberField value={Number(r[f.key] ?? 0)} step={f.step} onChange={(v) => update(r, f.key, v)} />
                   ) : f.kind === 'select' ? (

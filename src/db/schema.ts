@@ -11,6 +11,8 @@ export interface FieldDef {
   step?: number;
   width?: string;
   hint?: string;
+  /** 입력 화면용 짧은 레이블(CSV 헤더는 label 그대로) */
+  short?: string;
   /** CSV 선택 열: 부동산 행에만 쓰는 값(다른 유형은 빈칸) */
   reOnly?: boolean;
 }
@@ -88,7 +90,7 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
       { key: 'name', label: '이름', kind: 'text' },
       { key: 'category', label: '분류', kind: 'select', options: GOAL_CATEGORY },
       { key: 'targetAge', label: '목표 나이', kind: 'number', unit: '세' },
-      { key: 'amountPV', label: '필요 금액(현재가치)', kind: 'number', unit: '만원' },
+      { key: 'amountPV', label: '필요 금액(현재가치)', short: '필요 금액', kind: 'number', unit: '만원', hint: '현재가치(오늘 물가 기준)' },
       { key: 'growthRate', label: '비용 상승률', kind: 'number', unit: '%', step: 0.1 },
       { key: 'endAge', label: '반복 종료 나이', kind: 'number', unit: '세', hint: '0이면 1회, 입력하면 매년 지출' },
     ],

@@ -63,7 +63,7 @@ export function SelectField({ value, onChange, options }: { value: string; onCha
 export function Labeled({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <label className="block min-w-0">
-      <span className="mb-1 block text-xs font-medium text-muted">{label}</span>
+      <span className="mb-1 block truncate text-xs font-medium text-muted" title={label}>{label}</span>
       {children}
       {hint && <span className="mt-1 block text-[11px] text-muted">{hint}</span>}
     </label>
