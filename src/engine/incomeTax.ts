@@ -102,7 +102,7 @@ export const INCOME_KIND: Record<IncomeKind, string> = {
 /** 소득 종류별 세금 계산 방식 안내 */
 export const INCOME_KIND_HINT: Record<IncomeKind, string> = {
   rent: '임대 필요경비율을 뺀 사업소득 → 종소세·건보료',
-  wage: '근로소득공제 뒤 종소세 · 건보료는 총급여 × 반영률',
+  wage: '근로소득공제·세액공제 · 연말정산 세금은 기납부로 뺌 · 건보료는 총급여 × 반영률',
   business: '수입 − 필요경비 = 사업소득 → 종소세·건보료',
   publicPension: '국민연금과 합쳐 연금소득공제 · 건보료는 × 반영률',
   privatePension: '1,500만 이하 분리과세로 종소세 제외 · 건보료는 ‘사적연금도 반영’일 때만',
@@ -125,6 +125,38 @@ export function incomeTaxAmount(t: number) {
   return Math.max(t * 0.06, t * 0.15 - 126, t * 0.24 - 576, t * 0.35 - 1544, t * 0.38 - 1994, t * 0.4 - 2594, t * 0.42 - 3594, t * 0.45 - 6594) * 1.1;
 }
 
+/** 근로소득자 표준세액공제(만원): 특별세액공제를 따로 받지 않을 때 */
+export const WAGE_STD_CREDIT = 13;
+
+/**
+ * 근로소득세액공제(만원, 소득세법 59조): 근로소득분 산출세액 130만 이하 55%, 넘는 부분 30%.
+ * 한도는 총급여 3,300만 이하 74만 · 7,000만 이하 74만 − (총급여 − 3,300만) × 0.8%(최소 66만)
+ * · 1.2억 이하 66만 − (총급여 − 7,000만) × 1/2(최소 50만) · 그 초과 50만 − (총급여 − 1.2억) × 1/2(최소 20만).
+ * wageCalc: 지방세 빼고 근로소득분 산출세액, gross: 총급여
+ */
+export function wageTaxCredit(wageCalc: number, gross: number) {
+  if (wageCalc <= 0 || gross <= 0) return 0;
+  const credit = wageCalc <= 130 ? wageCalc * 0.55 : 71.5 + (wageCalc - 130) * 0.3;
+  const cap =
+    gross <= 3300 ? 74 : gross <= 7000 ? Math.max(66, 74 - (gross - 3300) * 0.008) : gross <= 12000 ? Math.max(50, 66 - (gross - 7000) * 0.5) : Math.max(20, 50 - (gross - 12000) * 0.5);
+  return Math.min(credit, cap);
+}
+
+/**
+ * 한 사람의 종합소득세 결정세액(지방세 포함, 만원). 근로소득이 있으면 근로소득세액공제
+ * (산출세액 × 근로소득금액 ÷ 종합소득금액 기준)와 표준세액공제 13만을 뺌.
+ * income: 종합소득금액, ded: 종합소득공제, wageGross: 그 사람 총급여
+ */
+export function personIncomeTax(income: number, ded: number, wageGross = 0) {
+  const calc = incomeTaxAmount(income - ded) / 1.1;
+  if (calc <= 0 || wageGross <= 0) return calc * 1.1;
+  const share = income > 0 ? Math.min(1, wageIncomeAmount(wageGross) / income) : 0;
+  return Math.max(0, calc - wageTaxCredit(calc * share, wageGross) - WAGE_STD_CREDIT) * 1.1;
+}
+
+/** 근로소득 원천징수(연말정산 결정세액, 지방세 포함): 근로소득만 있다고 보고 계산한 세금. 5월 신고 때 기납부세액 */
+export const wageWithholding = (wageGross: number, ded: number) => personIncomeTax(wageIncomeAmount(wageGross), ded, wageGross);
+
 /** 연금계좌 세액공제율(%): 종합소득금액 4,500만 이하 16.5 · 초과 13.2 */
 export const creditRateFor = (income: number) => (income <= 4500 ? 16.5 : 13.2);
 
@@ -140,9 +172,10 @@ export interface IncomeTaxRow {
   other: number; // ‘그 밖의 은퇴 후 소득’ 중 근로·사업·공적연금·사적연금 수입(연, 세전, 명목)
   incomeSelf: number; // 본인 종합소득금액(임대·사업소득 + 근로소득금액 + 연금소득금액)
   incomeSpouse: number;
-  taxSelf: number; // 본인 종합소득세(지방세 포함)
+  taxSelf: number; // 본인 종합소득세 결정세액(지방세 포함, 근로소득세액공제 뒤)
   taxSpouse: number;
-  withheld: number; // 국민연금 원천징수(기납부)
+  withheld: number; // 기납부세액: 국민연금 원천징수 + 근로소득 연말정산 세액
+  wageWithheld: number; // 그중 근로소득 원천징수(연말정산 결정세액)
   due: number; // 5월 종합소득세 추가 납부(부부)
   propBase: number; // 재산 과세표준(자산별 추정일 때, 대출 공제 뒤, 명목)
   loanDed: number; // 그중 주택 구입 대출 공제액(명목)
@@ -158,7 +191,8 @@ export interface IncomeTaxRow {
 /**
  * 연도별 종합소득세·지역 건강보험료(명목, 만원). 엑셀 ‘종합소득·건보료’ 시트와 같은 방식:
  * 사적연금(1,500만 이하 분리과세)·퇴직소득·노란우산은 종합소득·건보료에 넣지 않음.
- * ‘그 밖의 은퇴 후 소득’은 종류별로: 임대 = 필요경비율 차감(설정의 배우자 몫), 근로 = 근로소득공제·건보료 총급여 × 반영률,
+ * ‘그 밖의 은퇴 후 소득’은 종류별로: 임대 = 필요경비율 차감(설정의 배우자 몫), 근로 = 근로소득공제·근로소득세액공제·표준세액공제,
+ * 연말정산으로 낸 세금(근로소득만 있다고 본 결정세액)은 기납부로 빼서 5월에는 다른 소득과 합쳐 늘어난 만큼만 냄, 건보료 총급여 × 반영률,
  * 사업 = 항목별 필요경비율 차감·건보료 100%, 공적연금 = 국민연금과 합쳐 연금소득공제·건보료 × 반영률,
  * 사적연금 = 종소세 제외·건보료는 hiPrivate 일 때만, 그 밖 = 계산 제외. 임대 외에는 ‘나이 기준’ 사람의 소득으로 봄.
  * 건보료 소득분은 전년도 소득 기준, 재산분은 현재 고지서에서 역산해 고정(증가율 입력 가능)하거나 부동산 자산으로 연도별 추정(hiPropAuto).
@@ -226,10 +260,11 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
       rentK + wageIncomeAmount(by.wage[k]) + by.business[k] + pensionIncomeAmount(npK * (s.npTaxable / 100) + by.publicPension[k]);
     const incomeSelf = incomeOf(0, rentSelf, npSelf);
     const incomeSpouse = incomeOf(1, rentSpouse, npSpouse);
-    const taxSelf = incomeTaxAmount(incomeSelf - s.dedSelf);
-    const taxSpouse = incomeTaxAmount(incomeSpouse - s.dedSpouse);
+    const taxSelf = personIncomeTax(incomeSelf, s.dedSelf, by.wage[0]);
+    const taxSpouse = personIncomeTax(incomeSpouse, s.dedSpouse, by.wage[1]);
     const np = npSelf + npSpouse;
-    const withheld = np * (1 - net);
+    const wageWithheld = wageWithholding(by.wage[0], s.dedSelf) + wageWithholding(by.wage[1], s.dedSpouse);
+    const withheld = np * (1 - net) + wageWithheld;
     const due = taxSelf + taxSpouse - withheld;
     const P = rentSelf + rentSpouse + sum('business') + (np + sum('publicPension') + sum('wage')) * pub;
     if (n === 0) {
@@ -249,9 +284,10 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     const hiYear = hiMonth * 12;
     const total = due + hiYear;
     const increase = n === 0 ? 0 : total - rows[0].total;
-    const taxNoNP = incomeTaxAmount(incomeOf(0, rentSelf, 0) - s.dedSelf) + incomeTaxAmount(incomeOf(1, rentSpouse, 0) - s.dedSpouse);
+    // 국민연금이 없을 때 5월 납부액(근로 원천징수는 그대로 빠짐)
+    const taxNoNP = personIncomeTax(incomeOf(0, rentSelf, 0), s.dedSelf, by.wage[0]) + personIncomeTax(incomeOf(1, rentSpouse, 0), s.dedSpouse, by.wage[1]) - wageWithheld;
     const npPart = due - taxNoNP + prevNP * pub * rate * ltc;
-    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, npPart, rentPart: increase - npPart });
+    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, npPart, rentPart: increase - npPart });
     prevP = P;
     prevNP = np;
     prevSlot = slotByYear?.get(year) ?? 0;

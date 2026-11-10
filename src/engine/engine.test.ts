@@ -4,7 +4,7 @@ import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, re
 import { buildPlanInput, expenseSteps, loanEndAge, lockedInflow, planGoals, retireIncomes } from './goals';
 import { CRITICAL_BASE, insuranceGap } from './insurance';
 import { deterministicPath, expenseAt, expenseRatioAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
-import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, wageIncomeAmount } from './incomeTax';
+import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
 import { isPaying, payEndSelfAge, summarize } from './portfolio';
@@ -484,10 +484,12 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
       incomeTaxSchedule({ ...d.profile, spouseBirthYear: 1973, inflation: 0, nationalPension: 0, spousePension: 0, incomes, incomeTax: { ...base, ...extra } }, 2026);
     const one = (kind: 'wage' | 'business' | 'publicPension' | 'privatePension' | 'other', owner: 'self' | 'spouse' = 'self', expense?: number) =>
       [{ name: 'x', monthly: 250, startAge: 50, endAge: 0, growth: 0, step: 1, owner, kind, expense }];
-    // 근로 3,000만(본인): 종소세 = (2,025 − 150) 누진, 건보료 소득분은 다음 해부터 총급여 × 50%
+    // 근로 3,000만(본인)만: 근로소득세액공제·표준세액공제 뒤 75.075만을 연말정산으로 냈으니 5월 추가납부 0
     const w = at(one('wage'));
     expect(w[0].other).toBeCloseTo(3000, 6);
-    expect(w[0].taxSelf).toBeCloseTo(incomeTaxAmount(2025 - 150), 6);
+    expect(w[0].taxSelf).toBeCloseTo(75.075, 6);
+    expect(w[0].wageWithheld).toBeCloseTo(75.075, 6);
+    expect(w[0].due).toBeCloseTo(0, 6);
     expect(w[0].taxSpouse).toBe(0);
     expect(w[1].hiMonth - w[0].hiMonth).toBeCloseTo(0, 6); // 첫해 고지서 역산, 둘째 해부터 같은 소득이면 그대로
     // 배우자 사업소득: 필요경비 40% 뺀 1,800만이 배우자 종합소득, 건보료 100%
@@ -504,6 +506,45 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(at(one('privatePension'), { hiNow: 0 })[1].hiMonth).toBe(0);
     // 근로소득 건보료(고지서 0에서 시작): 다음 해 총급여 × 50%
     expect(at(one('wage'), { hiNow: 0 })[1].hiMonth).toBeCloseTo(((3000 * 0.5) / 12) * 0.0719 * 1.1314, 6);
+  });
+
+  it('근로소득세액공제·표준세액공제·원천징수(기납부)', () => {
+    // 세액공제: 산출세액 130만 이하 55%, 넘는 부분 30%
+    expect(wageTaxCredit(100, 3000)).toBeCloseTo(55, 6);
+    expect(wageTaxCredit(155.25, 3000)).toBeCloseTo(74, 6); // 79.075 → 한도 74(총급여 3,300만 이하)
+    expect(wageTaxCredit(1000, 5000)).toBeCloseTo(66, 6); // 74 − 1,700 × 0.8% = 60.4 → 최소 66
+    expect(wageTaxCredit(1000, 4000)).toBeCloseTo(74 - 700 * 0.008, 6);
+    expect(wageTaxCredit(1000, 8000)).toBeCloseTo(50, 6);
+    expect(wageTaxCredit(1000, 14000)).toBeCloseTo(20, 6);
+    expect(wageTaxCredit(0, 3000)).toBe(0);
+    // 근로소득만 3,000만: 과표 1,875 → 산출 155.25 − 공제 74 − 표준 13 = 68.25 × 1.1
+    expect(wageWithholding(3000, 150)).toBeCloseTo(75.075, 6);
+    expect(wageWithholding(0, 150)).toBe(0);
+    // 근로소득이 없으면 예전 계산과 같음, 세액공제는 세금보다 크지 않음
+    expect(personIncomeTax(2000, 150)).toBeCloseTo(incomeTaxAmount(1850), 6);
+    expect(wageWithholding(600, 150)).toBe(0);
+    // 근로 3,000만 + 사업 1,800만(본인): 산출 425.25, 근로소득분 비율 2,025/3,825로 공제 한도 74 → 결정 372.075, 5월에는 297만(= 사업소득 1,800 × 15% × 1.1)
+    const d = retiree();
+    const rows = incomeTaxSchedule({
+      ...d.profile, spouseBirthYear: 1973, inflation: 0, nationalPension: 0, spousePension: 0,
+      incomes: [
+        { name: '근로', monthly: 250, startAge: 50, endAge: 0, growth: 0, step: 1, kind: 'wage' },
+        { name: '사업', monthly: 150, startAge: 50, endAge: 0, growth: 0, step: 1, kind: 'business' },
+      ],
+      incomeTax: { ...DEFAULT_TAX_ON },
+    }, 2026);
+    expect(rows[0].taxSelf).toBeCloseTo(372.075, 6);
+    expect(rows[0].withheld).toBeCloseTo(75.075, 6);
+    expect(rows[0].due).toBeCloseTo(297, 6);
+    expect(rows[0].npPart).toBe(0);
+    // 배우자 근로소득이면 배우자 공제·원천징수로 계산
+    const sp = incomeTaxSchedule({
+      ...d.profile, spouseBirthYear: 1973, inflation: 0, nationalPension: 0, spousePension: 0,
+      incomes: [{ name: '근로', monthly: 250, startAge: 50, endAge: 0, growth: 0, step: 1, owner: 'spouse', kind: 'wage' }],
+      incomeTax: { ...DEFAULT_TAX_ON, dedSpouse: 300 },
+    }, 2026);
+    expect(sp[0].taxSpouse).toBeCloseTo(wageWithholding(3000, 300), 6);
+    expect(sp[0].due).toBeCloseTo(0, 6);
   });
 
   it('국민연금 생일 월(첫해 월할)·연 인상률: 엑셀처럼 생일 다음 달부터, 2% 인상', () => {
