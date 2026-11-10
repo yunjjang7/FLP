@@ -1,5 +1,5 @@
 import type { PlanBase, YearEnd } from '../types';
-import { incomeValue, nominalFactor, publicPensionAt, type IncomeStream } from './montecarlo';
+import { debtPaymentAt, incomeValue, nominalFactor, publicPensionAt, type Debt, type IncomeStream } from './montecarlo';
 import { normalGen, percentile } from './random';
 
 export type StrategyKey = 'fixed' | 'percent' | 'bucket' | 'guardrail';
@@ -39,7 +39,7 @@ export interface WithdrawInput {
   volatility: number; // %
   inflation: number; // %
   percentRate: number; // 정률 인출 비율 %
-  debts?: { endAge: number; annual: number }[]; // 은퇴 후에도 남은 대출 상환
+  debts?: Debt[]; // 은퇴 후에도 남은 대출 상환
   extras?: { age: number; amount: number }[]; // 은퇴 후 목적자금·매년 반복 지출
   guardrail?: GuardrailOptions;
   expenseGrowth?: number; // 생활비 명목 증가율 %(없으면 물가 연동)
@@ -66,7 +66,7 @@ export interface StrategyResult {
 }
 
 const pensionAt = (inp: WithdrawInput, age: number) => inp.pensions.reduce((a, p) => a + incomeValue(p, age, inp.inflation), 0);
-const debtAt = (inp: WithdrawInput, age: number) => (inp.debts ?? []).filter((d) => age < d.endAge).reduce((a, d) => a + d.annual, 0);
+const debtAt = (inp: WithdrawInput, age: number) => debtPaymentAt(inp, age);
 const extraAt = (inp: WithdrawInput, age: number) => (inp.extras ?? []).filter((e) => e.age === age).reduce((a, e) => a + e.amount, 0);
 export const inflowOf = (inp: WithdrawInput, age: number) => (inp.inflows ?? []).filter((e) => e.age === age).reduce((a, e) => a + e.amount, 0);
 /** 해당 나이의 생활비(실질) */

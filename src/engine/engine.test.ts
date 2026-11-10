@@ -3,7 +3,7 @@ import { sampleData } from '../db/sample';
 import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, realRate, scale } from './finance';
 import { buildPlanInput, loanEndAge, lockedInflow, planGoals, retireIncomes } from './goals';
 import { insuranceGap } from './insurance';
-import { deterministicPath, expenseAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
+import { deterministicPath, expenseAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
@@ -66,13 +66,40 @@ describe('몬테카를로', () => {
 
 describe('샘플 데이터 통합', () => {
   const d = sampleData(2026);
-  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026);
+  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
   it('요약값', () => {
     expect(s.age).toBe(45);
     expect(s.totalDebt).toBe(30000);
     expect(s.netWorth).toBe(s.totalAssets - 30000);
     expect(s.savings).toBe(650 - (95 + 80) - 185 - 190);
     expect(s.byPurpose.reduce((a, b) => a + b.value, 0)).toBe(s.financialAssets);
+  });
+  it('보험 납입 종료 나이: 지난 보험은 지출에서 빼고, 은퇴 전에 끝나는 보험은 그 나이부터 저축 증가', () => {
+    const [a, b, ...rest] = d.insurance;
+    const ins = [{ ...a, payEndAge: 40 }, { ...b, payEndAge: 50 }, ...rest]; // 지금 45세: a는 납입 완료, b는 50세에 끝남
+    const s2 = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, ins);
+    expect(s2.insurance).toBe(45 - a.monthlyPremium);
+    expect(s2.insuranceCount).toBe(d.insurance.length - 1);
+    expect(s2.insuranceEnds).toEqual([{ name: b.name, age: 50, monthly: b.monthlyPremium }]);
+    expect(s2.savings).toBe(s.savings + a.monthlyPremium);
+    const inp = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s2);
+    expect(inp.savingsChanges).toEqual([{ fromAge: 50, annual: b.monthlyPremium * 12, name: `${b.name} 납입 완료` }]);
+    const noChange = { ...inp, savingsChanges: undefined };
+    expect(savingsAt(inp, 49)).toBe(savingsAt(noChange, 49));
+    expect(savingsAt(inp, 50)).toBe(savingsAt(noChange, 50) + b.monthlyPremium * 12);
+    // 지출에 보험료 항목이 따로 있으면(보험 탭 금액을 더하지 않았으면) 저축 변화도 넣지 않음
+    const dup = summarize(d.profile, d.assets, d.liabilities, [...d.cashflows, { name: '보험료', kind: 'fixed' as const, category: '보험', monthly: 45 }], 2026, ins);
+    expect(buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, dup).savingsChanges).toBeUndefined();
+  });
+  it('보험 탭 보험료를 지출에 더하고, 지출에 보험료 항목이 있으면 더하지 않음', () => {
+    expect(s.insurance).toBe(45);
+    expect(s.insuranceDup).toEqual([]);
+    const withItem = [...d.cashflows, { name: '자동차', kind: 'fixed' as const, category: '보험료', monthly: 45 }];
+    const dup = summarize(d.profile, d.assets, d.liabilities, withItem, 2026, d.insurance);
+    expect(dup.insuranceDup).toEqual(['자동차']);
+    expect(dup.insurance).toBe(0);
+    expect(dup.expense).toBe(s.expense); // 두 번 빠지지 않음
+    expect(summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026).expense).toBe(s.expense - 45);
   });
   it('목표·위험·보장·처방이 계산됨', () => {
     const gp = planGoals(d.goals, d.assets, s.age);
@@ -183,7 +210,7 @@ describe('엑셀 반영: 인출 중 은퇴자·소득·가드레일·반복 지�
   });
   it('반복 지출은 시작~종료 나이 매년 계산되고 목적자금 적립에서는 빠짐', () => {
     const d = sampleData(2026);
-    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026);
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
     const inp = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
     const travel = inp.goals.filter((g) => g.age >= 61 && g.age <= 75 && Math.abs(g.amount - 500) < 1e-6);
     expect(travel).toHaveLength(15);
@@ -222,7 +249,7 @@ describe('엑셀 반영: 인출 중 은퇴자·소득·가드레일·반복 지�
   });
   it('위험 점검에 인출률 항목', () => {
     const d = sampleData(2026);
-    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026);
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
     const c = riskChecks(d.profile, d.assets, s, { rate: 7, age: 60, retired: false }).find((x) => x.key === 'withdraw');
     expect(c?.level).toBe('danger');
   });
@@ -256,9 +283,9 @@ describe('부부 소득·연금, 가드레일 비교, 연말결산', () => {
   it('배우자가 먼저 은퇴하면 그때부터 은퇴 전 저축이 줄어듦', () => {
     const d = sampleData(2026);
     d.profile = { ...d.profile, spouseIncome: 150, spouseRetireAge: 50 }; // 본인 52세에 배우자 은퇴
-    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026);
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
     const inp = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
-    expect(inp.savingsChanges).toEqual([{ fromAge: 52, annual: -1800 }]);
+    expect(inp.savingsChanges).toEqual([{ fromAge: 52, annual: -1800, name: '배우자 은퇴' }]);
     const without = buildPlanInput({ ...d.profile, spouseIncome: 0 }, d.assets, d.liabilities, d.goals, s);
     expect(deterministicPath(inp).balances[15]).toBeLessThan(deterministicPath(without).balances[15]);
   });
@@ -290,7 +317,7 @@ describe('부부 소득·연금, 가드레일 비교, 연말결산', () => {
   });
   it('은퇴자는 저축률 대신 인출률로 점검·점수', () => {
     const d = sampleData(2026);
-    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026);
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
     const c = riskChecks(d.profile, d.assets, s, { rate: 3, age: 60, retired: true });
     expect(c.some((x) => x.key === 'savings')).toBe(false);
     const ins = insuranceGap(d.profile, s, d.insurance, d.goals);
@@ -305,7 +332,7 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     d.liabilities = [];
     return d;
   };
-  const plan = (d: ReturnType<typeof sampleData>) => buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026));
+  const plan = (d: ReturnType<typeof sampleData>) => buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance));
 
   it('생활비 명목 고정은 실질 생활비가 물가만큼 줄고, 연금 생활비 고정은 국민·개인연금만큼만 인출이 줄어듦', () => {
     const d = retiree();
@@ -521,7 +548,7 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
       { ...base, name: '아내 IRP', amount: 6000, owner: 'spouse', drawStartYear: 2030 },
     ];
     const pi = plan(d);
-    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026);
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
     const start = withdrawStart(pi);
     const input = { startAge: start.age, endAge: d.profile.lifeExpectancy, startBalance: start.balance, expenseAnnual: pi.retireExpenseAnnual, inflows: pi.inflows, pensions: pi.pensions, meanReturn: 4, volatility: 10, inflation: 2.5, percentRate: 4, extras: pi.goals.filter((g) => g.age >= start.age), guardrail: DEFAULT_GUARDRAIL };
     const cb = { profile: d.profile, assets: d.assets, liabilities: d.liabilities, goals: d.goals, summary: s, input, strategy: 'fixed' as const, meanReturn: 4 };

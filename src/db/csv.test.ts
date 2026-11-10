@@ -48,12 +48,23 @@ describe('CSV 입출력', () => {
     const loans = [
       { name: '주담대', balance: 20000, rate: 4, monthlyPayment: 100, endAge: 0, homeLoan: 'buy' },
       { name: '신용대출', balance: 1000, rate: 6, monthlyPayment: 30, endAge: 0 },
+      { name: '만기 대출', balance: 5000, rate: 4, monthlyPayment: 17, endAge: 55, repay: 'bullet' },
+      { name: '원금균등 대출', balance: 12000, rate: 5, monthlyPayment: 150, endAge: 0, repay: 'equal' },
     ];
     const csv = toCSV('liabilities', loans);
     expect(csv.split(/\r?\n/)[0]).toContain('건보 대출 공제');
     const { rows, errors } = fromCSV('liabilities', csv);
     expect(errors).toEqual([]);
     expect(rows).toEqual(loans);
+  });
+  it('보험 납입 종료 나이 왕복, 열이 없는 예전 파일은 0', () => {
+    const ins = [{ name: '종신보험', death: 10000, critical: 0, care: 0, monthlyPremium: 20, payEndAge: 60 }];
+    const csv = toCSV('insurance', ins);
+    expect(csv.split(/\r?\n/)[0]).toContain('납입 종료 나이');
+    expect(fromCSV('insurance', csv).rows).toEqual(ins);
+    const old = fromCSV('insurance', '상품명,사망보장,진단비,간병보장,월 보험료\n암보험,0,3000,0,5');
+    expect(old.errors).toEqual([]);
+    expect(old.rows[0].payEndAge ?? 0).toBe(0);
   });
   it('양식에 부동산 예시 행 포함', () => {
     const { rows, errors } = fromCSV('assets', templateCSV('assets'));

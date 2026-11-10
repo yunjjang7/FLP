@@ -100,14 +100,35 @@ export interface PlanOverrides {
  */
 export function loanEndAge(l: Liability, currentAge: number): { age: number; auto: boolean } {
   if (l.endAge && l.endAge > 0) return { age: l.endAge, auto: false };
+  // 만기일시 상환은 원금이 줄지 않아 끝나는 나이를 계산할 수 없음 → 만기 나이를 직접 넣어야 함
+  if (l.repay === 'bullet') return { age: Infinity, auto: true };
+  if (l.repay === 'equal') {
+    // 원금균등: 월 원금 = 월 상환액 − 이번 달 이자, 잔액 ÷ 월 원금 개월이면 끝남
+    const pr = equalPrincipal(l, currentAge);
+    return { age: pr > 0 ? currentAge + Math.ceil(l.balance / pr / 12) : Infinity, auto: true };
+  }
   const m = payoffMonths(l.balance, l.rate, l.monthlyPayment);
   return { age: m === null ? Infinity : currentAge + Math.ceil(m / 12), auto: true };
 }
 
-/** years 년 뒤 대출 잔액(명목): 원리금 균등 상환, 상환 종료 나이가 되면 0 */
+/** 원금균등 상환의 월 원금: 상환 종료 나이가 있으면 잔액 ÷ 남은 개월, 없으면 월 상환액 − 이번 달 이자 */
+export function equalPrincipal(l: Liability, currentAge: number) {
+  if (l.endAge && l.endAge > currentAge) return l.balance / ((l.endAge - currentAge) * 12);
+  return l.monthlyPayment - (l.balance * l.rate) / 1200;
+}
+
+/** 원금균등 상환에서 월 상환액이 1년마다 줄어드는 폭(월 원금 × 12개월 × 월 금리) */
+export function equalMonthlyDecline(l: Liability, currentAge: number) {
+  const pr = equalPrincipal(l, currentAge);
+  return pr > 0 ? pr * 12 * (l.rate / 1200) : 0;
+}
+
+/** years 년 뒤 대출 잔액(명목): 원리금균등·원금균등 상환(만기일시 상환은 원금 그대로), 상환 종료 나이가 되면 0 */
 export function loanBalanceAt(l: Liability, currentAge: number, years: number) {
   if (years <= 0) return l.balance;
   if (currentAge + years >= loanEndAge(l, currentAge).age) return 0;
+  if (l.repay === 'bullet') return l.balance;
+  if (l.repay === 'equal') return Math.max(0, l.balance - equalPrincipal(l, currentAge) * years * 12);
   const i = l.rate / 1200;
   const m = years * 12;
   if (i === 0) return Math.max(0, l.balance - l.monthlyPayment * m);
@@ -115,6 +136,16 @@ export function loanBalanceAt(l: Liability, currentAge: number, years: number) {
   return Math.max(0, l.balance * g - (l.monthlyPayment * (g - 1)) / i);
 }
 
+
+/**
+ * 만기일시 상환 대출의 원금 일시 상환: 만기 나이에 남은 원금을 자산에서 한 번에 뺌.
+ * 원금은 명목 금액 그대로라 실질 금액 = 원금 ÷ (1 + 물가)^(만기까지 햇수). 만기 나이가 없거나 지났으면 없음.
+ */
+export function bulletRepayments(liabilities: Liability[], currentAge: number, inflation: number) {
+  return liabilities
+    .filter((l) => l.repay === 'bullet' && l.balance > 0 && (l.endAge ?? 0) > currentAge)
+    .map((l) => ({ name: l.name, age: l.endAge!, nominal: l.balance, amount: l.balance / Math.pow(1 + inflation / 100, l.endAge! - currentAge) }));
+}
 /** 아직 수령 전인 묶인 자산(노란우산 등) */
 export const isLocked = (a: Asset, nowYear: number) => isFinancial(a) && (a.lockYear ?? 0) > nowYear;
 
@@ -130,6 +161,18 @@ export function expenseRule(profile: Profile): Pick<PlanInput, 'expenseGrowth' |
   if (profile.expenseMode === 'growth') return { expenseGrowth: profile.expenseGrowth ?? 0 };
   if (profile.expenseMode === 'draw') return { fixedDraw: (profile.fixedDraw ?? 0) * 12 };
   return {};
+}
+
+/**
+ * 은퇴 전 저축 변화
+ * - 배우자가 본인보다 먼저 은퇴하면 그때부터 가구 저축이 배우자 소득만큼 줄어듦
+ * - 보험 납입이 끝나면 그 나이부터 월 보험료만큼 저축이 늘어남(보험 탭 보험료를 지출에 자동으로 더한 경우만)
+ */
+export function savingsChanges(profile: Profile, s: Summary, retireAge: number): PlanInput['savingsChanges'] {
+  const out: { fromAge: number; annual: number; name?: string }[] = [];
+  if ((profile.spouseIncome ?? 0) > 0 && spouseRetireSelfAge(profile) < retireAge) out.push({ fromAge: spouseRetireSelfAge(profile), annual: -profile.spouseIncome * 12, name: '배우자 은퇴' });
+  if (s.insurance > 0) for (const x of s.insuranceEnds.filter((e) => e.age < retireAge)) out.push({ fromAge: x.age, annual: x.monthly * 12, name: `${x.name} 납입 완료` });
+  return out.length ? out : undefined;
 }
 
 /** 프로필·자산 데이터를 시뮬레이션 입력(실질 기준)으로 변환 */
@@ -157,13 +200,16 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
     retireVolatility: profile.retireSeparate ? profile.retireVolatility : undefined,
     // 월상환액은 현재 금액 그대로(실질 일정) 가정
     debts: liabilities
-      .filter((l) => l.monthlyPayment > 0)
-      .map((l) => ({ name: l.name, endAge: loanEndAge(l, s.age).age, annual: l.monthlyPayment * 12 })),
-    // 배우자가 본인보다 먼저 은퇴하면 그때부터 가구 저축이 배우자 소득만큼 줄어듦
-    savingsChanges:
-      (profile.spouseIncome ?? 0) > 0 && spouseRetireSelfAge(profile) < (o.retireAge ?? profile.retireAge)
-        ? [{ fromAge: spouseRetireSelfAge(profile), annual: -profile.spouseIncome * 12 }]
-        : undefined,
+      .filter((l) => l.monthlyPayment > 0 || l.repay === 'bullet') // 만기일시는 이자가 0이어도 만기 점검용으로 남김
+      .map((l) => ({
+        name: l.name,
+        endAge: loanEndAge(l, s.age).age,
+        annual: l.monthlyPayment * 12,
+        ...(l.repay === 'bullet' ? { bullet: true } : {}),
+        // 원금균등은 잔액이 줄어 상환액이 해마다 줄고, 줄어든 만큼 저축이 늘어남
+        ...(l.repay === 'equal' ? { decline: equalMonthlyDecline(l, s.age) * 12, fromAge: s.age } : {}),
+      })),
+    savingsChanges: savingsChanges(profile, s, o.retireAge ?? profile.retireAge),
     currentAge: s.age,
     retireAge: o.retireAge ?? profile.retireAge,
     lifeExpectancy: profile.lifeExpectancy,
@@ -185,6 +231,8 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
         for (let age = Math.max(g.targetAge, s.age); age <= last; age++) out.push({ age, amount: g.amountPV * Math.pow(1 + extra, age - s.age) });
         return out;
       })
+      // 만기일시 상환 대출은 만기 나이에 원금을 한 번에 갚음
+      .concat(bulletRepayments(liabilities, s.age, inflation).map(({ name, age, amount }) => ({ age, amount, loan: name })))
       .concat(npCost),
   };
 }

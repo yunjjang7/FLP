@@ -42,14 +42,15 @@ export interface PlanInput {
   inflation: number; // %
   retireExpenseAnnual: number; // 은퇴 후 연 생활비
   pensions: IncomeStream[]; // 국민연금·개인연금·임대료 등 은퇴 후 소득
-  goals: { age: number; amount: number }[]; // 해당 나이에 지출되는 목적자금·반복 지출(실질)
+  /** 해당 나이에 지출되는 목적자금·반복 지출(실질). loan 이 있으면 만기일시 상환 대출의 원금 상환(그 대출 이름) */
+  goals: { age: number; amount: number; loan?: string }[];
   /** 은퇴 후 자산 운용(미지정 시 은퇴 전과 동일) */
   retireMeanReturn?: number;
   retireVolatility?: number;
   /** 대출 상환: endAge 나이부터 상환이 끝남. 은퇴 전엔 그만큼 저축이 늘고, 은퇴 후에도 남아 있으면 지출로 계산 */
-  debts?: { name?: string; endAge: number; annual: number }[];
+  debts?: Debt[];
   /** 은퇴 전 저축 변화: fromAge 나이부터 연 저축에 annual 을 더함(음수면 감소, 예: 배우자 은퇴) */
-  savingsChanges?: { fromAge: number; annual: number }[];
+  savingsChanges?: { fromAge: number; annual: number; name?: string }[];
   /** 은퇴 후 생활비 명목 증가율(%). 없으면 물가만큼 올라 실질 금액이 일정 */
   expenseGrowth?: number;
   /** 연금으로 쓰는 금액 명목 고정(연, 인출 시작 시점 금액): 이 금액을 국민·개인연금과 자산 인출로 채우고(연금이 늘면 인출이 줄어듦), 임대료 등 그 밖의 소득은 모두 생활비로 씀 */
@@ -89,13 +90,30 @@ export const expenseAt = (input: PlanInput, age: number) =>
 /** 해당 나이에 들어오는 묶인 자산 수령액(실질) */
 export const inflowAt = (input: PlanInput, age: number) => (input.inflows ?? []).filter((x) => x.age === age).reduce((a, x) => a + x.amount, 0);
 
-/** 해당 나이에 아직 남아 있는 대출 상환액(연) */
-export const debtPaymentAt = (input: PlanInput, age: number) => (input.debts ?? []).filter((d) => age < d.endAge).reduce((a, d) => a + d.annual, 0);
+/**
+ * 대출 상환 흐름. annual 은 지금 연 상환액, bullet 은 만기일시 상환(annual 은 이자).
+ * decline: 원금균등 상환에서 잔액이 줄어 연 상환액이 해마다 줄어드는 폭(fromAge 부터)
+ */
+export interface Debt {
+  name?: string;
+  endAge: number;
+  annual: number;
+  bullet?: boolean;
+  decline?: number;
+  fromAge?: number;
+}
 
-/** 은퇴 전 연 저축액: 기본 저축 + 상환이 끝난 대출의 상환액 */
+/** 해당 나이의 대출 상환액(연): 원금균등이면 해마다 줄고, 상환 종료 나이부터 0 */
+export const debtAnnualAt = (d: Debt, age: number) =>
+  age >= d.endAge ? 0 : Math.max(0, d.annual - (d.decline ?? 0) * Math.max(0, age - (d.fromAge ?? age)));
+
+/** 해당 나이에 아직 남아 있는 대출 상환액(연) */
+export const debtPaymentAt = (input: { debts?: Debt[] }, age: number) => (input.debts ?? []).reduce((a, d) => a + debtAnnualAt(d, age), 0);
+
+/** 은퇴 전 연 저축액: 기본 저축 + 지금보다 줄어든 대출 상환액(상환 종료·원금균등 감소분) */
 export const savingsAt = (input: PlanInput, age: number) =>
   input.annualSavings +
-  (input.debts ?? []).filter((d) => age >= d.endAge).reduce((a, d) => a + d.annual, 0) +
+  (input.debts ?? []).reduce((a, d) => a + d.annual - debtAnnualAt(d, age), 0) +
   (input.savingsChanges ?? []).filter((c) => age >= c.fromAge).reduce((a, c) => a + c.annual, 0);
 
 /** 은퇴 후 자산에서 꺼내야 할 금액(생활비 − 연금 + 남은 대출 상환). 인출액 고정이면 고정액(명목) − 국민·개인연금 + 대출 상환 */

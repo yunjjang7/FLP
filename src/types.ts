@@ -51,13 +51,16 @@ export interface Liability {
   monthlyPayment: number;
   endAge?: number; // 상환 종료 나이(비우거나 0이면 잔액·금리·월상환액으로 자동 계산)
   homeLoan?: 'buy'; // 실거주 주택 구입 대출(건보료 재산 과세표준에서 공제)
+  // 상환 방식(비우면 원리금균등). bullet: 만기일시 — 월 상환액은 이자만, 상환 종료 나이(만기)에 남은 원금을 자산에서 한 번에 갚음.
+  // equal: 원금균등 — 월 상환액은 이번 달 원금 + 이자, 잔액이 줄면서 이자만큼 상환액이 해마다 줄어듦
+  repay?: 'bullet' | 'equal';
 }
 
 export interface Cashflow {
   id?: number;
   name: string;
   kind: 'fixed' | 'variable';
-  category: string; // 보험료/대출이자/구독료/주거/생활비 등
+  category: string; // 주거/구독료/교육/생활비 등(보험료는 보험 탭, 대출 원리금은 부채에서 자동 반영)
   monthly: number;
 }
 
@@ -80,6 +83,7 @@ export interface Insurance {
   critical: number; // 암·중대질병 진단비
   care: number; // 간병·장기요양 보장
   monthlyPremium: number;
+  payEndAge?: number; // 납입 종료 나이(본인 나이, 0이면 계속 납입): 이 나이부터 보험료가 지출에서 빠짐
 }
 
 export interface Snapshot {

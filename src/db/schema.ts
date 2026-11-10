@@ -69,10 +69,13 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
       { key: 'balance', label: '잔액', kind: 'number', unit: '만원' },
       { key: 'rate', label: '금리', kind: 'number', unit: '%', step: 0.1 },
       { key: 'monthlyPayment', label: '월 상환액', kind: 'number', unit: '만원' },
-      { key: 'endAge', label: '상환 종료 나이', kind: 'number', unit: '세', hint: '0이면 자동 계산' },
+      { key: 'endAge', label: '상환 종료 나이', kind: 'number', unit: '세', hint: '0이면 자동 계산 · 만기일시는 만기 나이' },
     ],
     example: { name: '주택담보대출', balance: 20000, rate: 4, monthlyPayment: 100, endAge: 0 },
-    csvExtra: [{ key: 'homeLoan', label: '건보 대출 공제', kind: 'select', options: { buy: '주택 구입' } }],
+    csvExtra: [
+      { key: 'repay', label: '상환 방식', kind: 'select', options: { bullet: '만기일시', equal: '원금균등' } },
+      { key: 'homeLoan', label: '건보 대출 공제', kind: 'select', options: { buy: '주택 구입' } },
+    ],
   },
   cashflows: {
     label: '지출',
@@ -82,7 +85,7 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
       { key: 'category', label: '분류', kind: 'text' },
       { key: 'monthly', label: '월 금액', kind: 'number', unit: '만원' },
     ],
-    example: { name: '보험료', kind: 'fixed', category: '보험료', monthly: 30 },
+    example: { name: '통신비', kind: 'fixed', category: '통신비', monthly: 10 },
   },
   goals: {
     label: '재무목표',
@@ -103,8 +106,9 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
       { key: 'death', label: '사망보장', kind: 'number', unit: '만원' },
       { key: 'critical', label: '진단비', kind: 'number', unit: '만원' },
       { key: 'care', label: '간병보장', kind: 'number', unit: '만원' },
-      { key: 'monthlyPremium', label: '월 보험료', kind: 'number', unit: '만원' },
+      { key: 'monthlyPremium', label: '월 보험료', kind: 'number', unit: '만원', hint: '지출(저축 여력)에 자동 반영' },
+      { key: 'payEndAge', label: '납입 종료 나이', short: '납입 종료', kind: 'number', unit: '세', hint: '0이면 계속 납입 · 본인 나이' },
     ],
-    example: { name: '암보험', death: 0, critical: 3000, care: 0, monthlyPremium: 5 },
+    example: { name: '암보험', death: 0, critical: 3000, care: 0, monthlyPremium: 5, payEndAge: 0 },
   },
 };

@@ -2,7 +2,7 @@ import { won } from '../lib/format';
 import type { Level, Profile } from '../types';
 import type { GoalPlan } from './goals';
 import type { InsuranceGap } from './insurance';
-import { solveFor, withdrawStart, type PlanInput } from './montecarlo';
+import { debtAnnualAt, deterministicPath, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { RISK_PROFILES, type Summary } from './portfolio';
 import { emergencyMonths, withdrawLevel } from './risk';
 
@@ -15,6 +15,45 @@ export interface Prescription {
 
 /** 만원 → "3,500만" / "1.25억" (뒤에 '원'은 문장에서 붙임) */
 const fmt = (v: number) => won(v, false);
+
+/**
+ * 만기일시 상환 대출 점검: 만기 나이가 없으면 입력 요청, 있으면 만기에 원금을 금융자산으로 갚을 수 있는지
+ * (평균 수익 가정 경로에서 만기 해 초 잔액 대비 원금, 상환 뒤 잔액)를 알려 줌
+ */
+export function bulletPrescriptions(input: PlanInput): Prescription[] {
+  const out: Prescription[] = [];
+  for (const d of (input.debts ?? []).filter((x) => x.bullet && !Number.isFinite(x.endAge))) {
+    out.push({
+      area: '부채', level: 'danger',
+      title: `${d.name ?? '대출'} 만기 나이 입력 필요`,
+      detail: `만기일시 상환 대출인데 상환 종료 나이(만기)가 비어 있어 원금 상환이 계산에 빠져 있습니다${d.annual > 0 ? `(이자 월 ${fmt(d.annual / 12)}원은 평생 나가는 것으로 계산)` : ''}. 데이터·설정 → 부채에서 만기 나이를 넣으세요.`,
+    });
+  }
+  const repays = input.goals.filter((g) => g.loan && g.age >= input.currentAge);
+  if (repays.length === 0) return out;
+  const { balances } = deterministicPath(input);
+  for (const g of repays) {
+    const i = g.age - input.currentAge;
+    const before = balances[i] ?? 0;
+    const after = balances[i + 1] ?? 0;
+    const share = before > 0 ? (g.amount / before) * 100 : Infinity;
+    const level = after <= 0 ? 'danger' : share > 50 ? 'caution' : 'good';
+    const when = g.age < input.retireAge ? '은퇴 전' : '은퇴 후';
+    out.push({
+      area: '부채', level,
+      title: `${g.loan} ${g.age}세 만기 원금 ${fmt(g.amount)}원 상환${level === 'danger' ? ' — 금융자산 부족' : ''}`,
+      detail:
+        `${when} ${g.age}세에 원금을 금융자산에서 한 번에 갚는 것으로 계산했습니다(오늘 물가 기준). ` +
+        `평균 수익 가정으로 원금은 그 해 초 금융자산 ${fmt(before)}원${Number.isFinite(share) ? `의 ${share.toFixed(0)}%` : ''}이고, 상환 뒤 연말 잔액은 ${fmt(after)}원입니다. ` +
+        (level === 'danger'
+          ? '갚을 돈이 모자랍니다. 만기 연장·분할 상환 전환이나 미리 상환 자금 적립을 검토하세요.'
+          : level === 'caution'
+            ? '금융자산의 절반 넘게 빠집니다. 만기 전 중도상환이나 상환용 적립을 따로 두는 것을 검토하세요.'
+            : '지금 계획대로면 만기에 갚을 수 있습니다.'),
+    });
+  }
+  return out;
+}
 
 export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap): Prescription[] {
   const c = profile.criteria;
@@ -99,24 +138,36 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
     out.push({ area: '부채', level: 'danger', title: `부채비율 ${debtRatio.toFixed(0)}% — 상한 ${c.debtRatioMax}% 초과`, detail: '금리가 높은 대출부터 상환 계획을 세우세요.' });
   }
 
-  // 은퇴 후까지 이어지는 대출: 은퇴 전 상환 완료를 권고
-  for (const x of debts.filter((d) => d.endAge > input.retireAge)) {
+  out.push(...bulletPrescriptions(input));
+
+  // 은퇴 후까지 이어지는 대출: 은퇴 전 상환 완료를 권고(만기 나이 없는 만기일시 대출은 위에서 따로 안내)
+  for (const x of debts.filter((d) => d.endAge > input.retireAge && !(d.bullet && !Number.isFinite(d.endAge)))) {
     const endless = !Number.isFinite(x.endAge);
     out.push({
       area: '부채', level: endless ? 'danger' : 'caution',
       title: endless ? `${x.name ?? '대출'} 상환이 끝나지 않음` : `${x.name ?? '대출'} 은퇴 후 ${x.endAge - 1}세까지 상환`,
       detail: endless
         ? `월 상환액이 이자보다 적습니다. 은퇴 후에도 월 ${fmt(x.annual / 12)}원이 계속 나가는 것으로 계산했습니다. 상환액을 늘리거나 상환 종료 나이를 입력하세요.`
-        : `은퇴 후에도 월 ${fmt(x.annual / 12)}원을 자산에서 꺼내 갚아야 합니다. 은퇴 전 중도상환이나 상환 기간 단축을 검토하세요.`,
+        : `은퇴 후에도 월 ${fmt(debtAnnualAt(x, input.retireAge) / 12)}원${x.decline ? '(원금균등이라 해마다 줄어듦)' : ''}을 자산에서 꺼내 갚아야 합니다. 은퇴 전 중도상환이나 상환 기간 단축을 검토하세요.`,
     });
   }
   // 은퇴 전 상환이 끝나는 대출: 늘어나는 저축을 노후자금으로 돌리도록 안내
-  const early = debts.filter((d) => d.endAge > s.age && d.endAge < input.retireAge);
+  const early = debts.filter((d) => d.annual > 0 && d.endAge > s.age && d.endAge < input.retireAge);
   if (early.length > 0) {
     out.push({
       area: '저축', level: 'good',
       title: `대출 상환 완료 후 월 ${fmt(early.reduce((a, d) => a + d.annual, 0) / 12)}원 저축 증가`,
       detail: `${early.map((d) => `${d.name ?? '대출'} ${d.endAge}세`).join(', ')} 상환 종료 후 상환액을 그대로 저축·투자한다고 가정했습니다. 생활비로 새지 않도록 자동이체를 걸어 두세요.`,
+    });
+  }
+
+  // 은퇴 전 보험 납입이 끝나는 경우: 늘어나는 저축을 노후자금으로 돌리도록 안내
+  const paidUp = (input.savingsChanges ?? []).filter((c) => c.annual > 0 && c.fromAge > s.age && c.fromAge < input.retireAge && c.name?.endsWith('납입 완료'));
+  if (paidUp.length > 0) {
+    out.push({
+      area: '저축', level: 'good',
+      title: `보험 납입 완료 후 월 ${fmt(paidUp.reduce((x, c) => x + c.annual, 0) / 12)}원 저축 증가`,
+      detail: `${paidUp.map((c) => `${c.name!.replace(/ 납입 완료$/, '')} ${c.fromAge}세`).join(', ')}부터 보험료를 내지 않아 그만큼 저축·투자한다고 가정했습니다. 납입이 끝나면 같은 금액을 자동이체로 연금저축·IRP 등에 돌리세요.`,
     });
   }
 

@@ -51,7 +51,7 @@ export function FlpProvider({ children }: { children: ReactNode }) {
   const value = useMemo<FlpData | null>(() => {
     if (!raw) return null;
     const { profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds } = raw;
-    const summary = summarize(profile, assets, liabilities, cashflows);
+    const summary = summarize(profile, assets, liabilities, cashflows, undefined, insurance);
     const planInput = buildPlanInput(profile, assets, liabilities, goals, summary);
     const sim = simulate(planInput, 1000);
     const ins = insuranceGap(profile, summary, insurance, goals);

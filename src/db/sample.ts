@@ -81,7 +81,6 @@ export function sampleData(year = new Date().getFullYear()) {
   ];
   const cashflows: Cashflow[] = [
     { name: '관리비·공과금', kind: 'fixed', category: '주거', monthly: 35 },
-    { name: '보험료', kind: 'fixed', category: '보험료', monthly: 45 },
     { name: '통신·구독료', kind: 'fixed', category: '구독료', monthly: 15 },
     { name: '자녀 학원비', kind: 'fixed', category: '교육', monthly: 80 },
     { name: '식비·생활비', kind: 'variable', category: '생활비', monthly: 130 },

@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { sampleData } from '../db/sample';
 import type { Asset } from '../types';
-import { buildPlanInput, loanBalanceAt, planGoals } from './goals';
+import { buildPlanInput, bulletRepayments, equalMonthlyDecline, equalPrincipal, loanBalanceAt, loanEndAge, planGoals } from './goals';
 import { hiLoanDeduct, hiPropBase, hiPropScore, incomeTaxSchedule } from './incomeTax';
-import { incomeValue, inflowAt } from './montecarlo';
+import { debtAnnualAt, debtPaymentAt, incomeValue, inflowAt, savingsAt } from './montecarlo';
 import { summarize } from './portfolio';
-import { bucketMap } from './prescribe';
+import { bucketMap, bulletPrescriptions } from './prescribe';
 import { HP_LOAN, hpEstate, hpEstimate, hpLoanOf, housePension, rentStreams, rentYield, saleInflow, selfShare, willSell } from './realestate';
 
 const Y = 2026;
@@ -24,9 +24,9 @@ describe('부동산', () => {
 
   it('임대보증금은 부채, 부동산은 용도 바구니·목적자금에서 빠짐', () => {
     const d = sampleData(Y);
-    const base = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y);
+    const base = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance);
     const assets = [...d.assets, rental()];
-    const s = summarize(d.profile, assets, d.liabilities, d.cashflows, Y);
+    const s = summarize(d.profile, assets, d.liabilities, d.cashflows, Y, d.insurance);
     expect(s.depositDebt).toBe(5000);
     expect(s.totalDebt).toBe(base.totalDebt + 5000);
     expect(s.netWorth).toBe(base.netWorth + 30000 - 5000);
@@ -59,7 +59,7 @@ describe('부동산', () => {
     expect(gross.startAge).toBe(45);
     expect(gross.annual).toBe(1200);
     // 노후 진단 입력에 월세가 소득으로 들어감
-    const plan = buildPlanInput(d.profile, [...d.assets, a], d.liabilities, d.goals, summarize(d.profile, [...d.assets, a], d.liabilities, d.cashflows, Y));
+    const plan = buildPlanInput(d.profile, [...d.assets, a], d.liabilities, d.goals, summarize(d.profile, [...d.assets, a], d.liabilities, d.cashflows, Y, d.insurance));
     expect(plan.pensions.some((x) => x.name === '오피스텔 월세')).toBe(true);
   });
 
@@ -74,12 +74,12 @@ describe('부동산', () => {
     const r = saleInflow(rental({ lockYear: Y + 10, lockTax: 0 }), d.profile, Y);
     expect(r.nominal).toBeCloseTo(30000 * 1.03 ** 10 - 5000, 6); // 보증금 반환
     const assets = d.assets.map((x) => (x.name === home.name ? home : x));
-    const plan = buildPlanInput(d.profile, assets, d.liabilities, d.goals, summarize(d.profile, assets, d.liabilities, d.cashflows, Y));
+    const plan = buildPlanInput(d.profile, assets, d.liabilities, d.goals, summarize(d.profile, assets, d.liabilities, d.cashflows, Y, d.insurance));
     expect(inflowAt(plan, 65)).toBeCloseTo(s.amount, 6);
     expect(plan.inflows?.find((x) => x.kind === 'sale')?.age).toBe(65);
     // 매각 연도가 지났으면 무시
     const past = d.assets.map((x) => (x.name === home.name ? { ...home, lockYear: Y - 1 } : x));
-    expect(buildPlanInput(d.profile, past, d.liabilities, d.goals, summarize(d.profile, past, d.liabilities, d.cashflows, Y)).inflows ?? []).toEqual([]);
+    expect(buildPlanInput(d.profile, past, d.liabilities, d.goals, summarize(d.profile, past, d.liabilities, d.cashflows, Y, d.insurance)).inflows ?? []).toEqual([]);
   });
 
   it('임대소득 종소세: 부동산 자산은 명의·지분대로 나눔', () => {
@@ -112,7 +112,7 @@ describe('부동산', () => {
     expect(h.price).toBeCloseTo(75000 * 1.03 ** 20, 6);
     expect(h.nominal).toBeCloseTo(hpEstimate(h.price, h.calcAge), 9);
     const assets = d.assets.map((x) => (x.type === 'realestate' ? home : x));
-    const plan = buildPlanInput(d.profile, assets, d.liabilities, d.goals, summarize(d.profile, assets, d.liabilities, d.cashflows, Y));
+    const plan = buildPlanInput(d.profile, assets, d.liabilities, d.goals, summarize(d.profile, assets, d.liabilities, d.cashflows, Y, d.insurance));
     expect(plan.inflows ?? []).toEqual([]);
     const s = plan.pensions.find((x) => x.name === '거주 아파트 주택연금')!;
     expect(s.kind).toBe('pension');
@@ -144,8 +144,8 @@ describe('부동산', () => {
     expect(hpEstate({ ...home, hpMonthly: 2000 }, d.profile, 45).left).toBe(0);
     // 순자산·부채에는 넣지 않음
     const assets = d.assets.map((x) => (x.type === 'realestate' ? home : x));
-    const base = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y);
-    const s = summarize(d.profile, assets, d.liabilities, d.cashflows, Y);
+    const base = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance);
+    const s = summarize(d.profile, assets, d.liabilities, d.cashflows, Y, d.insurance);
     expect(s.netWorth).toBe(base.netWorth);
     expect(s.totalDebt).toBe(base.totalDebt);
   });
@@ -223,5 +223,70 @@ describe('부동산', () => {
     const off = incomeTaxSchedule({ ...p, incomeTax: { on: true, hiPropAuto: true } as never }, Y, undefined, d.assets, [loan]);
     expect(off[0].loanDed).toBe(0);
     expect(off[0].propBase).toBeCloseTo(gross, 6);
+  });
+});
+
+describe('원금균등 상환 대출', () => {
+  const d = sampleData(Y);
+  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance);
+  // 잔액 1.2억, 금리 6%, 월 원금 100 → 이번 달 이자 60, 월 상환액 160
+  const eq = { name: '원금균등', balance: 12000, rate: 6, monthlyPayment: 160, endAge: 0, repay: 'equal' as const };
+  it('월 원금 = 월 상환액 − 이자, 잔액은 원금만큼 일정하게 줄고 10년에 끝남', () => {
+    expect(equalPrincipal(eq, s.age)).toBeCloseTo(100, 9);
+    expect(loanEndAge(eq, s.age).age).toBe(s.age + 10);
+    expect(loanBalanceAt(eq, s.age, 3)).toBeCloseTo(12000 - 3600, 6);
+    expect(loanBalanceAt(eq, s.age, 10)).toBe(0);
+    // 상환 종료 나이를 넣으면 월 원금 = 잔액 ÷ 남은 개월
+    expect(equalPrincipal({ ...eq, endAge: s.age + 20 }, s.age)).toBeCloseTo(50, 9);
+    expect(loanEndAge({ ...eq, monthlyPayment: 50 }, s.age).age).toBe(Infinity); // 이자(60)보다 적음
+  });
+  it('상환액이 해마다 이자만큼 줄고, 줄어든 만큼 저축이 늘어남', () => {
+    expect(equalMonthlyDecline(eq, s.age)).toBeCloseTo(6, 9); // 100 × 12 × 0.5%
+    const plan = buildPlanInput(d.profile, d.assets, [...d.liabilities, eq], d.goals, s);
+    const debt = plan.debts!.find((x) => x.name === '원금균등')!;
+    expect(debt).toMatchObject({ endAge: s.age + 10, annual: 1920, fromAge: s.age });
+    expect(debt.decline).toBeCloseTo(72, 9);
+    expect(debtAnnualAt(debt, s.age)).toBe(1920);
+    expect(debtAnnualAt(debt, s.age + 3)).toBeCloseTo(1920 - 216, 9);
+    expect(debtAnnualAt(debt, s.age + 10)).toBe(0);
+    const base = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
+    expect(savingsAt(plan, s.age + 3) - savingsAt(base, s.age + 3)).toBeCloseTo(216, 9);
+    expect(debtPaymentAt(plan, s.age + 3) - debtPaymentAt(base, s.age + 3)).toBeCloseTo(1920 - 216, 9);
+  });
+});
+
+describe('만기일시 상환 대출', () => {
+  const d = sampleData(Y);
+  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance);
+  const bullet = { name: '만기 대출', balance: 10000, rate: 4, monthlyPayment: 33, endAge: s.age + 5, repay: 'bullet' as const };
+  it('잔액은 만기까지 그대로, 만기 나이가 없으면 끝나지 않음', () => {
+    expect(loanBalanceAt(bullet, s.age, 4)).toBe(10000);
+    expect(loanBalanceAt(bullet, s.age, 5)).toBe(0);
+    expect(loanEndAge({ ...bullet, endAge: 0 }, s.age).age).toBe(Infinity);
+    expect(bulletRepayments([{ ...bullet, endAge: 0 }], s.age, 2.5)).toEqual([]);
+  });
+  it('만기 나이에 원금(실질)을 자산에서 한 번에 뺌, 이자는 만기 전까지 상환액으로', () => {
+    const plan = buildPlanInput(d.profile, d.assets, [...d.liabilities, bullet], d.goals, s);
+    const base = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
+    const real = 10000 / Math.pow(1 + d.profile.inflation / 100, 5);
+    const added = plan.goals.filter((g) => !base.goals.some((b) => b.age === g.age && b.amount === g.amount));
+    expect(added).toHaveLength(1);
+    expect(added[0].age).toBe(s.age + 5);
+    expect(added[0].amount).toBeCloseTo(real, 6);
+    expect(added[0].loan).toBe('만기 대출');
+    expect(plan.debts?.find((x) => x.name === '만기 대출')).toEqual({ name: '만기 대출', endAge: s.age + 5, annual: 33 * 12, bullet: true });
+  });
+  it('처방: 만기 나이가 없으면 입력 경고, 있으면 만기 원금 상환 가능 여부', () => {
+    const noEnd = buildPlanInput(d.profile, d.assets, [...d.liabilities, { ...bullet, endAge: 0 }], d.goals, s);
+    const warn = bulletPrescriptions(noEnd);
+    expect(warn).toHaveLength(1);
+    expect(warn[0]).toMatchObject({ level: 'danger', title: '만기 대출 만기 나이 입력 필요' });
+    const ok = bulletPrescriptions(buildPlanInput(d.profile, d.assets, [...d.liabilities, bullet], d.goals, s));
+    expect(ok).toHaveLength(1);
+    expect(ok[0].title).toContain(`${s.age + 5}세 만기 원금`);
+    expect(ok[0].level).not.toBe('danger');
+    const huge = bulletPrescriptions(buildPlanInput(d.profile, d.assets, [...d.liabilities, { ...bullet, balance: 9_000_000 }], d.goals, s));
+    expect(huge[0]).toMatchObject({ level: 'danger' });
+    expect(huge[0].title).toContain('금융자산 부족');
   });
 });

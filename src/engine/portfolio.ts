@@ -1,4 +1,4 @@
-import type { Asset, AssetType, Cashflow, Liability, Nature, Profile, Purpose, ReUse, RiskProfile } from '../types';
+import type { Asset, AssetType, Cashflow, Insurance, Liability, Nature, Profile, Purpose, ReUse, RiskProfile } from '../types';
 import { depositOf, RE_USE, reUseOf } from './realestate';
 
 export const ASSET_TYPES: Record<AssetType, { label: string; ret: number; vol: number; purpose: Purpose; nature: Nature; liquid: boolean }> = {
@@ -44,7 +44,17 @@ export interface Summary {
   fixed: number;
   variable: number;
   debtPayment: number;
-  expense: number; // 월 총지출(고정+변동+대출상환)
+  /** 지출에 자동으로 더한 보험 탭 월 보험료(중복 의심이면 0) */
+  insurance: number;
+  /** 보험 탭 월 보험료 합계 */
+  insuranceTotal: number;
+  /** 보험료로 보이는 지출 항목 이름(있으면 보험 탭 보험료를 더하지 않음) */
+  insuranceDup: string[];
+  /** 지금 납입 중인 보험 건수 */
+  insuranceCount: number;
+  /** 앞으로 납입이 끝나는 보험: 그 나이부터 월 보험료만큼 지출이 줄어듦 */
+  insuranceEnds: { name: string; age: number; monthly: number }[];
+  expense: number; // 월 총지출(고정+변동+대출상환+보험료)
   savings: number; // 월 저축여력
   savingsRate: number; // %
   byType: { key: AssetType; label: string; value: number }[];
@@ -59,7 +69,13 @@ export interface Summary {
   age: number;
 }
 
-export function summarize(profile: Profile, assets: Asset[], liabilities: Liability[], cashflows: Cashflow[], year = new Date().getFullYear()): Summary {
+/** 지출 항목 중 보험료로 보이는 것(이름·분류에 '보험') */
+export const isInsuranceCashflow = (c: Cashflow) => /보험/.test(`${c.name} ${c.category}`);
+
+/** 해당 나이에 아직 보험료를 내는지(납입 종료 나이가 0이거나 그보다 어리면 납입 중) */
+export const isPaying = (p: Insurance, age: number) => !((p.payEndAge ?? 0) > 0 && age >= p.payEndAge!);
+
+export function summarize(profile: Profile, assets: Asset[], liabilities: Liability[], cashflows: Cashflow[], year = new Date().getFullYear(), policies: Insurance[] = []): Summary {
   const totalAssets = sum(assets.map((a) => a.amount));
   const fin = assets.filter(isFinancial);
   const financialAssets = sum(fin.map((a) => a.amount));
@@ -69,7 +85,15 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
   const fixed = sum(cashflows.filter((c) => c.kind === 'fixed').map((c) => c.monthly));
   const variable = sum(cashflows.filter((c) => c.kind === 'variable').map((c) => c.monthly));
   const debtPayment = sum(liabilities.map((l) => l.monthlyPayment));
-  const expense = fixed + variable + debtPayment;
+  // 보험 탭 보험료는 자동으로 지출에 더함. 지출에 보험료 항목이 이미 있으면 두 번 빠지지 않게 더하지 않음
+  // 납입이 끝난 보험은 빼고, 앞으로 끝나는 보험은 그 나이부터 저축이 늘도록 따로 모음
+  const age = year - profile.birthYear;
+  const paying = policies.filter((p) => isPaying(p, age) && p.monthlyPremium > 0);
+  const insuranceTotal = sum(paying.map((p) => p.monthlyPremium));
+  const insuranceEnds = paying.filter((p) => (p.payEndAge ?? 0) > age).map((p) => ({ name: p.name, age: p.payEndAge!, monthly: p.monthlyPremium }));
+  const insuranceDup = cashflows.filter(isInsuranceCashflow).map((c) => c.name);
+  const insurance = insuranceDup.length ? 0 : insuranceTotal;
+  const expense = fixed + variable + debtPayment + insurance;
   const income = profile.monthlyIncome;
   const savings = income - expense;
 
@@ -96,6 +120,11 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
     fixed,
     variable,
     debtPayment,
+    insurance,
+    insuranceTotal,
+    insuranceDup,
+    insuranceCount: paying.length,
+    insuranceEnds,
     expense,
     savings,
     savingsRate: income > 0 ? (savings / income) * 100 : 0,
@@ -108,6 +137,6 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
     investShare: financialAssets > 0 ? (investAmt / financialAssets) * 100 : 0,
     liquidAssets,
     emergencyFund,
-    age: year - profile.birthYear,
+    age,
   };
 }

@@ -73,6 +73,7 @@ export default function Home() {
             <Row label="고정비" value={`− ${won(s.fixed)}`} muted />
             <Row label="변동비" value={`− ${won(s.variable)}`} muted />
             <Row label="대출 원리금" value={`− ${won(s.debtPayment)}`} muted />
+            {s.insurance > 0 && <Row label="보험료(보험 탭)" value={`− ${won(s.insurance)}`} muted />}
             <div className="border-t border-line pt-2.5">
               <Row label="저축 여력" value={won(s.savings)} strong />
             </div>

@@ -2,7 +2,7 @@ import { Bar as RBar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAx
 import { ExpenseCompare } from '../components/ExpenseCompare';
 import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
-import { expenseAt, incomeValue, pensionAt, retireOutflowAt } from '../engine/montecarlo';
+import { debtAnnualAt, expenseAt, incomeValue, pensionAt, retireOutflowAt } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
 import { hpEstate, housePension, RE_USE, reUseOf, usesHp, willSell } from '../engine/realestate';
 import { Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
@@ -92,7 +92,7 @@ export default function Retire() {
               <Line key={`${x.name}-${x.age}`} label={x.kind === 'credit' ? `+ 세액공제 환급(${x.age}세)` : x.kind === 'sale' ? `+ ${x.name} 매각(${x.age}세, 비용·보증금·새 집 뺀 금액)` : `+ ${x.name} 수령(${x.age}세, 세후 일시금)`} value={won(x.amount)} muted />
             ))}
             {lateDebts.map((x) => (
-              <Line key={x.name} label={`+ ${x.name} 상환 (${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '종료 없음'})`} value={won(x.annual / 12)} muted />
+              <Line key={x.name} label={`+ ${x.name} 상환 (${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '종료 없음'}${x.decline ? ', 해마다 줄어듦' : ''})`} value={won(debtAnnualAt(x, inp.retireAge) / 12)} muted />
             ))}
           </div>
           <div className="mt-3 rounded-lg bg-sunken px-3 py-2 text-sm">
@@ -134,7 +134,7 @@ export default function Retire() {
             <Assume
               key={x.name}
               k={`대출 상환 · ${x.name}`}
-              v={!Number.isFinite(x.endAge) ? `월 ${won(x.annual / 12)} · 상환 미종료` : x.endAge === inp.retireAge ? `${x.endAge}세(은퇴 시점) 상환 종료` : x.endAge < inp.retireAge ? `${x.endAge}세부터 월 ${won(x.annual / 12)} 저축 증가` : `은퇴 후 ${x.endAge - 1}세까지 월 ${won(x.annual / 12)} 지출`}
+              v={(x.decline ? '원금균등 · ' : '') + (!Number.isFinite(x.endAge) ? `월 ${won(x.annual / 12)} · 상환 미종료` : x.endAge === inp.retireAge ? `${x.endAge}세(은퇴 시점) 상환 종료` : x.endAge < inp.retireAge ? `${x.endAge}세부터 월 ${won(x.annual / 12)} 저축 증가` : `은퇴 후 ${x.endAge - 1}세까지 월 ${won(debtAnnualAt(x, inp.retireAge) / 12)} 지출`)}
             />
           ))}
           <Assume k="물가상승률" v={`${inp.inflation}%`} />

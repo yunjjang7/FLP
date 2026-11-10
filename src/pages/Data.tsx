@@ -9,10 +9,10 @@ import { Button, Card, PageHeader } from '../components/ui';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
 import { won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
-import { loanEndAge } from '../engine/goals';
+import { equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
 import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX } from '../engine/incomeTax';
-import type { Asset, AssetType, ReUse, ContribPlan, Criteria, ExpenseMode, Goal, IncomeOwner, IncomeTaxSettings, Liability, Profile, RetireIncome } from '../types';
+import type { Asset, AssetType, ReUse, ContribPlan, Criteria, ExpenseMode, Goal, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
 const EXPENSE_HINT: Record<ExpenseMode, string> = {
@@ -349,12 +349,69 @@ function goalNote(g: Goal) {
 
 /** 대출 카드 아래 안내: 상환 종료 나이와 그 이후 효과 */
 function loanNote(l: Liability, age: number, retireAge: number) {
+  if (l.repay === 'bullet') {
+    const interest = (l.balance * l.rate) / 1200;
+    const pay = l.monthlyPayment > 0 ? `월 ${won(l.monthlyPayment)}(이자)` : `월 상환액 0 → 이자 월 ${won(interest)} 정도를 넣으세요`;
+    if (!((l.endAge ?? 0) > age)) return `만기일시 상환: 상환 종료 나이에 만기 나이를 넣어야 원금 ${won(l.balance)} 일시 상환이 반영됩니다. ${pay}`;
+    const when = l.endAge! <= retireAge ? '은퇴 전' : '은퇴 후';
+    return `만기일시 상환: ${l.endAge! - 1}세까지 ${pay} → ${l.endAge}세(${when})에 원금 ${won(l.balance)}을 자산에서 한 번에 상환`;
+  }
   const { age: end, auto } = loanEndAge(l, age);
   const src = auto ? '자동 계산' : '직접 입력';
   if (!Number.isFinite(end)) return '월 상환액이 이자보다 적어 상환이 끝나지 않습니다. 상환 종료 나이를 직접 입력하세요.';
+  if (l.repay === 'equal') {
+    // 원금균등: 월 원금은 그대로, 이자가 줄어 상환액이 해마다 줄어듦
+    const pr = equalPrincipal(l, age);
+    const first = pr + (l.balance * l.rate) / 1200;
+    const after = end <= retireAge ? '줄어든 만큼 저축 증가로 계산' : `은퇴 후 ${end - 1}세까지 남은 상환액은 자산에서 인출`;
+    return `원금균등: 월 원금 ${won(pr)} + 이자 → 지금 월 약 ${won(first)}에서 해마다 약 ${won(equalMonthlyDecline(l, age))}씩 줄어 ${end}세에 상환 종료(${src}) · ${after}`;
+  }
   if (end < retireAge) return `${end}세에 상환 종료(${src}) → 이후 월 ${won(l.monthlyPayment)} 저축 증가로 계산`;
   if (end === retireAge) return `${end}세에 상환 종료(${src}) → 은퇴와 함께 끝나 은퇴 후 부담 없음`;
   return `${end}세에 상환 종료(${src}) → 은퇴 후에도 ${end - 1}세까지 상환액을 자산에서 인출`;
+}
+
+/** 보험 카드 아래 안내: 납입 종료 나이와 그 이후 효과 */
+function insuranceNote(p: Insurance, age: number, retireAge: number) {
+  const end = p.payEndAge ?? 0;
+  if (!(end > 0) || !(p.monthlyPremium > 0)) return '';
+  if (end <= age) return `${end}세에 납입 완료 → 지출에 더하지 않음`;
+  return end < retireAge
+    ? `${end - 1}세까지 납입 → ${end}세부터 월 ${won(p.monthlyPremium)} 저축 증가로 계산`
+    : `${end - 1}세까지 납입(은퇴 전까지 지출에 계속 포함)`;
+}
+
+/** 지출 입력 안내: 보험료·대출 원리금·재무목표는 자동 반영되므로 지출에 다시 넣지 않음 */
+function CashflowGuide() {
+  const { summary: s } = useFlp();
+  const dup = s.insuranceDup.length > 0 && s.insuranceTotal > 0;
+  return (
+    <div className="space-y-2">
+      {dup && (
+        <div className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn">
+          <b>보험료 중복 의심</b> · 지출의 {s.insuranceDup.map((n) => `‘${n}’`).join(', ')} 항목이 보험료로 보입니다. 그래서 보험 탭의 보험료 {s.insuranceCount}건(월 {won(s.insuranceTotal)})은 지출에 더하지 않았습니다.
+          같은 보험이라면 지출에서 이 항목을 지우세요. 보험 탭 금액이 자동으로 더해집니다.
+        </div>
+      )}
+      <Guide
+        items={[
+          <>지금 매달 나가는 생활비만 넣으세요. 저축 여력 = 세후 소득 − 지출 − 대출 원리금 − 보험료입니다.</>,
+          <><b>보험료</b>는 보험 탭의 월 보험료 합계를 자동으로 더합니다{s.insurance > 0 ? `(지금 월 ${won(s.insurance)})` : ''}. 지출에 따로 넣지 마세요.</>,
+          <><b>대출 원리금</b>(이자 포함)은 부채의 월 상환액으로 계산합니다. 상환이 끝나면 그만큼 저축이 늘어납니다.</>,
+          <><b>앞으로 나갈 목표 지출</b>(등록금·차 구입 등)은 재무목표에만 넣으세요. 목표용 적금 납입액은 지출이 아닙니다.</>,
+        ]}
+      />
+    </div>
+  );
+}
+
+/** 목록 탭 위의 짧은 입력 안내 */
+function Guide({ items }: { items: React.ReactNode[] }) {
+  return (
+    <ul className="list-disc space-y-1 rounded-xl bg-sunken px-4 py-3 pl-8 text-xs text-muted">
+      {items.map((x, i) => <li key={i}>{x}</li>)}
+    </ul>
+  );
 }
 
 function ListEditor({ table }: { table: ListTable }) {
@@ -397,6 +454,35 @@ function ListEditor({ table }: { table: ListTable }) {
         </div>
         <Button onClick={() => tbl.add({ ...example, name: `새 ${label}` })}>+ {label} 추가</Button>
       </div>
+      {table === 'cashflows' && <CashflowGuide />}
+      {table === 'liabilities' && (
+        <Guide
+          items={[
+            <><b>월 상환액</b>에는 매달 내는 원금 + 이자를 모두 넣으세요. 지출(저축 여력)에서 자동으로 빠지므로 지출 탭에 대출 이자를 따로 넣지 않습니다.</>,
+            <>상환 종료 나이를 0으로 두면 잔액·금리·월 상환액으로 자동 계산합니다. 끝나면 그만큼 저축이 늘고, 은퇴 뒤까지 남으면 자산에서 꺼내 갚습니다.</>,
+            <><b>원금균등 상환</b>은 상환 방식을 바꾸고 월 상환액에 이번 달 낸 금액(원금 + 이자)을 넣으세요. 이자가 줄면서 상환액도 해마다 줄고, 줄어든 만큼 저축이 늘어납니다.</>,
+            <><b>만기일시 상환</b>(이자만 내는 대출)은 상환 방식을 바꾸고 상환 종료 나이에 만기 나이를 넣으세요. 만기에 원금을 자산에서 한 번에 갚는 것으로 계산하므로 재무목표에 따로 넣지 않습니다.</>,
+          ]}
+        />
+      )}
+      {table === 'insurance' && (
+        <Guide
+          items={[
+            <><b>월 보험료</b>는 지출(저축 여력)에 자동으로 더합니다. 지출 탭에 보험료를 또 넣지 마세요.</>,
+            <><b>납입 종료 나이</b>(본인 나이)를 넣으면 그 나이부터 보험료가 지출에서 빠지고, 은퇴 전이면 그만큼 저축이 늘어나는 것으로 계산합니다. 0이면 계속 납입합니다.</>,
+          ]}
+        />
+      )}
+      {table === 'goals' && (
+        <Guide
+          items={[
+            <>앞으로 특정 나이에 나갈 돈(등록금·차 구입·결혼 자금 등)만 넣으세요. 목표 나이에 자산에서 빠지므로 지출 탭에는 넣지 않습니다.</>,
+            <><b>지금 이미 매달 내는 비용</b>(올해 학원비 등)은 지출에만 넣고, 같은 비용을 반복 목표로 또 넣지 마세요.</>,
+            <>목표를 위해 붓는 적금 납입액은 지출도 목표도 아닙니다. 쌓인 잔액만 자산(중기·목적자금)으로 넣으세요. 대출 원금 상환과 은퇴 후 생활비에 이미 든 비용도 넣지 않습니다.</>,
+            <>필요 금액은 오늘 물가 기준 금액입니다. 비용 상승률이 물가보다 높으면 그 차이만큼 커집니다.</>,
+          ]}
+        />
+      )}
       {rows.length === 0 && <Card><p className="py-6 text-center text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘가져오기·백업’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
       {rows.map((r) => (
         <Card key={r.id}>
@@ -419,13 +505,27 @@ function ListEditor({ table }: { table: ListTable }) {
             ? <RealEstateExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />
             : <AssetExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />)}
           {table === 'liabilities' && (
-            <label className="mt-2 flex items-center gap-2 text-xs text-muted">
-              <input type="checkbox" checked={r.homeLoan === 'buy'} onChange={(e) => tbl.update(r.id!, { homeLoan: e.target.checked ? 'buy' : undefined })} />
-              실거주 주택 구입 대출(건보료 재산분을 부동산 자산으로 추정할 때 대출 공제 대상)
-            </label>
+            <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted">
+              <label className="flex items-center gap-2">
+                상환 방식
+                <select
+                  className="rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink"
+                  value={r.repay === 'bullet' || r.repay === 'equal' ? r.repay : 'amort'}
+                  onChange={(e) => tbl.update(r.id!, { repay: e.target.value === 'bullet' || e.target.value === 'equal' ? e.target.value : undefined })}
+                >
+                  <option value="amort">원리금균등 상환(매달 같은 금액)</option>
+                  <option value="equal">원금균등 상환(상환액이 점점 줄어듦)</option>
+                  <option value="bullet">만기일시 상환(이자만 냄)</option>
+                </select>
+              </label>
+              <label className="flex items-center gap-2">
+                <input type="checkbox" checked={r.homeLoan === 'buy'} onChange={(e) => tbl.update(r.id!, { homeLoan: e.target.checked ? 'buy' : undefined })} />
+                실거주 주택 구입 대출(건보료 재산분을 부동산 자산으로 추정할 때 대출 공제 대상)
+              </label>
+            </div>
           )}
           <div className="mt-3 flex items-center justify-between gap-3">
-            <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}</span>
+            <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}{table === 'insurance' && insuranceNote(r as unknown as Insurance, data.summary.age, data.profile.retireAge)}</span>
             <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
               삭제
             </button>
