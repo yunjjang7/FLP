@@ -2,9 +2,9 @@ import { Bar as RBar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAx
 import { ExpenseCompare } from '../components/ExpenseCompare';
 import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
-import { expenseAt, pensionAt, retireOutflowAt } from '../engine/montecarlo';
+import { expenseAt, incomeValue, pensionAt, retireOutflowAt } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
-import { RE_USE, reUseOf, willSell } from '../engine/realestate';
+import { hpEstate, housePension, RE_USE, reUseOf, usesHp, willSell } from '../engine/realestate';
 import { Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -31,7 +31,9 @@ export default function Retire() {
   const reNote =
     re.length === 0
       ? '없음'
-      : re.map((a) => `${a.name}(${RE_USE[reUseOf(a)]}${willSell(a, nowYear) ? ` · ${a.lockYear}년 매각` : ''}${reUseOf(a) === 'rental' && (a.rent ?? 0) > 0 ? ' · 월세 소득' : ''})`).join(' · ') + ' — 보유 중엔 시뮬레이션 제외';
+      : re.map((a) => `${a.name}(${RE_USE[reUseOf(a)]}${usesHp(a) ? ` · ${a.hpAge}세 주택연금` : willSell(a, nowYear) ? ` · ${a.lockYear}년 매각` : ''}${reUseOf(a) === 'rental' && (a.rent ?? 0) > 0 ? ' · 월세 소득' : ''})`).join(' · ') + ' — 보유 중엔 시뮬레이션 제외';
+  // 주택연금: 기대수명 때 대출 잔액을 빼고 상속으로 남는 주택 가치(참고 · 순자산·부채에는 넣지 않음)
+  const hpNote = re.filter((a) => usesHp(a) && housePension(a, p, d.summary.age).eligible).map((a) => { const e = hpEstate(a, p, d.summary.age); return `${a.name} ${won(e.left)}(현재가치 ${won(e.leftReal)}, ${e.age}세 · 시세 ${won(e.price)} − 대출 잔액 ${won(e.balance)})`; }).join(' · ');
   const readyLevel: Level = need.ratio >= 100 ? 'good' : need.ratio >= 70 ? 'caution' : 'danger';
 
   const verdict =
@@ -82,7 +84,8 @@ export default function Retire() {
               <Line label={`목표 생활비${inp.expenseGrowth !== undefined ? ` (${fullAge}세)` : ''}`} value={won(expenseAt(inp, fullAge) / 12)} />
             )}
             {inp.pensions.map((x, i) => (
-              <Line key={i} label={`− ${x.name} (${x.startAge}세~${x.endAge ? `${x.endAge}세` : ''})`} value={won(x.annual / 12)} muted />
+              // 인상률 0(주택연금 등 명목 고정)은 받기 시작할 때의 현재가치로 표시
+              <Line key={i} label={`− ${x.name} (${x.startAge}세~${x.endAge ? `${x.endAge}세` : ''}${x.growth === 0 ? ', 명목 고정' : ''})`} value={won((x.growth === 0 ? incomeValue(x, x.startAge, inp.inflation) : x.annual) / 12)} muted />
             ))}
             <div className="border-t border-line pt-2.5"><Line label={draw ? `자산 인출액(${fullAge}세, 물가 반영 후)` : `자산에서 인출할 금액(${fullAge}세 기준)`} value={won(gapMonthly)} strong /></div>
             {(inp.inflows ?? []).map((x) => (
@@ -139,6 +142,7 @@ export default function Retire() {
           {(inp.inflows ?? []).some((x) => !x.kind) && <Assume k="수령 전 자산(시작 자산에서 제외)" v={(inp.inflows ?? []).filter((x) => !x.kind).map((x) => `${x.name} ${x.age}세`).join(' · ')} />}
           <Assume k="목적자금·반복 지출" v={`${d.goals.filter((g) => g.category !== 'retirement').length}건 · 총 ${won(inp.goals.reduce((a, g) => a + g.amount, 0))}`} />
           <Assume k="부동산" v={reNote} />
+          {hpNote && <Assume k="주택연금 상속 시 남는 주택 가치" v={hpNote} />}
         </dl>
       </Card>
       <Disclaimer />

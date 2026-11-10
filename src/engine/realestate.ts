@@ -34,8 +34,8 @@ export function rentYield(a: Asset) {
   return equity > 0 ? ((a.rent ?? 0) * 12 * 100) / equity : 0;
 }
 
-/** 매각 예정인지(매각 연도가 올해 이후) */
-export const willSell = (a: Asset, nowYear: number) => isRealEstate(a) && (a.lockYear ?? 0) > nowYear;
+/** 매각 예정인지(매각 연도가 올해 이후). 주택연금을 쓰면 매각하지 않음 */
+export const willSell = (a: Asset, nowYear: number) => isRealEstate(a) && !usesHp(a) && (a.lockYear ?? 0) > nowYear;
 
 export interface SaleInflow {
   name: string;
@@ -97,4 +97,106 @@ export function rentStreams(assets: Asset[], profile: Profile, currentAge: numbe
       spouseShare: 1 - selfShare(a),
     }))
     .filter((s) => s.annual > 0 && (s.endAge === undefined || s.endAge >= s.startAge));
+}
+
+/**
+ * 주택연금(한국주택금융공사, 일반주택 · 종신지급 정액형, 2026.3.1 기준 월지급금 예시).
+ * 연령(부부 중 연소자)별 주택가격 1억원당 월지급금과 연령별 월 최대 지급액(만원). 사이 나이는 직선 보간.
+ */
+const HP_AGES = [55, 60, 65, 70, 75, 80];
+const HP_PER_EOK = [15.6, 21.07, 25.29, 30.78, 38.12, 48.3];
+const HP_CAP = [187.2, 252.8, 303.5, 341.4, 366.6, 406.0];
+/** 가입 가능 주택: 공시가격 12억 이하(시세로 대략 17억 안팎) */
+export const HP_PRICE_CAP = 120000;
+
+function interp(xs: number[], ys: number[], x: number) {
+  if (x <= xs[0]) return ys[0];
+  if (x >= xs[xs.length - 1]) return ys[ys.length - 1];
+  const i = xs.findIndex((v) => v > x) - 1;
+  return ys[i] + ((ys[i + 1] - ys[i]) * (x - xs[i])) / (xs[i + 1] - xs[i]);
+}
+
+/** 주택연금 월지급금 추정(만원): 주택가격(12억까지) × 1억당 지급액, 연령별 최대 지급액 한도 */
+export function hpEstimate(price: number, age: number) {
+  return Math.min((interp(HP_AGES, HP_PER_EOK, age) * Math.min(price, HP_PRICE_CAP)) / 10000, interp(HP_AGES, HP_CAP, age));
+}
+
+/** 주택연금을 쓰는 거주용 부동산인지(가입 나이 입력) — 이때 매각 계획은 쓰지 않음 */
+export const usesHp = (a: Asset) => isRealEstate(a) && reUseOf(a) === 'home' && (a.hpAge ?? 0) > 0;
+
+export interface HousePension {
+  name: string;
+  startAge: number; // 받기 시작하는 본인 나이(이미 가입했으면 지금 나이)
+  joinYear: number;
+  calcAge: number; // 지급액 기준 나이(부부 중 연소자)
+  eligible: boolean; // 부부 중 한 명이 55세 이상
+  price: number; // 가입 때 예상 시세(명목)
+  auto: boolean; // 월 수령액 자동 추정인지
+  nominal: number; // 가입 때 월 수령액(명목, 이후 평생 같은 금액)
+  real: number; // 가입 때 월 수령액(현재가치)
+}
+
+/**
+ * 주택연금: 가입 나이(본인 기준)의 예상 시세로 월지급금을 추정하거나 직접 넣은 금액(오늘 기준)을 씀.
+ * 정액형이라 가입 뒤에는 명목 금액이 평생 같고(실질로는 물가만큼 줄어듦), 부부 중 한 명이 살아 있는 동안 받음.
+ * 대출 형식이라 소득세·건강보험료 대상이 아님.
+ */
+export function housePension(a: Asset, profile: Profile, currentAge: number): HousePension {
+  const startAge = Math.max(currentAge, a.hpAge ?? 0);
+  const n = startAge - currentAge;
+  const joinYear = profile.birthYear + startAge;
+  const spouseAge = profile.spouseBirthYear > 0 ? joinYear - profile.spouseBirthYear : startAge;
+  const calcAge = Math.min(startAge, spouseAge);
+  const infl = Math.pow(1 + profile.inflation / 100, n);
+  const price = a.amount * Math.pow(1 + a.expectedReturn / 100, n);
+  const auto = !((a.hpMonthly ?? 0) > 0);
+  const nominal = auto ? hpEstimate(price, calcAge) : a.hpMonthly! * infl;
+  return { name: `${a.name || '주택'} 주택연금`, startAge, joinYear, calcAge, eligible: Math.max(startAge, spouseAge) >= 55, price, auto, nominal, real: nominal / infl };
+}
+
+/** 주택연금 → 은퇴 후 연금 소득(명목 고정: 인상률 0으로 지금부터 물가만큼 실질 감소) */
+export function hpStreams(assets: Asset[], profile: Profile, currentAge: number): IncomeStream[] {
+  return assets
+    .filter(usesHp)
+    .map((a) => housePension(a, profile, currentAge))
+    .filter((h) => h.eligible && h.nominal > 0)
+    .map((h) => ({ name: h.name, kind: 'pension' as const, startAge: h.startAge, annual: h.nominal * 12, growth: 0, step: 1, baseAge: currentAge }));
+}
+
+/** 주택연금 대출 조건(한국주택금융공사): 금리 = 신규취급액 COFIX + 0.85%p(COFIX 2.95% 가정), 초기보증료 주택가격 1.0%, 연보증료 잔액 0.95% */
+export const HP_LOAN = { rate: 3.8, initFee: 1.0, annualFee: 0.95 };
+
+/** 이 집의 주택연금 대출 조건: 입력값이 없으면 HP_LOAN 기본값 */
+export const hpLoanOf = (a: Asset) => ({ rate: a.hpRate ?? HP_LOAN.rate, initFee: a.hpInitFee ?? HP_LOAN.initFee, annualFee: a.hpAnnualFee ?? HP_LOAN.annualFee });
+
+export interface HpEstate {
+  age: number; // 본인 기대수명(상속 시점)
+  year: number;
+  price: number; // 그때 예상 시세(명목)
+  paid: number; // 받은 월지급금 합계(명목)
+  balance: number; // 대출 잔액 = 월지급금 + 이자 + 보증료(명목)
+  left: number; // 상속 시 남는 주택 가치 = 시세 − 잔액(0 미만이면 0: 모자라는 돈은 상속인이 갚지 않음)
+  leftReal: number; // 현재가치
+}
+
+/**
+ * 주택연금 상속 잔액: 가입 때 초기보증료로 시작해 해마다 월지급금(연중 평균 반년치 이자)을 더하고
+ * 잔액에 금리 + 연보증료를 붙여 본인 기대수명 해까지 쌓음(금리·보증료는 자산 입력값, 없으면 HP_LOAN). 순자산·부채 계산에는 넣지 않는 참고 값.
+ */
+export function hpEstate(a: Asset, profile: Profile, currentAge: number): HpEstate {
+  const h = housePension(a, profile, currentAge);
+  const age = Math.max(h.startAge, profile.lifeExpectancy);
+  const loan = hpLoanOf(a);
+  const r = (loan.rate + loan.annualFee) / 100;
+  let balance = (h.price * loan.initFee) / 100;
+  let paid = 0;
+  for (let x = h.startAge; x <= age; x++) {
+    const pay = h.nominal * 12;
+    balance = balance * (1 + r) + pay * (1 + r / 2);
+    paid += pay;
+  }
+  const n = age - currentAge;
+  const price = a.amount * Math.pow(1 + a.expectedReturn / 100, n);
+  const left = Math.max(0, price - balance);
+  return { age, year: profile.birthYear + age, price, paid, balance, left, leftReal: left / Math.pow(1 + profile.inflation / 100, n) };
 }

@@ -9,9 +9,57 @@ describe('CSV 입출력', () => {
     expect(csv.split('\n')[0]).toContain('이름');
     const { rows, errors } = fromCSV('assets', csv);
     expect(errors).toEqual([]);
-    // CSV는 기본 열만 주고받음(명의·매각·임대 조건 등 추가 설정은 JSON 백업으로)
-    const keys = ['name', 'type', 'amount', 'purpose', 'nature', 'expectedReturn', 'volatility'] as const;
-    expect(rows).toEqual(assets.map((a) => Object.fromEntries(keys.map((k) => [k, a[k]]))));
+    // 샘플 자산은 CSV 열(기본 + 명의·부동산 선택 열)만 쓰므로 그대로 돌아옴
+    expect(rows).toEqual(assets);
+  });
+  it('부동산 선택 열 왕복, 부동산이 아닌 행은 빈칸', () => {
+    const assets = [
+      { name: '오피스텔', type: 'realestate', amount: 30000, purpose: 'long', nature: 'invest', expectedReturn: 3, volatility: 8, reUse: 'rental', owner: 'joint', ownerShare: 70, rent: 100, deposit: 5000, renewCycle: 2, renewRate: 5, rentCost: 10, lockYear: 2045, lockTax: 5 },
+      { name: '거주 주택', type: 'realestate', amount: 60000, purpose: 'long', nature: 'invest', expectedReturn: 3, volatility: 8, reUse: 'home', hpAge: 65, hpMonthly: 0, reBuy: 0 },
+      { name: '노란우산', type: 'other', amount: 2000, purpose: 'long', nature: 'safe', expectedReturn: 3, volatility: 1, owner: 'spouse', lockYear: 2040, lockTax: 3, rent: 999 },
+    ];
+    const csv = toCSV('assets', assets);
+    const [head, , , other] = csv.split(/\r?\n/);
+    expect(head).toContain('부동산 용도');
+    expect(head).toContain('주택연금 가입 나이');
+    expect(other).toContain('배우자');
+    expect(other).not.toContain('999'); // 부동산 전용 열은 빈칸
+    const { rows, errors } = fromCSV('assets', csv);
+    expect(errors).toEqual([]);
+    expect(rows[0]).toEqual(assets[0]);
+    expect(rows[1]).toEqual(assets[1]);
+    const { rent: _, ...noRent } = assets[2];
+    expect(rows[2]).toEqual(noRent);
+  });
+  it('부동산 선택 열: 비어 있으면 값 없음, 부동산 아닌 행의 부동산 열·공동명의는 무시', () => {
+    const csv = '이름,유형,금액,명의,부동산 용도,월세\n집,부동산,50000,,,\n예금,예금,100,공동명의,임대용,50';
+    const { rows, errors } = fromCSV('assets', csv);
+    expect(rows[0]).toMatchObject({ reUse: 'home' });
+    expect(rows[0]).not.toHaveProperty('owner');
+    expect(rows[0]).not.toHaveProperty('rent');
+    expect(rows[1]).toMatchObject({ owner: 'self' });
+    expect(rows[1]).not.toHaveProperty('reUse');
+    expect(rows[1]).not.toHaveProperty('rent');
+    expect(errors).toHaveLength(1); // 공동명의 경고
+  });
+  it('주택연금 대출 조건·건보 대출 공제 열 왕복', () => {
+    const assets = [{ name: '집', type: 'realestate', amount: 60000, purpose: 'long', nature: 'invest', expectedReturn: 3, volatility: 8, reUse: 'home', hpAge: 65, hpRate: 4.2, hpInitFee: 1, hpAnnualFee: 0.75 }];
+    expect(fromCSV('assets', toCSV('assets', assets)).rows[0]).toEqual(assets[0]);
+    const loans = [
+      { name: '주담대', balance: 20000, rate: 4, monthlyPayment: 100, endAge: 0, homeLoan: 'buy' },
+      { name: '신용대출', balance: 1000, rate: 6, monthlyPayment: 30, endAge: 0 },
+    ];
+    const csv = toCSV('liabilities', loans);
+    expect(csv.split(/\r?\n/)[0]).toContain('건보 대출 공제');
+    const { rows, errors } = fromCSV('liabilities', csv);
+    expect(errors).toEqual([]);
+    expect(rows).toEqual(loans);
+  });
+  it('양식에 부동산 예시 행 포함', () => {
+    const { rows, errors } = fromCSV('assets', templateCSV('assets'));
+    expect(errors).toEqual([]);
+    expect(rows.map((r) => r.type)).toEqual(['deposit', 'realestate']);
+    expect(rows[1]).toMatchObject({ reUse: 'rental', rent: 100, deposit: 5000, owner: 'joint', ownerShare: 50 });
   });
   it('템플릿과 영문 키·쉼표 금액 허용', () => {
     expect(fromCSV('goals', templateCSV('goals')).rows).toHaveLength(1);

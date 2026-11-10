@@ -30,6 +30,11 @@ export interface Asset {
   renewRate?: number; // 임대용: 갱신 때 월세 인상률(%)
   rentCost?: number; // 임대용: 공실·관리 경비율(월세 대비 %)
   reBuy?: number; // 거주용: 매각 후 새로 살 집 가격(오늘 시세, 만원 · 다운사이징)
+  hpAge?: number; // 거주용: 주택연금 가입 나이(본인 기준, 0이면 안 함). 쓰면 매각 계획은 무시
+  hpMonthly?: number; // 거주용: 주택연금 월 수령액(오늘 기준 만원, 0이면 시세·나이로 자동 추정)
+  hpRate?: number; // 주택연금 대출 금리(%, 비우면 3.8 = COFIX + 0.85%p 가정)
+  hpInitFee?: number; // 주택연금 초기보증료(주택가격 대비 %, 비우면 1.0)
+  hpAnnualFee?: number; // 주택연금 연보증료(대출 잔액 대비 %, 비우면 0.95)
   taxFree?: number; // 연금계좌 중 과세제외 금액(비과세 원금, 만원)
   retirePart?: number; // 연금계좌 중 퇴직금 재원(이연퇴직소득, 만원)
   pensionYear1?: number; // 연금수령 1년차 연도(기산연도). 비우면 명의자가 55세가 되는 해
@@ -45,6 +50,7 @@ export interface Liability {
   rate: number;
   monthlyPayment: number;
   endAge?: number; // 상환 종료 나이(비우거나 0이면 잔액·금리·월상환액으로 자동 계산)
+  homeLoan?: 'buy'; // 실거주 주택 구입 대출(건보료 재산 과세표준에서 공제)
 }
 
 export interface Cashflow {
@@ -184,6 +190,10 @@ export interface IncomeTaxSettings {
   hiLtc: number; // 장기요양보험료(건보료 대비 %)
   hiPublic: number; // 공적연금 건보료 반영률(%)
   hiPropGrowth: number; // 재산분 연 증가율(%)
+  hiPropAuto?: boolean; // 재산분을 부동산 자산 시세로 연도별 추정(아니면 고지서 역산 고정)
+  hiPubRatio?: number; // 시세 대비 공시가격 비율(%)
+  hiFairRatio?: number; // 공정시장가액비율(%, 주택 60)
+  hiLoanDeduct?: boolean; // 실거주 주택 구입 대출 잔액 × 60%를 재산 과세표준에서 공제(1세대 1주택, 한도 5,000만)
   hiPrivate: boolean; // 사적연금(과세재원 인출)도 건보료에 반영
   addToDraw: boolean; // 국민연금 때문에 늘어나는 종소세·건보료를 인출에 더함
 }

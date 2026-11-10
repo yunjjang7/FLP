@@ -1,4 +1,5 @@
 import { ASSET_TYPES, NATURE_LABEL, PURPOSE_LABEL } from '../engine/portfolio';
+import { RE_USE } from '../engine/realestate';
 import type { ListTable } from './db';
 
 export interface FieldDef {
@@ -10,6 +11,8 @@ export interface FieldDef {
   step?: number;
   width?: string;
   hint?: string;
+  /** CSV 선택 열: 부동산 행에만 쓰는 값(다른 유형은 빈칸) */
+  reOnly?: boolean;
 }
 
 export const GOAL_CATEGORY: Record<string, string> = {
@@ -18,7 +21,27 @@ export const GOAL_CATEGORY: Record<string, string> = {
 
 const assetTypeOptions = Object.fromEntries(Object.entries(ASSET_TYPES).map(([k, v]) => [k, v.label]));
 
-export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; example: Record<string, unknown> }> = {
+/** 자산 CSV 선택 열(목록 화면 열에는 없음). 비어 있으면 값 없음으로 둠 */
+const assetCsvExtra: FieldDef[] = [
+  { key: 'owner', label: '명의', kind: 'select', options: { self: '본인', spouse: '배우자', joint: '공동명의' } },
+  { key: 'lockYear', label: '수령·매각 연도', kind: 'number' },
+  { key: 'lockTax', label: '수령 세율·매각 비용률', kind: 'number', unit: '%' },
+  { key: 'reUse', label: '부동산 용도', kind: 'select', options: RE_USE, reOnly: true },
+  { key: 'ownerShare', label: '본인 지분', kind: 'number', unit: '%', reOnly: true },
+  { key: 'rent', label: '월세', kind: 'number', unit: '만원', reOnly: true },
+  { key: 'deposit', label: '임대보증금', kind: 'number', unit: '만원', reOnly: true },
+  { key: 'renewCycle', label: '계약 갱신 주기', kind: 'number', unit: '년', reOnly: true },
+  { key: 'renewRate', label: '갱신 인상률', kind: 'number', unit: '%', reOnly: true },
+  { key: 'rentCost', label: '공실·관리 경비율', kind: 'number', unit: '%', reOnly: true },
+  { key: 'reBuy', label: '새 집 구입액', kind: 'number', unit: '만원', reOnly: true },
+  { key: 'hpAge', label: '주택연금 가입 나이', kind: 'number', unit: '세', reOnly: true },
+  { key: 'hpMonthly', label: '주택연금 월 수령액', kind: 'number', unit: '만원', reOnly: true },
+  { key: 'hpRate', label: '주택연금 대출 금리', kind: 'number', unit: '%', reOnly: true },
+  { key: 'hpInitFee', label: '주택연금 초기보증료', kind: 'number', unit: '%', reOnly: true },
+  { key: 'hpAnnualFee', label: '주택연금 연보증료', kind: 'number', unit: '%', reOnly: true },
+];
+
+export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; example: Record<string, unknown>; csvExtra?: FieldDef[]; csvExamples?: Record<string, unknown>[] }> = {
   assets: {
     label: '자산',
     fields: [
@@ -31,6 +54,11 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
       { key: 'volatility', label: '변동성', kind: 'number', unit: '%', step: 0.1 },
     ],
     example: { name: '정기예금', type: 'deposit', amount: 1000, purpose: 'short', nature: 'safe', expectedReturn: 3, volatility: 0.5 },
+    csvExtra: assetCsvExtra,
+    csvExamples: [
+      { name: '정기예금', type: 'deposit', amount: 1000, purpose: 'short', nature: 'safe', expectedReturn: 3, volatility: 0.5 },
+      { name: '임대 오피스텔', type: 'realestate', amount: 30000, purpose: 'long', nature: 'invest', expectedReturn: 3, volatility: 8, owner: 'joint', ownerShare: 50, reUse: 'rental', rent: 100, deposit: 5000, renewCycle: 2, renewRate: 5, rentCost: 10, lockYear: 2045, lockTax: 5 },
+    ],
   },
   liabilities: {
     label: '부채',
@@ -42,6 +70,7 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
       { key: 'endAge', label: '상환 종료 나이', kind: 'number', unit: '세', hint: '0이면 자동 계산' },
     ],
     example: { name: '주택담보대출', balance: 20000, rate: 4, monthlyPayment: 100, endAge: 0 },
+    csvExtra: [{ key: 'homeLoan', label: '건보 대출 공제', kind: 'select', options: { buy: '주택 구입' } }],
   },
   cashflows: {
     label: '지출',

@@ -1,21 +1,27 @@
 import Papa from 'papaparse';
 import { ASSET_TYPES } from '../engine/portfolio';
 import type { ListTable } from './db';
-import { TABLES } from './schema';
+import { TABLES, type FieldDef } from './schema';
 
 type Row = Record<string, unknown>;
 
 /** 레코드 배열 → CSV 문자열(한글 헤더, 선택값은 한글 라벨) */
+const allFields = (table: ListTable) => [...TABLES[table].fields, ...(TABLES[table].csvExtra ?? [])];
+const isRE = (r: Row) => r.type === 'realestate';
+
+/** 레코드 배열 → CSV 문자열(한글 헤더, 선택값은 한글 라벨). 선택 열은 값이 없거나 부동산 전용인데 부동산이 아니면 빈칸 */
 export function toCSV(table: ListTable, rows: Row[]) {
-  const { fields } = TABLES[table];
-  const data = rows.map((r) =>
-    Object.fromEntries(fields.map((f) => [f.label, f.kind === 'select' ? f.options?.[String(r[f.key])] ?? r[f.key] : r[f.key]])),
-  );
-  return Papa.unparse({ fields: fields.map((f) => f.label), data: data.map((d) => fields.map((f) => d[f.label])) });
+  const fields = allFields(table);
+  const cell = (r: Row, f: FieldDef) => {
+    const v = r[f.key];
+    if ((f.reOnly && !isRE(r)) || v === undefined || v === null) return '';
+    return f.kind === 'select' ? f.options?.[String(v)] ?? v : v;
+  };
+  return Papa.unparse({ fields: fields.map((f) => f.label), data: rows.map((r) => fields.map((f) => cell(r, f))) });
 }
 
 export function templateCSV(table: ListTable) {
-  return toCSV(table, [TABLES[table].example]);
+  return toCSV(table, TABLES[table].csvExamples ?? [TABLES[table].example]);
 }
 
 const num = (v: unknown) => {
@@ -43,6 +49,24 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
           rec[f.key] = Object.keys(f.options ?? {})[0];
         } else rec[f.key] = code;
       } else rec[f.key] = String(v ?? '').trim();
+    }
+    // 선택 열: 빈칸이면 값 없음, 부동산 전용 열은 부동산 행에서만 읽음
+    for (const f of TABLES[table].csvExtra ?? []) {
+      const s = String(raw[f.label] ?? raw[f.key] ?? '').trim();
+      if (!s || (f.reOnly && rec.type !== 'realestate')) continue;
+      if (f.kind === 'number') rec[f.key] = num(s);
+      else {
+        const code = Object.entries(f.options ?? {}).find(([k, lbl]) => k === s || lbl === s)?.[0];
+        if (code) rec[f.key] = code;
+        else errors.push(`${i + 2}행: '${f.label}' 값 '${s}'을(를) 알 수 없습니다.`);
+      }
+    }
+    if (table === 'assets') {
+      if (rec.owner === 'joint' && rec.type !== 'realestate') {
+        errors.push(`${i + 2}행: 공동명의는 부동산만 쓸 수 있어 본인 명의로 넣었습니다.`);
+        rec.owner = 'self';
+      }
+      if (rec.type === 'realestate') rec.reUse ??= 'home';
     }
     if (!rec.name) {
       errors.push(`${i + 2}행: 이름이 비어 있어 건너뜁니다.`);

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { sampleData } from '../db/sample';
 import type { Asset } from '../types';
-import { buildPlanInput, planGoals } from './goals';
-import { incomeTaxSchedule } from './incomeTax';
+import { buildPlanInput, loanBalanceAt, planGoals } from './goals';
+import { hiLoanDeduct, hiPropBase, hiPropScore, incomeTaxSchedule } from './incomeTax';
 import { incomeValue, inflowAt } from './montecarlo';
 import { summarize } from './portfolio';
 import { bucketMap } from './prescribe';
-import { rentStreams, rentYield, saleInflow, selfShare } from './realestate';
+import { HP_LOAN, hpEstate, hpEstimate, hpLoanOf, housePension, rentStreams, rentYield, saleInflow, selfShare, willSell } from './realestate';
 
 const Y = 2026;
 const rental = (over: Partial<Asset> = {}): Asset => ({
@@ -92,5 +92,136 @@ describe('부동산', () => {
     const sp = incomeTaxSchedule(p, Y, undefined, [rental({ owner: 'spouse' })])[0];
     expect(sp.rentSelf).toBe(0);
     expect(sp.rentSpouse).toBeCloseTo(1200, 6);
+  });
+
+  it('주택연금 월지급금 추정: 공사 예시표와 같고 사이 나이는 보간, 12억·연령별 한도', () => {
+    expect(hpEstimate(30000, 70)).toBeCloseTo(92.34, 2); // 표: 70세 3억 92.3만
+    expect(hpEstimate(30000, 60)).toBeCloseTo(63.21, 2); // 표: 63.2만
+    expect(hpEstimate(30000, 62.5)).toBeCloseTo((63.21 + 75.87) / 2, 2);
+    expect(hpEstimate(200000, 60)).toBeCloseTo(252.84, 1); // 12억까지만
+    expect(hpEstimate(100000, 80)).toBeCloseTo(406, 6); // 80세 한도
+  });
+
+  it('주택연금: 연소자 나이 기준, 정액(명목 고정)으로 연금 소득, 매각 계획은 무시', () => {
+    const d = sampleData(Y); // 본인 45세, 배우자 2세 아래
+    const home: Asset = { ...d.assets.find((x) => x.type === 'realestate')!, hpAge: 65, lockYear: Y + 10 };
+    expect(willSell(home, Y)).toBe(false);
+    const h = housePension(home, d.profile, 45);
+    expect(h.startAge).toBe(65);
+    expect(h.calcAge).toBe(65 - (d.profile.spouseBirthYear - d.profile.birthYear));
+    expect(h.price).toBeCloseTo(75000 * 1.03 ** 20, 6);
+    expect(h.nominal).toBeCloseTo(hpEstimate(h.price, h.calcAge), 9);
+    const assets = d.assets.map((x) => (x.type === 'realestate' ? home : x));
+    const plan = buildPlanInput(d.profile, assets, d.liabilities, d.goals, summarize(d.profile, assets, d.liabilities, d.cashflows, Y));
+    expect(plan.inflows ?? []).toEqual([]);
+    const s = plan.pensions.find((x) => x.name === '거주 아파트 주택연금')!;
+    expect(s.kind).toBe('pension');
+    expect(incomeValue(s, 64, 2.5)).toBe(0);
+    expect(incomeValue(s, 65, 2.5)).toBeCloseTo(h.real * 12, 6);
+    expect(incomeValue(s, 75, 2.5)).toBeCloseTo((h.nominal * 12) / 1.025 ** 30, 6); // 명목 고정 → 실질 감소
+    // 직접 넣은 월 수령액(오늘 기준)은 가입 때 실질 그대로
+    expect(housePension({ ...home, hpMonthly: 150 }, d.profile, 45).real).toBeCloseTo(150, 9);
+    // 둘 다 55세 미만이면 반영 안 함
+    expect(housePension({ ...home, hpAge: 50 }, d.profile, 45).eligible).toBe(false);
+  });
+
+  it('주택연금 상속 잔액: 초기보증료 + 월지급금 + 이자·보증료가 기대수명까지 쌓이고, 시세에서 빼되 0 아래로는 안 내려감', () => {
+    const d = sampleData(Y);
+    const home: Asset = { ...d.assets.find((x) => x.type === 'realestate')!, hpAge: 65, hpMonthly: 150 };
+    const h = housePension(home, d.profile, 45);
+    const e = hpEstate(home, d.profile, 45);
+    const r = (HP_LOAN.rate + HP_LOAN.annualFee) / 100;
+    const k = d.profile.lifeExpectancy - 65 + 1; // 받는 햇수
+    let bal = (h.price * HP_LOAN.initFee) / 100 * (1 + r) ** k;
+    for (let j = 0; j < k; j++) bal += h.nominal * 12 * (1 + r / 2) * (1 + r) ** (k - 1 - j);
+    expect(e.age).toBe(d.profile.lifeExpectancy);
+    expect(e.paid).toBeCloseTo(h.nominal * 12 * k, 6);
+    expect(e.balance).toBeCloseTo(bal, 4);
+    expect(e.price).toBeCloseTo(75000 * 1.03 ** (d.profile.lifeExpectancy - 45), 6);
+    expect(e.left).toBeCloseTo(Math.max(0, e.price - e.balance), 6);
+    expect(e.leftReal).toBeCloseTo(e.left / 1.025 ** (d.profile.lifeExpectancy - 45), 6);
+    // 지급액이 커서 잔액이 집값을 넘으면 0(상속인이 차액을 갚지 않음)
+    expect(hpEstate({ ...home, hpMonthly: 2000 }, d.profile, 45).left).toBe(0);
+    // 순자산·부채에는 넣지 않음
+    const assets = d.assets.map((x) => (x.type === 'realestate' ? home : x));
+    const base = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y);
+    const s = summarize(d.profile, assets, d.liabilities, d.cashflows, Y);
+    expect(s.netWorth).toBe(base.netWorth);
+    expect(s.totalDebt).toBe(base.totalDebt);
+  });
+
+  it('건보료 재산점수: 시행령 별표4 등급표(공단 예시와 같음)', () => {
+    expect(hiPropScore(0)).toBe(0);
+    expect(hiPropScore(450)).toBe(22);
+    expect(hiPropScore(451)).toBe(44);
+    expect(hiPropScore(9000)).toBe(412); // 공단 예시: 과표 9,000만 → 17등급 412점
+    expect(hiPropScore(15000)).toBe(535); // 1.5억 → 22등급 535점
+    expect(hiPropScore(1e7)).toBe(2341);
+  });
+
+  it('건보료 재산분 자산별 추정: 시세 × 공시가격 비율 × 공정시장가액비율 − 1억, 매각 연도부터 제외, 보증금은 빼지 않음', () => {
+    const d = sampleData(Y);
+    const sold = rental({ amount: 40000, deposit: 10000, lockYear: Y + 5 });
+    const assets = [...d.assets, sold];
+    expect(hiPropBase(assets, Y, Y, 69, 60)).toBeCloseTo((75000 + 40000) * 0.69 * 0.6, 6);
+    expect(hiPropBase(assets, Y, Y + 5, 69, 60)).toBeCloseTo(75000 * 1.03 ** 5 * 0.69 * 0.6, 6); // 매각한 해부터 빠짐
+    const p = { ...d.profile, incomes: [], incomeTax: { on: true, hiPropAuto: true, hiPubRatio: 69, hiFairRatio: 60, hiNow: 99 } as never };
+    const rows = incomeTaxSchedule(p, Y, undefined, d.assets);
+    const base = 75000 * 0.69 * 0.6; // 31,050 → 공제 후 21,050 → 25등급 611점
+    expect(rows[0].propBase).toBeCloseTo(base, 6);
+    expect(rows[0].hiProp).toBeCloseTo((611 * 211.5) / 10000 * 1.1314, 6);
+    expect(rows[0].hiMonth).toBeCloseTo(rows[0].hiProp, 6); // 소득이 없으면 재산분만(고지서 금액은 안 씀)
+    // 시세가 오르면 등급이 올라감
+    expect(rows[20].hiProp).toBeGreaterThan(rows[0].hiProp);
+    // 고지서 역산 방식은 그대로
+    const bill = incomeTaxSchedule({ ...p, incomeTax: { on: true, hiNow: 20 } as never }, Y, undefined, d.assets);
+    expect(bill[0].hiMonth).toBeCloseTo(20, 6);
+    expect(bill[0].propBase).toBe(0);
+  });
+
+  it('주택연금 대출 조건: 자산에 넣은 금리·보증료로 상속 잔액 계산, 비우면 기본값', () => {
+    const d = sampleData(Y);
+    const home: Asset = { ...d.assets.find((x) => x.type === 'realestate')!, hpAge: 65, hpMonthly: 150 };
+    expect(hpLoanOf(home)).toEqual(HP_LOAN);
+    const custom = { ...home, hpRate: 5, hpInitFee: 0, hpAnnualFee: 0.5 };
+    expect(hpLoanOf(custom)).toEqual({ rate: 5, initFee: 0, annualFee: 0.5 });
+    const h = housePension(custom, d.profile, 45);
+    const e = hpEstate(custom, d.profile, 45);
+    const r = 0.055;
+    const k = d.profile.lifeExpectancy - 65 + 1;
+    let bal = 0;
+    for (let j = 0; j < k; j++) bal += h.nominal * 12 * (1 + r / 2) * (1 + r) ** (k - 1 - j);
+    expect(e.balance).toBeCloseTo(bal, 4);
+    // 금리가 오르면 남는 주택 가치는 줄어듦
+    expect(hpEstate({ ...home, hpRate: 6 }, d.profile, 45).left).toBeLessThan(hpEstate(home, d.profile, 45).left);
+  });
+
+  it('대출 잔액: 원리금 균등 상환으로 줄고 상환 종료 나이에 0', () => {
+    const l = { name: '주담대', balance: 6000, rate: 4, monthlyPayment: 50, endAge: 0 };
+    expect(loanBalanceAt(l, 45, 0)).toBe(6000);
+    const g = (1 + 4 / 1200) ** 36;
+    expect(loanBalanceAt(l, 45, 3)).toBeCloseTo(6000 * g - (50 * (g - 1)) / (4 / 1200), 6);
+    expect(loanBalanceAt({ ...l, endAge: 50 }, 45, 5)).toBe(0);
+    expect(loanBalanceAt({ ...l, rate: 0 }, 45, 2)).toBe(6000 - 50 * 24);
+  });
+
+  it('건보료 재산분 주택 구입 대출 공제: 잔액 × 60%, 한도 5,000만, 1세대 1주택만', () => {
+    const d = sampleData(Y);
+    const age = Y - d.profile.birthYear;
+    const loan = { name: '주담대', balance: 6000, rate: 4, monthlyPayment: 50, endAge: 0, homeLoan: 'buy' as const };
+    const p = { ...d.profile, incomes: [], incomeTax: { on: true, hiPropAuto: true, hiLoanDeduct: true } as never };
+    const rows = incomeTaxSchedule(p, Y, undefined, d.assets, [loan]);
+    const gross = 75000 * 0.69 * 0.6;
+    expect(rows[0].loanDed).toBeCloseTo(3600, 6);
+    expect(rows[0].propBase).toBeCloseTo(gross - 3600, 6); // 27,450 → 공제 후 17,450 → 23등급 559점
+    expect(rows[0].hiProp).toBeCloseTo((559 * 211.5) / 10000 * 1.1314, 6);
+    expect(rows[3].loanDed).toBeCloseTo(loanBalanceAt(loan, age, 3) * 0.6, 6); // 잔액이 줄면 공제도 줄어듦
+    expect(hiLoanDeduct(d.assets, [{ ...loan, balance: 20000 }], Y, Y, age)).toBe(5000); // 한도
+    expect(hiLoanDeduct([...d.assets, rental()], [loan], Y, Y, age)).toBe(0); // 2주택
+    expect(hiLoanDeduct(d.assets, [{ ...loan, homeLoan: undefined }], Y, Y, age)).toBe(0); // 표시 안 한 대출
+    // 옵션을 끄면 공제 없음
+    const off = incomeTaxSchedule({ ...p, incomeTax: { on: true, hiPropAuto: true } as never }, Y, undefined, d.assets, [loan]);
+    expect(off[0].loanDed).toBe(0);
+    expect(off[0].propBase).toBeCloseTo(gross, 6);
   });
 });

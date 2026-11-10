@@ -7,10 +7,10 @@ import { Card } from './ui';
 
 /** 종합소득세·지역 건강보험료 추정(명목)과 추가 납입 세액공제 */
 export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
-  const { profile: p, summary, assets } = useFlp();
+  const { profile: p, summary, assets, liabilities } = useFlp();
   const nowYear = p.birthYear + summary.age;
   const slotByYear = useMemo(() => (tax ? new Map(tax.rows.map((r) => [r.year, r.slot.self + r.slot.spouse])) : undefined), [tax]);
-  const rows = useMemo(() => incomeTaxSchedule(p, nowYear, slotByYear, assets), [p, nowYear, slotByYear, assets]);
+  const rows = useMemo(() => incomeTaxSchedule(p, nowYear, slotByYear, assets, liabilities), [p, nowYear, slotByYear, assets, liabilities]);
   const contrib = useMemo(() => contribSchedule(p, rows), [p, rows]);
   if (rows.length === 0) return null;
   const hasSpouse = p.spouseBirthYear > 0;
@@ -19,13 +19,15 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
   const after = npStart ? rows.find((r) => r.year === npStart.year + 2) ?? rows[rows.length - 1] : rows[Math.min(10, rows.length - 1)];
   const npTotal = rows.reduce((a, r) => a + Math.max(0, r.npPart) / r.defl, 0);
   const addToDraw = p.incomeTax?.addToDraw ?? false;
+  const propAuto = p.incomeTax?.hiPropAuto ?? false;
+  const loanDed = propAuto && rows.some((r) => r.loanDed > 0);
   return (
     <Card title="종합소득세·건강보험료" className="mt-4" action={<span className="text-xs text-muted">추정 · 명목 금액</span>}>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <div className="rounded-xl bg-sunken p-3">
           <div className="text-xs text-muted">{first.year}년 연 부담</div>
           <div className="mt-0.5 text-lg font-bold">{won(first.total)}</div>
-          <div className="text-xs text-muted">종소세 {won(first.taxSelf + first.taxSpouse)} · 건보료 월 {won(first.hiMonth)}</div>
+          <div className="text-xs text-muted">종소세 {won(first.taxSelf + first.taxSpouse)} · 건보료 월 {won(first.hiMonth)}{propAuto ? `(재산분 ${won(first.hiProp)})` : ''}</div>
         </div>
         <div className="rounded-xl bg-sunken p-3">
           <div className="text-xs text-muted">{after.year}년 연 부담{npStart ? ' (국민연금 2년 뒤)' : ''}</div>
@@ -72,7 +74,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
       )}
 
       <div className="mt-3 -mx-4 max-h-[360px] overflow-auto px-4 sm:-mx-5 sm:px-5">
-        <table className="w-full min-w-[860px] text-sm">
+        <table className={`w-full text-sm ${loanDed ? 'min-w-[1100px]' : propAuto ? 'min-w-[1000px]' : 'min-w-[860px]'}`}>
           <thead className="sticky top-0 bg-surface">
             <tr className="border-b border-line text-right text-xs text-muted">
               <th className="py-2 text-left font-medium">연도</th>
@@ -80,6 +82,8 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
               <th className="font-medium">국민연금(세전)</th>
               <th className="font-medium">종소세{hasSpouse ? ' 본인/배우자' : ''}</th>
               <th className="font-medium">5월 추가납부</th>
+              {loanDed && <th className="font-medium">대출 공제</th>}
+              {propAuto && <th className="font-medium">재산 과표 · 월 재산분</th>}
               <th className="font-medium">월 건보료</th>
               <th className="font-medium">연 부담</th>
               <th className="font-medium">첫해 대비</th>
@@ -94,6 +98,8 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
                 <td>{won(r.npSelf + r.npSpouse)}</td>
                 <td className="whitespace-nowrap">{won(r.taxSelf, false)}{hasSpouse && <> / {won(r.taxSpouse, false)}</>}</td>
                 <td>{won(r.due)}</td>
+                {loanDed && <td className="text-muted">{r.loanDed > 0 ? `−${won(r.loanDed)}` : '-'}</td>}
+                {propAuto && <td className="whitespace-nowrap text-muted">{won(r.propBase)} · {won(r.hiProp)}</td>}
                 <td>{won(r.hiMonth)}</td>
                 <td className="font-semibold">{won(r.total)}</td>
                 <td className={r.increase > 0.5 ? 'text-warn' : ''}>{won(r.increase)}</td>
@@ -105,7 +111,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
       </div>
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">
         <li>사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 들어가지 않습니다(2026년 기준). 부부 한 세대 지역가입자로 계산하고, 세율·보험료율은 지금 기준으로 고정합니다.</li>
-        <li>건보료 소득분은 전년도 소득(임대 사업소득 + 공적연금 × 반영률)으로, 재산분은 지금 고지서에서 역산합니다. 국민연금 몫 = 국민연금 때문에 늘어난 종소세(원천징수 뺌) + 건보료 소득분.</li>
+        <li>건보료 소득분은 전년도 소득(임대 사업소득 + 공적연금 × 반영률)으로, 재산분은 {propAuto ? '부동산 자산 시세로 구한 재산 과세표준(부부 합산, 매각 연도부터 제외)에서 기본공제 1억을 빼고 재산등급 점수 × 211.5원(2026년)으로 해마다 추정합니다' + (loanDed ? '. 대출 공제 = 실거주 주택 구입 대출의 그 해 잔액 × 60%(한도 5,000만, 1세대 1주택일 때만)를 재산 과표에서 뺀 금액입니다' : '') : '지금 고지서에서 역산합니다'}. 국민연금 몫 = 국민연금 때문에 늘어난 종소세(원천징수 뺌) + 건보료 소득분.</li>
         <li>첫해 부담은 이미 생활비에 들어 있다고 봅니다. 늘어나는 금액은 {addToDraw ? '국민연금 몫만큼 해마다 연금계좌에서 더 꺼내도록 노후 진단·인출에 반영했습니다.' : '생활비 안에서 쓰는 것으로 보고 인출에는 넣지 않았습니다(데이터·설정에서 바꿀 수 있음).'}</li>
       </ul>
     </Card>

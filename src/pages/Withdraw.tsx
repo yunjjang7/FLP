@@ -14,6 +14,7 @@ import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, STRATEGIES, type 
 import { pct, won, yearRanges } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
+import { incomeValue } from '../engine/montecarlo';
 
 type Basis = 'avg' | 'p50' | 'p10' | 'custom';
 const basisLabel = (b: Basis, retired: boolean) => (b === 'avg' ? (retired ? '현재 자산' : '평균수익') : b === 'p50' ? '중앙값' : b === 'p10' ? '비관' : '직접');
@@ -134,7 +135,7 @@ function WithdrawInner() {
         </p>
         {others.length > 0 && (
           <p className="mt-1 text-xs text-muted">
-            그 밖의 소득: {others.map((x) => `${x.name} 월 ${won(x.annual / 12)}(${x.startAge}세~${x.endAge ? `${x.endAge}세` : ''}${x.growth !== undefined ? `, ${x.step ?? 1}년마다 ${x.growth}% 인상` : ''})`).join(', ')}
+            그 밖의 소득: {others.map((x) => `${x.name} 월 ${won((x.growth === 0 ? incomeValue(x, x.startAge, planInput.inflation) : x.annual) / 12)}(${x.startAge}세~${x.endAge ? `${x.endAge}세` : ''}${x.growth === 0 ? ', 명목 고정' : x.growth !== undefined ? `, ${x.step ?? 1}년마다 ${x.growth}% 인상` : ''})`).join(', ')}
           </p>
         )}
         {extras.length > 0 && (

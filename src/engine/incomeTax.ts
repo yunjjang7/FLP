@@ -1,7 +1,7 @@
-import type { Asset, ContribPlan, IncomeTaxSettings, Profile } from '../types';
-import { npTerms, spouseToSelf } from './goals';
+import type { Asset, ContribPlan, IncomeTaxSettings, Liability, Profile } from '../types';
+import { loanBalanceAt, npTerms, spouseToSelf } from './goals';
 import { incomeValue, type IncomeStream } from './montecarlo';
-import { rentStreams, type RentStream } from './realestate';
+import { rentStreams, reUseOf, usesHp, type RentStream } from './realestate';
 
 /** 종합소득세·건보료 기본값(2026년 기준 요율) */
 export const DEFAULT_INCOME_TAX: IncomeTaxSettings = {
@@ -17,9 +17,65 @@ export const DEFAULT_INCOME_TAX: IncomeTaxSettings = {
   hiLtc: 13.14,
   hiPublic: 50,
   hiPropGrowth: 0,
+  hiPropAuto: false,
+  hiPubRatio: 69,
+  hiFairRatio: 60,
+  hiLoanDeduct: false,
   hiPrivate: false,
   addToDraw: false,
 };
+
+/** 지역가입자 재산 기본공제(세대당, 만원)와 재산점수당 금액(2026년, 원) */
+export const HI_PROP_DEDUCT = 10000;
+export const HI_PROP_POINT = 211.5;
+/** 재산등급별 점수(국민건강보험법 시행령 별표4): [공제 후 재산금액 상한(만원), 점수], 60등급은 상한 없음 */
+const HI_PROP_GRADES: [number, number][] = [
+  [450, 22], [900, 44], [1350, 66], [1800, 97], [2250, 122], [2700, 146], [3150, 171], [3600, 195], [4050, 219], [4500, 244],
+  [5020, 268], [5590, 294], [6220, 320], [6930, 344], [7710, 365], [8590, 386], [9570, 412], [10700, 439], [11900, 465], [13300, 490],
+  [14800, 516], [16400, 535], [18300, 559], [20400, 586], [22700, 611], [25300, 637], [28100, 659], [31300, 681], [34900, 706], [38800, 731],
+  [43200, 757], [48100, 785], [53600, 812], [59700, 841], [66500, 881], [74000, 921], [82400, 961], [91800, 1001], [103000, 1041], [114000, 1091],
+  [127000, 1141], [142000, 1191], [158000, 1241], [176000, 1291], [196000, 1341], [218000, 1391], [242000, 1451], [270000, 1511], [300000, 1571], [330000, 1641],
+  [363000, 1711], [399300, 1781], [439230, 1851], [483153, 1921], [531468, 1991], [584615, 2061], [643077, 2131], [707385, 2201], [778124, 2271], [Infinity, 2341],
+];
+
+/** 재산점수: 공제 후 재산금액(만원)이 0 이하면 0점 */
+export function hiPropScore(net: number) {
+  if (net <= 0) return 0;
+  return HI_PROP_GRADES.find(([cap]) => net <= cap)![1];
+}
+
+/** 그 해에 가진 부동산(매각 연도부터 제외, 주택연금 주택은 계속 소유) */
+const heldIn = (a: Asset, year: number) => a.type === 'realestate' && (usesHp(a) || !((a.lockYear ?? 0) > 0 && year >= a.lockYear!));
+
+/** 주택 구입 대출 공제: 대출 잔액 × 60%(주택 공정시장가액비율과 같음), 1세대 1주택 과표 기준 한도 5,000만원 */
+export const HI_LOAN_RATE = 60;
+export const HI_LOAN_CAP = 5000;
+
+/**
+ * 그 해 주택 구입 대출 공제액(명목, 만원): 부채 탭에서 ‘실거주 주택 구입 대출’로 표시한 대출의 그 해 잔액(원리금 균등 상환) × 60%, 한도 5,000만.
+ * 그 해 가진 주택(거주용·임대용)이 2채 이상이면 1세대 1주택이 아니라 0.
+ */
+export function hiLoanDeduct(assets: Asset[], liabilities: Liability[], nowYear: number, year: number, currentAge: number) {
+  const houses = assets.filter((a) => heldIn(a, year) && reUseOf(a) !== 'land').length;
+  if (houses > 1) return 0;
+  const bal = liabilities.filter((l) => l.homeLoan === 'buy').reduce((sum, l) => sum + loanBalanceAt(l, currentAge, year - nowYear), 0);
+  return Math.min(HI_LOAN_CAP, (bal * HI_LOAN_RATE) / 100);
+}
+
+/**
+ * 그 해 세대 재산 과세표준(명목, 만원): 부동산 시세(시세 상승률로 오름) × 공시가격 비율 × 공정시장가액비율.
+ * 건보료 재산은 부부 한 세대 합산이라 명의·지분과 상관없고, 매각 연도부터는 뺌(주택연금 주택은 계속 소유).
+ * 임대보증금은 집주인 재산에서 빼지 않음(세입자 쪽 전월세 재산으로 잡힘).
+ */
+export function hiPropBase(assets: Asset[], nowYear: number, year: number, pubRatio: number, fairRatio: number) {
+  const n = year - nowYear;
+  return assets
+    .filter((a) => heldIn(a, year))
+    .reduce((sum, a) => sum + a.amount * Math.pow(1 + a.expectedReturn / 100, n), 0) * (pubRatio / 100) * (fairRatio / 100);
+}
+
+/** 월 재산보험료(장기요양 제외, 만원) */
+export const hiPropMonthly = (base: number) => (hiPropScore(base - HI_PROP_DEDUCT) * HI_PROP_POINT) / 10000;
 
 export const DEFAULT_CONTRIB: ContribPlan = { self: 0, spouse: 0, from: 0, to: 0, selfRate: 0, spouseRate: 0 };
 
@@ -57,6 +113,9 @@ export interface IncomeTaxRow {
   taxSpouse: number;
   withheld: number; // 국민연금 원천징수(기납부)
   due: number; // 5월 종합소득세 추가 납부(부부)
+  propBase: number; // 재산 과세표준(자산별 추정일 때, 대출 공제 뒤, 명목)
+  loanDed: number; // 그중 주택 구입 대출 공제액(명목)
+  hiProp: number; // 월 재산분(장기요양 포함)
   hiMonth: number; // 월 건강보험료(장기요양 포함)
   hiYear: number; // 연 건강보험료
   total: number; // 연 부담 합계(종소세 + 건보료)
@@ -68,10 +127,11 @@ export interface IncomeTaxRow {
 /**
  * 연도별 종합소득세·지역 건강보험료(명목, 만원). 엑셀 ‘종합소득·건보료’ 시트와 같은 방식:
  * 사적연금(1,500만 이하 분리과세)·퇴직소득·노란우산은 종합소득·건보료에 넣지 않음.
- * 건보료 소득분은 전년도 소득 기준, 재산분은 현재 고지서에서 역산해 고정(증가율 입력 가능).
+ * 건보료 소득분은 전년도 소득 기준, 재산분은 현재 고지서에서 역산해 고정(증가율 입력 가능)하거나 부동산 자산으로 연도별 추정(hiPropAuto).
  * slotByYear: 사적연금도 건보료에 반영할 때 연도별 과세재원 인출액(명목).
+ * liabilities: 자산별 추정에서 주택 구입 대출 공제(hiLoanDeduct)를 켰을 때 쓰는 부채 목록.
  */
-export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number>, assets: Asset[] = []): IncomeTaxRow[] {
+export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number>, assets: Asset[] = [], liabilities: Liability[] = []): IncomeTaxRow[] {
   const s = { ...DEFAULT_INCOME_TAX, ...(profile.incomeTax ?? {}) };
   const inf = profile.inflation / 100;
   const currentAge = nowYear - profile.birthYear;
@@ -124,7 +184,10 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
       prop = Math.max(0, s.hiNow / ltc - (P / 12) * rate);
     }
     const Q = (prevP / 12) * rate;
-    const R = prop * Math.pow(1 + s.hiPropGrowth / 100, n);
+    const gross = s.hiPropAuto ? hiPropBase(assets, nowYear, year, s.hiPubRatio ?? 69, s.hiFairRatio ?? 60) : 0;
+    const loanDed = s.hiPropAuto && s.hiLoanDeduct ? Math.min(gross, hiLoanDeduct(assets, liabilities, nowYear, year, currentAge)) : 0;
+    const propBase = gross - loanDed;
+    const R = s.hiPropAuto ? hiPropMonthly(propBase) : prop * Math.pow(1 + s.hiPropGrowth / 100, n);
     const Z = s.hiPrivate ? (prevSlot * pub * rate) / 12 : 0;
     const hiMonth = (Q + R + Z) * ltc;
     const hiYear = hiMonth * 12;
@@ -132,7 +195,7 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     const increase = n === 0 ? 0 : total - rows[0].total;
     const taxNoNP = incomeTaxAmount(rentSelf - s.dedSelf) + incomeTaxAmount(rentSpouse - s.dedSpouse);
     const npPart = due - taxNoNP + prevNP * pub * rate * ltc;
-    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, due, hiMonth, hiYear, total, increase, npPart, rentPart: increase - npPart });
+    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, npPart, rentPart: increase - npPart });
     prevP = P;
     prevNP = np;
     prevSlot = slotByYear?.get(year) ?? 0;

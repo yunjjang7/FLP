@@ -3,7 +3,7 @@ import { contribSchedule, creditInflows, incomeTaxSchedule, npCostOutflows } fro
 import { fvLump, monthlyRate, payoffMonths, pmtForTarget, realRate } from './finance';
 import type { IncomeStream, PlanInput } from './montecarlo';
 import { isFinancial, type Summary } from './portfolio';
-import { rentStreams, saleInflows } from './realestate';
+import { hpStreams, rentStreams, saleInflows } from './realestate';
 
 export interface GoalPlan {
   goal: Goal;
@@ -104,6 +104,17 @@ export function loanEndAge(l: Liability, currentAge: number): { age: number; aut
   return { age: m === null ? Infinity : currentAge + Math.ceil(m / 12), auto: true };
 }
 
+/** years 년 뒤 대출 잔액(명목): 원리금 균등 상환, 상환 종료 나이가 되면 0 */
+export function loanBalanceAt(l: Liability, currentAge: number, years: number) {
+  if (years <= 0) return l.balance;
+  if (currentAge + years >= loanEndAge(l, currentAge).age) return 0;
+  const i = l.rate / 1200;
+  const m = years * 12;
+  if (i === 0) return Math.max(0, l.balance - l.monthlyPayment * m);
+  const g = Math.pow(1 + i, m);
+  return Math.max(0, l.balance * g - (l.monthlyPayment * (g - 1)) / i);
+}
+
 /** 아직 수령 전인 묶인 자산(노란우산 등) */
 export const isLocked = (a: Asset, nowYear: number) => isFinancial(a) && (a.lockYear ?? 0) > nowYear;
 
@@ -134,7 +145,7 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
   const liqReturn = locked.length && liqTotal > 0 ? liquid.reduce((a, x) => a + (x.amount / liqTotal) * x.expectedReturn, 0) : s.portfolioReturn;
   const liqVol = locked.length && liqTotal > 0 ? liquid.reduce((a, x) => a + (x.amount / liqTotal) * x.volatility, 0) : s.portfolioVol;
   // 종합소득세·건보료 추정과 추가 납입 세액공제: 환급은 다음 해 들어오고, 국민연금 몫 세금은 원하면 지출에 더함
-  const taxRows = profile.incomeTax?.on || profile.contrib ? incomeTaxSchedule(profile, nowYear, undefined, assets) : [];
+  const taxRows = profile.incomeTax?.on || profile.contrib ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities) : [];
   const credits = creditInflows(profile, nowYear, contribSchedule(profile, taxRows));
   const npCost = profile.incomeTax?.on && profile.incomeTax.addToDraw ? npCostOutflows(taxRows) : [];
   // 매각 예정 부동산은 매각 연도에 순매각대금(비용·보증금·새 집 구입액 차감)이 금융자산으로 들어옴
@@ -163,7 +174,7 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
     inflation,
     retireExpenseAnnual: (o.retireMonthlyExpense ?? profile.retireMonthlyExpense) * 12,
     // 임대용 부동산 월세(공실·관리 경비 차감, 매각 전 해까지)도 은퇴 후 소득
-    pensions: [...retireIncomes(profile, s.age), ...rentStreams(assets, profile, s.age).map(({ spouseShare: _, ...x }) => x)],
+    pensions: [...retireIncomes(profile, s.age), ...rentStreams(assets, profile, s.age).map(({ spouseShare: _, ...x }) => x), ...hpStreams(assets, profile, s.age)],
     goals: goals
       .filter((g) => g.category !== 'retirement')
       .flatMap((g) => {

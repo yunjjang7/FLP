@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
 import { TABLES, type FieldDef } from '../db/schema';
-import { netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentYield, reUseOf, saleInflow, willSell } from '../engine/realestate';
+import { housePension, HP_LOAN, HP_PRICE_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
 import { ASSET_TYPES, RISK_PROFILES } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, PageHeader } from '../components/ui';
@@ -212,13 +212,14 @@ function IncomeTaxForm() {
       <NumberField value={t[k] as number} unit={unit} step={step} onChange={(v) => set({ [k]: v })} />
     </Labeled>
   );
-  const yn = (k: 'hiPrivate' | 'addToDraw', label: string, hint: string) => (
+  const yn = (k: 'hiPrivate' | 'addToDraw' | 'hiLoanDeduct', label: string, hint: string) => (
     <Labeled label={label} hint={hint}>
       <SelectField value={t[k] ? 'on' : 'off'} onChange={(v) => set({ [k]: v === 'on' })} options={{ off: '아니오', on: '예' }} />
     </Labeled>
   );
   const hasSpouse = p.spouseBirthYear > 0;
-  const { assets } = useFlp();
+  const { assets, liabilities } = useFlp();
+  const loanCount = liabilities.filter((l) => l.homeLoan === 'buy').length;
   const rentCount = (p.incomes ?? []).filter((i) => i.rent).length + assets.filter((a) => a.type === 'realestate' && reUseOf(a) === 'rental' && (a.rent ?? 0) > 0).length;
   return (
     <Card
@@ -238,17 +239,28 @@ function IncomeTaxForm() {
             {num('npNet', '입력한 국민연금이 세전의', '%', '세후 금액을 넣었으면 97 등')}
             {num('dedSelf', '본인 종합소득공제', '만원', '기본공제 150 등')}
             {hasSpouse && num('dedSpouse', '배우자 종합소득공제', '만원', '기본공제 150 등')}
-            {num('hiNow', '현재 월 건강보험료', '만원', '고지서(장기요양 포함). 재산분 역산', 0.1)}
+            <Labeled label="건보료 재산분" hint={t.hiPropAuto ? '부동산 시세 × 공시가격 비율 × 공정시장가액비율' : '지금 고지서에서 역산해 고정'}>
+              <SelectField value={t.hiPropAuto ? 'auto' : 'bill'} onChange={(v) => set({ hiPropAuto: v === 'auto' })} options={{ bill: '고지서 역산', auto: '부동산 자산으로 추정' }} />
+            </Labeled>
+            {t.hiPropAuto ? (
+              <>
+                {num('hiPubRatio', '시세 대비 공시가격', '%', '공동주택 평균 69 안팎', 1)}
+                {num('hiFairRatio', '공정시장가액비율', '%', '주택 60 · 토지·건물 70', 1)}
+                {yn('hiLoanDeduct', '주택 구입 대출 공제', loanCount > 0 ? `부채 탭 표시 대출 ${loanCount}건 · 잔액 × 60%, 한도 5,000만` : '부채 탭에서 대출을 ‘실거주 주택 구입 대출’로 표시')}
+              </>
+            ) : (
+              num('hiNow', '현재 월 건강보험료', '만원', '고지서(장기요양 포함). 재산분 역산', 0.1)
+            )}
             {num('hiRate', '건강보험료율', '%', '2026년 7.19', 0.01)}
             {num('hiLtc', '장기요양보험료', '%', '건보료 대비, 2026년 13.14', 0.01)}
             {num('hiPublic', '공적연금 건보료 반영률', '%', '지역가입자 50')}
-            {num('hiPropGrowth', '재산분 연 증가율', '%', '재산 과세표준이 오르면', 0.1)}
+            {!t.hiPropAuto && num('hiPropGrowth', '재산분 연 증가율', '%', '재산 과세표준이 오르면', 0.1)}
             {yn('hiPrivate', '사적연금도 건보료에 반영', '제도가 바뀌면 예')}
             {yn('addToDraw', '늘어나는 세금을 인출에 더하기', '국민연금 몫만큼 연금계좌 인출 증가')}
           </div>
           <p className="mt-3 text-xs text-muted">
             {rentCount === 0 ? '임대소득은 ‘자산’ 탭의 임대용 부동산 월세나, ‘그 밖의 은퇴 후 소득’에서 ‘임대소득’을 체크한 항목만 계산에 들어갑니다. ' : ''}
-            사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 지금 고지서에서 역산해 고정합니다(부부 한 세대). 첫해 부담은 이미 생활비에 들어 있다고 보고,
+            사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 {t.hiPropAuto ? '부동산 자산의 해마다 오르는 시세로 재산 과세표준을 구해 기본공제 1억을 빼고 2026년 재산등급 점수 × 211.5원으로 추정합니다(매각 연도부터 제외, 임대보증금은 빼지 않음, 자동차·전월세로 사는 집은 넣지 않음, 부부 한 세대)' + (t.hiLoanDeduct ? '. 주택 구입 대출 공제는 표시한 대출의 해마다 줄어드는 잔액(원리금 균등 상환) × 60%를 5,000만 한도로 빼고, 그 해 주택이 2채 이상이면 넣지 않습니다. 실제로는 공시가격 5억 이하 주택을 취득 전후 3개월 안에 빌린 대출이어야 하고 공단에 신청해야 합니다' : '') : '지금 고지서에서 역산해 고정합니다(부부 한 세대)'}. 첫해 부담은 이미 생활비에 들어 있다고 보고,
             ‘인출에 더하기’를 고르면 국민연금 때문에 늘어나는 금액만 해마다 연금계좌에서 더 꺼냅니다.
           </p>
         </>
@@ -406,6 +418,12 @@ function ListEditor({ table }: { table: ListTable }) {
           {table === 'assets' && (r.type === 'realestate'
             ? <RealEstateExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />
             : <AssetExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />)}
+          {table === 'liabilities' && (
+            <label className="mt-2 flex items-center gap-2 text-xs text-muted">
+              <input type="checkbox" checked={r.homeLoan === 'buy'} onChange={(e) => tbl.update(r.id!, { homeLoan: e.target.checked ? 'buy' : undefined })} />
+              실거주 주택 구입 대출(건보료 재산분을 부동산 자산으로 추정할 때 대출 공제 대상)
+            </label>
+          )}
           <div className="mt-3 flex items-center justify-between gap-3">
             <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}</span>
             <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
@@ -496,6 +514,9 @@ function RealEstateExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asse
   const use = reUseOf(a);
   const rental = use === 'rental';
   const owner = a.owner ?? 'self';
+  const hp = usesHp(a) ? housePension(a, p, summary.age) : null;
+  const est = hp?.eligible ? hpEstate(a, p, summary.age) : null;
+  const loan = hpLoanOf(a);
   const sale = willSell(a, nowYear) ? saleInflow(a, p, nowYear) : null;
   const pastSale = (a.lockYear ?? 0) > 0 && !sale;
   const retireYear = p.birthYear + Math.max(p.retireAge, summary.age);
@@ -531,13 +552,40 @@ function RealEstateExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asse
             </Labeled>
           </>
         )}
-        <Labeled label="매각 연도" hint={sale ? `${nowYear}~${sale.year - 1}년 보유 · 본인 ${sale.age}세에 매각` : pastSale ? '지난 연도는 무시(계속 보유)' : '0이면 팔지 않음'}>
-          <NumberField value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
-        </Labeled>
-        <Labeled label="매각 비용률(%)" hint={use === 'home' ? '1주택 비과세면 중개보수 등 0.5 안팎' : '양도세+중개보수 실효율'}>
-          <NumberField value={a.lockTax ?? 0} step={0.1} onChange={(v) => onChange('lockTax', v)} />
-        </Labeled>
         {use === 'home' && (
+          <Labeled label="주택연금 가입 나이" hint={hp ? (hp.startAge < p.retireAge ? `은퇴(${p.retireAge}세) 전 수령분은 시뮬레이션에서 빠짐` : `${hp.joinYear}년 가입 · 매각 계획 대신 사용`) : '본인 기준 · 0이면 안 함'}>
+            <NumberField value={a.hpAge ?? 0} onChange={(v) => { onChange('hpAge', Math.max(0, Math.round(v))); if (v > 0 && (a.lockYear ?? 0) > 0) onChange('lockYear', 0); }} />
+          </Labeled>
+        )}
+        {hp && (
+          <Labeled label="월 수령액(만원)" hint={`오늘 기준 · 0이면 자동 추정(월 ${won(hp.auto ? hp.real : hpEstimate(hp.price, hp.calcAge) / (hp.nominal / hp.real))})`}>
+            <NumberField value={a.hpMonthly ?? 0} onChange={(v) => onChange('hpMonthly', Math.max(0, v))} />
+          </Labeled>
+        )}
+        {hp && (
+          <>
+            <Labeled label="대출 금리(%)" hint={`COFIX + 0.85%p · 기본 ${HP_LOAN.rate}`}>
+              <NumberField value={loan.rate} step={0.1} min={0} onChange={(v) => onChange('hpRate', Math.max(0, v))} />
+            </Labeled>
+            <Labeled label="초기보증료(%)" hint={`주택가격 대비 · 기본 ${HP_LOAN.initFee}`}>
+              <NumberField value={loan.initFee} step={0.1} min={0} onChange={(v) => onChange('hpInitFee', Math.max(0, v))} />
+            </Labeled>
+            <Labeled label="연보증료(%)" hint={`대출 잔액 대비 · 기본 ${HP_LOAN.annualFee}`}>
+              <NumberField value={loan.annualFee} step={0.05} min={0} onChange={(v) => onChange('hpAnnualFee', Math.max(0, v))} />
+            </Labeled>
+          </>
+        )}
+        {!hp && (
+          <>
+            <Labeled label="매각 연도" hint={sale ? `${nowYear}~${sale.year - 1}년 보유 · 본인 ${sale.age}세에 매각` : pastSale ? '지난 연도는 무시(계속 보유)' : '0이면 팔지 않음'}>
+              <NumberField value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
+            </Labeled>
+            <Labeled label="매각 비용률(%)" hint={use === 'home' ? '1주택 비과세면 중개보수 등 0.5 안팎' : '양도세+중개보수 실효율'}>
+              <NumberField value={a.lockTax ?? 0} step={0.1} onChange={(v) => onChange('lockTax', v)} />
+            </Labeled>
+          </>
+        )}
+        {use === 'home' && !hp && (
           <Labeled label="새 집 구입액(만원)" hint="다운사이징 · 오늘 시세. 0이면 매각 전액 노후 자금">
             <NumberField value={a.reBuy ?? 0} onChange={(v) => onChange('reBuy', v)} />
           </Labeled>
@@ -552,7 +600,21 @@ function RealEstateExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asse
           </p>
         )}
         {rental && (a.rent ?? 0) === 0 && <p>월세를 넣으면 은퇴 후 소득·종합소득세·건강보험료에 반영됩니다. 전세는 보증금만 부채로 계산합니다.</p>}
-        {sale ? (
+        {hp ? (
+          <p>
+            {hp.eligible ? (
+              <>
+                {hp.joinYear}년(본인 {hp.startAge}세, 부부 중 연소자 {hp.calcAge}세 기준) 예상 시세 {won(hp.price)}으로 가입하면 월 <b className="text-ink">{won(hp.nominal)}</b>(현재가치 {won(hp.real)})을 평생 같은 금액으로 받습니다(정액형 · 실질로는 물가만큼 줄어듦).
+                {' '}노후 진단·인출의 연금 소득에 들어가고, 대출이라 종합소득세·건강보험료 대상은 아닙니다. 집은 계속 소유하므로 순자산에는 그대로 남습니다.
+                {est && <> 기대수명({est.age}세, {est.year}년)까지 받으면 대출 잔액은 받은 돈 {won(est.paid)} + 이자·보증료 = {won(est.balance)}이고, 예상 시세 {won(est.price)}에서 빼면 <b className="text-ink">상속 시 남는 주택 가치 {won(est.left)}</b>(현재가치 {won(est.leftReal)}){est.left === 0 ? ' — 잔액이 집값을 넘어도 모자라는 돈은 상속인이 갚지 않습니다' : ''}. 대출 금리 {loan.rate}%, 보증료 초기 {loan.initFee}%·연 {loan.annualFee}%로 계산했습니다(위 입력칸에서 바꿀 수 있음).</>}
+                {hp.auto && ' 자동 추정은 한국주택금융공사 2026.3 월지급금 예시(일반주택·종신 정액형)를 나이로 보간한 값입니다.'}
+                {hp.price > HP_PRICE_CAP * 1.4 && ' 공시가격 12억을 넘으면 가입할 수 없으니 확인해 주세요.'}
+              </>
+            ) : (
+              '주택연금은 부부 중 한 명이 55세 이상이어야 가입할 수 있어 반영하지 않았습니다.'
+            )}
+          </p>
+        ) : sale ? (
           <p>
             {sale.year}년 예상 시세 {won(sale.price)} − 매각 비용 {won(sale.cost)}{sale.deposit > 0 ? ` − 보증금 반환 ${won(sale.deposit)}` : ''}{sale.rebuy > 0 ? ` − 새 집 ${won(sale.rebuy)}` : ''} = <b className="text-ink">{won(sale.nominal)}</b>(현재가치 {won(sale.amount)})이
             {sale.nominal >= 0 ? ' 금융자산으로 들어와 노후 진단·인출에 함께 운용됩니다.' : ' 부족해 그만큼 금융자산에서 더 나갑니다.'}
