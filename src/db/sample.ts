@@ -54,7 +54,7 @@ export function sampleData(year = new Date().getFullYear()) {
     dependentYears: 12,
     nationalPension: 120,
     nationalPensionAge: 65,
-    privatePension: 60,
+    privatePension: 0, // 퇴직연금(DC)·연금저축은 자산 탭 연금 계좌로 넣었으므로 월액에 또 넣지 않음
     privatePensionAge: 60,
     retireSeparate: true,
     retireReturn: 4.5,

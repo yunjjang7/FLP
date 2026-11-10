@@ -23,6 +23,8 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
   const loanDed = propAuto && rows.some((r) => r.loanDed > 0);
   const hasOther = rows.some((r) => r.other > 0);
   const hasSalary = rows.some((r) => r.salary > 0);
+  const postBase = rows.find((r) => r.baseYear !== first.year);
+  const splitBase = !!postBase;
   return (
     <Card title="종합소득세·건강보험료" className="mt-4" action={<span className="text-xs text-muted">추정 · 명목 금액</span>}>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -34,7 +36,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
         <div className="rounded-xl bg-sunken p-3">
           <div className="text-xs text-muted">{after.year}년 연 부담{npStart ? ' (국민연금 2년 뒤)' : ''}</div>
           <div className="mt-0.5 text-lg font-bold">{won(after.total)}</div>
-          <div className="text-xs text-muted">첫해보다 {won(after.increase)} · 건보료 월 {won(after.hiMonth)}</div>
+          <div className="text-xs text-muted">{after.baseYear === first.year ? '첫해' : `${after.baseYear}년(은퇴 후 첫해)`}보다 {won(after.increase)} · 건보료 월 {won(after.hiMonth)}</div>
         </div>
         <div className="rounded-xl bg-sunken p-3">
           <div className="text-xs text-muted">그중 국민연금 몫(합계)</div>
@@ -90,14 +92,18 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
               {propAuto && <th className="font-medium">재산 과표 · 월 재산분</th>}
               <th className="font-medium">월 건보료</th>
               <th className="font-medium">연 부담</th>
-              <th className="font-medium">첫해 대비</th>
+              <th className="font-medium">{splitBase ? '기준 해 대비' : '첫해 대비'}</th>
               <th className="font-medium">국민연금 몫</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r) => (
               <tr key={r.year} className="border-b border-line text-right last:border-0">
-                <td className="py-1.5 text-left font-medium">{r.year}<span className="ml-1 text-xs font-normal text-muted">{r.age}세</span></td>
+                <td className="py-1.5 text-left font-medium">
+                  {r.year}
+                  <span className="ml-1 text-xs font-normal text-muted">{r.age}세</span>
+                  {splitBase && r.year === r.baseYear && <span className="ml-1 rounded bg-sunken px-1 text-[10px] font-normal text-muted">{r.year === first.year ? '은퇴 전 기준' : '은퇴 후 기준'}</span>}
+                </td>
                 {hasSalary && <td>{won(r.salary)}</td>}
                 <td>{won(r.rent)}</td>
                 {hasOther && <td>{won(r.other)}</td>}
@@ -120,7 +126,8 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
         {hasOther && <li>그 밖의 소득 = 데이터·설정 ‘그 밖의 은퇴 후 소득’ 중 근로·사업·공적연금·사적연금으로 고른 항목의 세전 수입입니다. 근로소득은 근로소득공제·근로소득세액공제·표준세액공제 13만을 하고, 연말정산으로 이미 낸 세금(근로소득만 있다고 본 결정세액)을 기납부로 빼서 5월 추가납부에는 다른 소득과 합쳐 늘어난 세금만 들어갑니다. 사업소득은 필요경비율을 빼고, 공무원·사학·군인연금은 국민연금과 합쳐 연금소득공제를 합니다. 사적연금은 종소세에서 빼고 ‘사적연금도 건보료에 반영’일 때만 건보료에 넣습니다.</li>}
         <li>사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 들어가지 않습니다(2026년 기준). 부부 한 세대 지역가입자로 계산하고, 세율·보험료율은 지금 기준으로 고정합니다.</li>
         <li>건보료 소득분은 전년도 소득(임대·사업소득 + (공적연금·근로소득) × 반영률)으로, 재산분은 {propAuto ? '부동산 자산 시세로 구한 재산 과세표준(부부 합산, 매각 연도부터 제외)에서 기본공제 1억을 빼고 재산등급 점수 × 211.5원(2026년)으로 해마다 추정합니다' + (loanDed ? '. 대출 공제 = 실거주 주택 구입 대출의 그 해 잔액 × 60%(한도 5,000만, 1세대 1주택일 때만)를 재산 과표에서 뺀 금액입니다' : '') : '지금 고지서에서 역산합니다'}. 국민연금 몫 = 국민연금 때문에 늘어난 종소세(원천징수 뺌) + 건보료 소득분.</li>
-        <li>첫해 부담은 이미 생활비에 들어 있다고 봅니다. 늘어나는 금액은 {addToDraw ? '국민연금 몫만큼 해마다 연금계좌에서 더 꺼내도록 노후 진단·인출에 반영했습니다.' : '생활비 안에서 쓰는 것으로 보고 인출에는 넣지 않았습니다(데이터·설정에서 바꿀 수 있음).'}</li>
+        {postBase && <li>기준 해 대비 = 은퇴 전 급여가 있는 해는 {first.year}년과, 급여가 모두 끝난 {postBase.baseYear}년부터는 {postBase.baseYear}년(은퇴 후 첫해)과 비교한 금액입니다. 은퇴하면 급여 때문에 높던 세율이 내려가 세금이 줄어드는데, 이를 ‘감소’로 보이지 않게 은퇴 후는 따로 비교합니다.</li>}
+        <li>{postBase ? '기준 해' : '첫해'} 부담은 이미 생활비에 들어 있다고 봅니다. 늘어나는 금액은 {addToDraw ? '국민연금 몫만큼 해마다 연금계좌에서 더 꺼내도록 노후 진단·인출에 반영했습니다.' : '생활비 안에서 쓰는 것으로 보고 인출에는 넣지 않았습니다(데이터·설정에서 바꿀 수 있음).'}</li>
       </ul>
     </Card>
   );

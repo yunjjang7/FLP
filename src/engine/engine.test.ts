@@ -8,7 +8,7 @@ import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTa
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
-import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volRange } from './portfolio';
+import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { prescriptions } from './prescribe';
 import { financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
@@ -617,6 +617,26 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(y(inf, 2028).salary).toBeCloseTo(3000 * 1.025 ** 2, 6);
   });
 
+  it('은퇴 전 급여가 있으면 ‘첫해 대비’를 은퇴 전·후로 나눠 은퇴 후는 급여가 끝난 해 기준', () => {
+    const d = retiree();
+    const shop = { name: '상가', type: 'realestate' as const, amount: 50000, expectedReturn: 3, volatility: 8, purpose: 'long' as const, nature: 'invest' as const, reUse: 'rental' as const, rent: 200, deposit: 0, renewCycle: 2, renewRate: 0, rentCost: 0 };
+    const base = { ...d.profile, retireAge: 62, spouseBirthYear: 1973, spouseRetireAge: 56, inflation: 0, nationalPension: 0, spousePension: 0, incomes: [], incomeTax: { ...DEFAULT_TAX_ON } };
+    const rows = incomeTaxSchedule({ ...base, wageGross: 3000, spouseWageGross: 3000 }, 2026, undefined, [shop]);
+    const y = (n: number) => rows.find((x) => x.year === n)!;
+    // 2029(배우자만 은퇴)까지는 첫해(2026) 기준, 2030(본인도 은퇴, 급여 0)부터는 2030 기준
+    expect(y(2026).baseYear).toBe(2026);
+    expect(y(2029).baseYear).toBe(2026);
+    expect(y(2029).increase).toBeCloseTo(y(2029).total - y(2026).total, 6);
+    expect(y(2030).baseYear).toBe(2030);
+    expect(y(2030).increase).toBe(0);
+    expect(y(2026).total).toBeGreaterThan(y(2030).total); // 급여가 빠져 세금이 줄어도
+    expect(rows.filter((r) => r.year >= 2030).every((r) => r.increase > -0.5)).toBe(true); // 은퇴 후엔 마이너스로 안 나옴
+    expect(y(2035).increase).toBeCloseTo(y(2035).total - y(2030).total, 6);
+    // 급여를 안 넣으면 기준은 계속 첫해
+    const none = incomeTaxSchedule(base, 2026, undefined, [shop]);
+    expect(none.every((r) => r.baseYear === 2026)).toBe(true);
+  });
+
   it('은퇴 후 변동성 권장 범위: 초과수익 ÷ 샤프 0.4~0.2, 벗어나면 낮음(낙관)·높음(보수)', () => {
     expect(volRange(4)).toEqual({ min: 2.5, max: 5 });
     expect(volRange(6)).toEqual({ min: 7.5, max: 15 });
@@ -627,6 +647,12 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(volCheck(6, 10)).toBe('ok');
     expect(volCheck(4, 8)).toBe('high');
     expect(volCheck(6, 7.5)).toBe('ok'); // 경계 포함
+    // ‘권장값으로 맞추기’ = 범위 가운데(0.5 단위)
+    expect(volMid(4)).toBe(4); // 2.5~5 → 3.75 → 4
+    expect(volMid(6)).toBe(11.5); // 7.5~15 → 11.25 → 11.5
+    expect(volMid(4.5)).toBe(6); // 4~7.5 → 5.75 → 6
+    expect(volMid(2)).toBe(1.5); // 0~3
+    for (const r of [3.5, 4, 4.5, 5, 6, 7, 8]) expect(volCheck(r, volMid(r))).toBe('ok');
   });
 
   it('개인·퇴직연금 월액과 자산 탭 연금 계좌 중복 경고', () => {
@@ -636,6 +662,10 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(pensionOverlap(50, assets, 'self').map((a) => a.name)).toEqual(['연금저축', '공동']);
     expect(pensionOverlap(50, assets, 'spouse').map((a) => a.name)).toEqual(['IRP', '공동']);
     expect(pensionOverlap(50, [], 'self')).toEqual([]);
+    // 샘플 데이터는 연금 계좌만 넣고 월액은 0이라 경고가 안 나옴
+    const s = sampleData(2026);
+    expect(pensionOverlap(s.profile.privatePension, s.assets, 'self')).toEqual([]);
+    expect(pensionOverlap(s.profile.spousePrivatePension ?? 0, s.assets, 'spouse')).toEqual([]);
   });
 
   it('월세 중복 입력 경고: 이름이 비슷하거나 월액이 같으면 겹친다고 봄', () => {

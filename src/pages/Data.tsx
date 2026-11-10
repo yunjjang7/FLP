@@ -3,7 +3,7 @@ import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
 import { INSURED_WHO, TABLES, type FieldDef } from '../db/schema';
 import { housePension, HP_LOAN, HP_PRICE_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentDuplicates, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
-import { ASSET_TYPES, insuredBirthYear, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volRange } from '../engine/portfolio';
+import { ASSET_TYPES, insuredBirthYear, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, PageHeader } from '../components/ui';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
@@ -173,12 +173,22 @@ function ProfileForm() {
           )}
         </div>
         {p.retireSeparate && volCheck(p.retireReturn, p.retireVolatility) === 'low' && (
-          <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
-            <b>결과가 낙관적일 수 있어요.</b> 기대수익률 {p.retireReturn}%를 내려면 보통 변동성이 {volRange(p.retireReturn).min}% 이상입니다. 지금 {p.retireVolatility}%로는 하락장이 거의 없다고 보고 성공확률을 실제보다 높게 계산합니다. 변동성을 올리거나 기대수익률을 낮춰 주세요.
-          </p>
+          <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
+            <p className="min-w-0 flex-1 basis-64">
+              <b>결과가 낙관적일 수 있어요.</b> 기대수익률 {p.retireReturn}%를 내려면 보통 변동성이 {volRange(p.retireReturn).min}% 이상입니다. 지금 {p.retireVolatility}%로는 하락장이 거의 없다고 보고 성공확률을 실제보다 높게 계산합니다. 변동성을 올리거나 기대수익률을 낮춰 주세요.
+            </p>
+            <Button variant="ghost" className="shrink-0 bg-surface !px-3 !py-1.5 !text-xs" onClick={() => save({ retireVolatility: volMid(p.retireReturn) })}>
+              권장값 {volMid(p.retireReturn)}%로 맞추기
+            </Button>
+          </div>
         )}
         {p.retireSeparate && volCheck(p.retireReturn, p.retireVolatility) === 'high' && (
-          <p className="mt-3 text-xs text-muted">변동성이 수익률 {p.retireReturn}%에 비해 큰 편({volRange(p.retireReturn).max}% 초과)이라 결과가 보수적으로 나옵니다.</p>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-muted">
+            <p className="min-w-0 flex-1 basis-64">변동성이 수익률 {p.retireReturn}%에 비해 큰 편({volRange(p.retireReturn).max}% 초과)이라 결과가 보수적으로 나옵니다.</p>
+            <Button variant="ghost" className="shrink-0 !px-3 !py-1.5 !text-xs" onClick={() => save({ retireVolatility: volMid(p.retireReturn) })}>
+              권장값 {volMid(p.retireReturn)}%로 맞추기
+            </Button>
+          </div>
         )}
         <p className="mt-3 text-xs text-muted">권장 범위는 예금 금리(약 3%)를 넘는 초과수익 1%마다 변동성 2.5~5%로 잡은 대략적인 기준입니다(채권 위주 4% → 2.5~5%, 주식·채권 반반 6% → 7.5~15%, 주식 위주 8% → 12.5~25%).</p>
       </Card>

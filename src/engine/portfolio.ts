@@ -43,6 +43,12 @@ export function volRange(ret: number) {
   return { min: half(excess / 0.4), max: Math.max(3, half(excess / 0.2)) };
 }
 
+/** 권장 범위 가운데 값(0.5% 단위): ‘권장값으로 맞추기’ 버튼에 씀 */
+export function volMid(ret: number) {
+  const r = volRange(ret);
+  return Math.round(r.min + r.max) / 2;
+}
+
 /** 변동성이 수익률에 비해 낮음(결과 낙관적) · 높음(보수적) · 적정 */
 export function volCheck(ret: number, vol: number): 'low' | 'high' | 'ok' {
   const r = volRange(ret);
