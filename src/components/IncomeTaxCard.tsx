@@ -22,6 +22,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
   const propAuto = p.incomeTax?.hiPropAuto ?? false;
   const loanDed = propAuto && rows.some((r) => r.loanDed > 0);
   const hasOther = rows.some((r) => r.other > 0);
+  const hasSalary = rows.some((r) => r.salary > 0);
   return (
     <Card title="종합소득세·건강보험료" className="mt-4" action={<span className="text-xs text-muted">추정 · 명목 금액</span>}>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -75,10 +76,11 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
       )}
 
       <div className="mt-3 -mx-4 max-h-[360px] overflow-auto px-4 sm:-mx-5 sm:px-5">
-        <table className="w-full text-sm" style={{ minWidth: (loanDed ? 1100 : propAuto ? 1000 : 860) + (hasOther ? 100 : 0) }}>
+        <table className="w-full text-sm" style={{ minWidth: (loanDed ? 1100 : propAuto ? 1000 : 860) + (hasOther ? 100 : 0) + (hasSalary ? 100 : 0) }}>
           <thead className="sticky top-0 bg-surface">
             <tr className="border-b border-line text-right text-xs text-muted">
               <th className="py-2 text-left font-medium">연도</th>
+              {hasSalary && <th className="font-medium">은퇴 전 급여</th>}
               <th className="font-medium">임대수입</th>
               {hasOther && <th className="font-medium">그 밖의 소득</th>}
               <th className="font-medium">국민연금(세전)</th>
@@ -96,6 +98,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
             {rows.map((r) => (
               <tr key={r.year} className="border-b border-line text-right last:border-0">
                 <td className="py-1.5 text-left font-medium">{r.year}<span className="ml-1 text-xs font-normal text-muted">{r.age}세</span></td>
+                {hasSalary && <td>{won(r.salary)}</td>}
                 <td>{won(r.rent)}</td>
                 {hasOther && <td>{won(r.other)}</td>}
                 <td>{won(r.npSelf + r.npSpouse)}</td>
@@ -113,6 +116,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
         </table>
       </div>
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">
+        {hasSalary && <li>은퇴 전 급여 = 프로필의 ‘은퇴 전 세전 총급여’(부부 합계, 물가만큼 오름)입니다. 은퇴 전 해까지 월세 등과 합쳐 종합소득세를 계산하고, 회사에서 연말정산으로 낸 세금(급여만 있다고 본 결정세액)은 기납부로 빼서 5월 추가납부에는 월세 등 때문에 늘어난 세금만 들어갑니다. 건보료는 직장에서 낸다고 보고 지역 건보료에는 넣지 않습니다.</li>}
         {hasOther && <li>그 밖의 소득 = 데이터·설정 ‘그 밖의 은퇴 후 소득’ 중 근로·사업·공적연금·사적연금으로 고른 항목의 세전 수입입니다. 근로소득은 근로소득공제·근로소득세액공제·표준세액공제 13만을 하고, 연말정산으로 이미 낸 세금(근로소득만 있다고 본 결정세액)을 기납부로 빼서 5월 추가납부에는 다른 소득과 합쳐 늘어난 세금만 들어갑니다. 사업소득은 필요경비율을 빼고, 공무원·사학·군인연금은 국민연금과 합쳐 연금소득공제를 합니다. 사적연금은 종소세에서 빼고 ‘사적연금도 건보료에 반영’일 때만 건보료에 넣습니다.</li>}
         <li>사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 들어가지 않습니다(2026년 기준). 부부 한 세대 지역가입자로 계산하고, 세율·보험료율은 지금 기준으로 고정합니다.</li>
         <li>건보료 소득분은 전년도 소득(임대·사업소득 + (공적연금·근로소득) × 반영률)으로, 재산분은 {propAuto ? '부동산 자산 시세로 구한 재산 과세표준(부부 합산, 매각 연도부터 제외)에서 기본공제 1억을 빼고 재산등급 점수 × 211.5원(2026년)으로 해마다 추정합니다' + (loanDed ? '. 대출 공제 = 실거주 주택 구입 대출의 그 해 잔액 × 60%(한도 5,000만, 1세대 1주택일 때만)를 재산 과표에서 뺀 금액입니다' : '') : '지금 고지서에서 역산합니다'}. 국민연금 몫 = 국민연금 때문에 늘어난 종소세(원천징수 뺌) + 건보료 소득분.</li>

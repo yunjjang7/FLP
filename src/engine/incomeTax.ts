@@ -1,5 +1,5 @@
 import type { Asset, ContribPlan, IncomeKind, IncomeTaxSettings, Liability, Profile, RetireIncome } from '../types';
-import { loanBalanceAt, npTerms, spouseToSelf } from './goals';
+import { loanBalanceAt, npTerms, spouseRetireSelfAge, spouseToSelf } from './goals';
 import { incomeValue, type IncomeStream } from './montecarlo';
 import { rentStreams, reUseOf, usesHp, type RentStream } from './realestate';
 
@@ -170,6 +170,7 @@ export interface IncomeTaxRow {
   npSelf: number; // 본인 국민연금(연, 세전, 명목)
   npSpouse: number;
   other: number; // ‘그 밖의 은퇴 후 소득’ 중 근로·사업·공적연금·사적연금 수입(연, 세전, 명목)
+  salary: number; // 은퇴 전 세전 총급여(부부, 연, 명목): 근로소득으로 종소세에 합산, 건보료는 직장에서 내므로 제외
   incomeSelf: number; // 본인 종합소득금액(임대·사업소득 + 근로소득금액 + 연금소득금액)
   incomeSpouse: number;
   taxSelf: number; // 본인 종합소득세 결정세액(지방세 포함, 근로소득세액공제 뒤)
@@ -195,6 +196,8 @@ export interface IncomeTaxRow {
  * 연말정산으로 낸 세금(근로소득만 있다고 본 결정세액)은 기납부로 빼서 5월에는 다른 소득과 합쳐 늘어난 만큼만 냄, 건보료 총급여 × 반영률,
  * 사업 = 항목별 필요경비율 차감·건보료 100%, 공적연금 = 국민연금과 합쳐 연금소득공제·건보료 × 반영률,
  * 사적연금 = 종소세 제외·건보료는 hiPrivate 일 때만, 그 밖 = 계산 제외. 임대 외에는 ‘나이 기준’ 사람의 소득으로 봄.
+ * 은퇴 전 세전 총급여(wageGross·spouseWageGross)는 각자 은퇴 전 해까지 근로소득으로 합쳐 세율 구간·근로소득세액공제·기납부에 반영하고,
+ * 건보료는 직장에서 이미 냈다고 보고 지역 건보료 소득에는 넣지 않음.
  * 건보료 소득분은 전년도 소득 기준, 재산분은 현재 고지서에서 역산해 고정(증가율 입력 가능)하거나 부동산 자산으로 연도별 추정(hiPropAuto).
  * slotByYear: 사적연금도 건보료에 반영할 때 연도별 과세재원 인출액(명목).
  * liabilities: 자산별 추정에서 주택 구입 대출 공제(hiLoanDeduct)를 켰을 때 쓰는 부채 목록.
@@ -255,15 +258,19 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
       by[o.kind][o.spouse] += o.kind === 'business' ? v * o.keep : v;
     }
     const sum = (k: string) => by[k][0] + by[k][1];
+    // 은퇴 전 세전 총급여(오늘 기준 → 명목): 은퇴한 해부터 0. 종소세 근로소득에만 합치고 건보료(직장가입자)에는 넣지 않음
+    const salSelf = age < profile.retireAge ? Math.max(0, profile.wageGross ?? 0) * defl : 0;
+    const salSpouse = hasSpouse && age < spouseRetireSelfAge(profile) ? Math.max(0, profile.spouseWageGross ?? 0) * defl : 0;
+    const wage: [number, number] = [by.wage[0] + salSelf, by.wage[1] + salSpouse];
     // 사람별 종합소득금액(np: 그 사람 국민연금 세전 연액)
     const incomeOf = (k: 0 | 1, rentK: number, npK: number) =>
-      rentK + wageIncomeAmount(by.wage[k]) + by.business[k] + pensionIncomeAmount(npK * (s.npTaxable / 100) + by.publicPension[k]);
+      rentK + wageIncomeAmount(wage[k]) + by.business[k] + pensionIncomeAmount(npK * (s.npTaxable / 100) + by.publicPension[k]);
     const incomeSelf = incomeOf(0, rentSelf, npSelf);
     const incomeSpouse = incomeOf(1, rentSpouse, npSpouse);
-    const taxSelf = personIncomeTax(incomeSelf, s.dedSelf, by.wage[0]);
-    const taxSpouse = personIncomeTax(incomeSpouse, s.dedSpouse, by.wage[1]);
+    const taxSelf = personIncomeTax(incomeSelf, s.dedSelf, wage[0]);
+    const taxSpouse = personIncomeTax(incomeSpouse, s.dedSpouse, wage[1]);
     const np = npSelf + npSpouse;
-    const wageWithheld = wageWithholding(by.wage[0], s.dedSelf) + wageWithholding(by.wage[1], s.dedSpouse);
+    const wageWithheld = wageWithholding(wage[0], s.dedSelf) + wageWithholding(wage[1], s.dedSpouse);
     const withheld = np * (1 - net) + wageWithheld;
     const due = taxSelf + taxSpouse - withheld;
     const P = rentSelf + rentSpouse + sum('business') + (np + sum('publicPension') + sum('wage')) * pub;
@@ -285,9 +292,9 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     const total = due + hiYear;
     const increase = n === 0 ? 0 : total - rows[0].total;
     // 국민연금이 없을 때 5월 납부액(근로 원천징수는 그대로 빠짐)
-    const taxNoNP = personIncomeTax(incomeOf(0, rentSelf, 0), s.dedSelf, by.wage[0]) + personIncomeTax(incomeOf(1, rentSpouse, 0), s.dedSpouse, by.wage[1]) - wageWithheld;
+    const taxNoNP = personIncomeTax(incomeOf(0, rentSelf, 0), s.dedSelf, wage[0]) + personIncomeTax(incomeOf(1, rentSpouse, 0), s.dedSpouse, wage[1]) - wageWithheld;
     const npPart = due - taxNoNP + prevNP * pub * rate * ltc;
-    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, npPart, rentPart: increase - npPart });
+    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, salary: salSelf + salSpouse, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, npPart, rentPart: increase - npPart });
     prevP = P;
     prevNP = np;
     prevSlot = slotByYear?.get(year) ?? 0;

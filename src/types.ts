@@ -154,6 +154,8 @@ export interface Profile {
   retireAge: number;
   lifeExpectancy: number;
   monthlyIncome: number; // 세후 월소득
+  wageGross?: number; // 본인 은퇴 전 세전 총급여(연, 오늘 기준, 만원): 종합소득세 계산에만 씀
+  spouseWageGross?: number; // 배우자 은퇴 전 세전 총급여(연, 오늘 기준, 만원)
   inflation: number;
   riskProfile: RiskProfile;
   retireMonthlyExpense: number; // 은퇴 후 월 생활비(현재가치)

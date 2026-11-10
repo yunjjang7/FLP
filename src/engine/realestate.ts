@@ -99,6 +99,27 @@ export function rentStreams(assets: Asset[], profile: Profile, currentAge: numbe
     .filter((s) => s.annual > 0 && (s.endAge === undefined || s.endAge >= s.startAge));
 }
 
+/** 이름 비교용: 공백·기호와 ‘월세·임대료·임대·수입’ 같은 흔한 말을 뺌 */
+const rentKey = (s: string) => s.toLowerCase().replace(/월세|임대료|임대수입|임대소득|임대|수입|소득/g, '').replace(/[^0-9a-z가-힣]/g, '');
+
+/**
+ * ‘그 밖의 은퇴 후 소득’ 임대소득 항목이 자산 탭 임대용 부동산과 겹쳐 보이는지:
+ * 이름이 비슷하거나(한쪽이 다른 쪽을 포함, 2글자 이상) 월액이 월세(또는 경비 뺀 월세)와 같으면 그 부동산들을 돌려줌.
+ */
+export function rentDuplicates(income: { name: string; monthly: number }, assets: Asset[]): { asset: Asset; by: 'name' | 'amount' }[] {
+  const k = rentKey(income.name ?? '');
+  return assets
+    .filter((a) => isRealEstate(a) && reUseOf(a) === 'rental' && (a.rent ?? 0) > 0)
+    .flatMap((a): { asset: Asset; by: 'name' | 'amount' }[] => {
+      const ak = rentKey(a.name ?? '');
+      const near = k.length >= 2 && ak.length >= 2 && (ak.includes(k) || k.includes(ak));
+      if (near) return [{ asset: a, by: 'name' as const }];
+      const m = income.monthly ?? 0;
+      const same = m > 0 && (Math.abs(m - (a.rent ?? 0)) < 0.5 || Math.abs(m - netRentOf(a)) < 0.5);
+      return same ? [{ asset: a, by: 'amount' as const }] : [];
+    });
+}
+
 /**
  * 주택연금(한국주택금융공사, 일반주택 · 종신지급 정액형, 2026.3.1 기준 월지급금 예시).
  * 연령(부부 중 연소자)별 주택가격 1억원당 월지급금과 연령별 월 최대 지급액(만원). 사이 나이는 직선 보간.

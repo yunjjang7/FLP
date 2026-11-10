@@ -6,8 +6,9 @@ import { CRITICAL_BASE, insuranceGap } from './insurance';
 import { deterministicPath, expenseAt, expenseRatioAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
+import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
-import { isPaying, payEndSelfAge, summarize } from './portfolio';
+import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volRange } from './portfolio';
 import { prescriptions } from './prescribe';
 import { financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
@@ -545,6 +546,108 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     }, 2026);
     expect(sp[0].taxSpouse).toBeCloseTo(wageWithholding(3000, 300), 6);
     expect(sp[0].due).toBeCloseTo(0, 6);
+  });
+
+  it('임대용 부동산 월세: 은퇴 전에도 종소세에 한 번만, 근로소득 세액공제·기납부와 겹치지 않음', () => {
+    // 1968년생 · 62세 은퇴 · 은퇴 후 재취업 근로 월 250(연 3,000만) · 자산 탭 상가 월세 200(경비 10%, 인상 0)
+    const d = retiree();
+    const shop = (owner: 'self' | 'spouse') => ({
+      name: '상가', type: 'realestate' as const, amount: 50000, expectedReturn: 3, volatility: 8, purpose: 'long' as const, nature: 'invest' as const,
+      reUse: 'rental' as const, rent: 200, deposit: 0, renewCycle: 2, renewRate: 0, rentCost: 10, owner,
+    });
+    const profile = {
+      ...d.profile, retireAge: 62, spouseBirthYear: 1973, inflation: 0, nationalPension: 0, spousePension: 0,
+      incomes: [{ name: '재취업', monthly: 250, startAge: 62, endAge: 0, growth: 0, step: 1, kind: 'wage' as const }],
+      incomeTax: { ...DEFAULT_TAX_ON },
+    };
+    const rows = incomeTaxSchedule(profile, 2026, undefined, [shop('self')]);
+    const y = (n: number) => rows.find((r) => r.year === n)!;
+    // 은퇴 전(2026, 58세): 세금은 경비 차감 전 월세 2,400만으로 지금부터 계산, 근로소득은 아직 없어 세액공제·기납부 0
+    expect(y(2026).rent).toBeCloseTo(2400, 6);
+    expect(y(2026).other).toBe(0);
+    expect(y(2026).wageWithheld).toBe(0);
+    expect(y(2026).taxSelf).toBeCloseTo(incomeTaxAmount(2400 - 150), 6); // 232.65
+    expect(y(2026).due).toBeCloseTo(y(2026).taxSelf, 6);
+    // 현금흐름(노후 소득)에는 은퇴한 해부터만 들어감 → 은퇴 전 월세는 세후 월소득 몫이라 두 번 세지 않음
+    const [cash] = rentStreams([shop('self')], profile, 58);
+    const [gross] = rentStreams([shop('self')], profile, 58, true);
+    expect(cash.startAge).toBe(62);
+    expect(cash.annual).toBeCloseTo(2160, 6); // 경비 10% 뺀 순수입
+    expect(gross.startAge).toBe(58);
+    // 은퇴 후(2030, 62세): 근로 3,000 + 월세 2,400. 근로소득세액공제는 근로소득분 비율만큼(한도 74)만, 원천징수는 근로만 본 75.075
+    // → 결정 471.075 − 기납부 75.075 = 396 = 월세 2,400 × 15% × 1.1 (월세 세금이 빠지거나 공제로 깎이지 않음)
+    expect(y(2030).rent).toBeCloseTo(2400, 6);
+    expect(y(2030).taxSelf).toBeCloseTo(personIncomeTax(wageIncomeAmount(3000) + 2400, 150, 3000), 6);
+    expect(y(2030).taxSelf).toBeCloseTo(471.075, 6);
+    expect(y(2030).wageWithheld).toBeCloseTo(wageWithholding(3000, 150), 6);
+    expect(y(2030).due).toBeCloseTo(396, 6);
+    // 배우자 명의 상가: 월세는 배우자 종소세, 본인 근로 세금은 연말정산으로 끝(5월 추가 0) → 사람 간에도 섞이지 않음
+    const sp = incomeTaxSchedule(profile, 2026, undefined, [shop('spouse')]);
+    const s30 = sp.find((r) => r.year === 2030)!;
+    expect(s30.taxSelf).toBeCloseTo(wageWithholding(3000, 150), 6);
+    expect(s30.taxSpouse).toBeCloseTo(incomeTaxAmount(2400 - 150), 6);
+    expect(s30.due).toBeCloseTo(s30.taxSpouse, 6);
+  });
+
+  it('은퇴 전 세전 총급여: 은퇴 전 해까지 월세와 합쳐 세율 구간·근로소득세액공제·기납부 반영, 건보료 제외', () => {
+    // 본인 58세 · 62세 은퇴 · 은퇴 전 총급여 3,000만 · 상가 월세 200 · 배우자(53세) 56세 은퇴 · 총급여 3,000만
+    const d = retiree();
+    const shop = { name: '상가', type: 'realestate' as const, amount: 50000, expectedReturn: 3, volatility: 8, purpose: 'long' as const, nature: 'invest' as const, reUse: 'rental' as const, rent: 200, deposit: 0, renewCycle: 2, renewRate: 0, rentCost: 0 };
+    const base = { ...d.profile, retireAge: 62, spouseBirthYear: 1973, spouseRetireAge: 56, inflation: 0, nationalPension: 0, spousePension: 0, incomes: [], incomeTax: { ...DEFAULT_TAX_ON } };
+    const rows = incomeTaxSchedule({ ...base, wageGross: 3000, spouseWageGross: 3000 }, 2026, undefined, [shop]);
+    const none = incomeTaxSchedule(base, 2026, undefined, [shop]);
+    const y = (r: typeof rows, n: number) => r.find((x) => x.year === n)!;
+    // 2026: 급여 3,000 + 월세 2,400 → 결정 471.075, 연말정산 75.075 → 5월 396(월세 몫 15%). 급여를 안 넣으면 월세만 6% 구간 232.65
+    expect(y(rows, 2026).salary).toBeCloseTo(6000, 6);
+    expect(y(rows, 2026).taxSelf).toBeCloseTo(471.075, 6);
+    expect(y(rows, 2026).wageWithheld).toBeCloseTo(2 * wageWithholding(3000, 150), 6);
+    expect(y(rows, 2026).due).toBeCloseTo(396, 6);
+    expect(y(none, 2026).due).toBeCloseTo(232.65, 6);
+    // 배우자는 급여만이라 연말정산으로 끝(5월 추가 0)
+    expect(y(rows, 2026).taxSpouse).toBeCloseTo(wageWithholding(3000, 150), 6);
+    // 건보료는 직장에서 낸다고 보고 지역 건보료 소득에 넣지 않음
+    expect(rows.map((r) => r.hiMonth)).toEqual(none.map((r) => r.hiMonth));
+    // 배우자 56세(2029)부터, 본인 62세(2030)부터 급여 0 → 은퇴 후엔 급여 없을 때와 같은 세금
+    expect(y(rows, 2028).salary).toBeCloseTo(6000, 6);
+    expect(y(rows, 2029).salary).toBeCloseTo(3000, 6);
+    expect(y(rows, 2030).salary).toBe(0);
+    expect(y(rows, 2030).due).toBeCloseTo(y(none, 2030).due, 6);
+    // 물가만큼 명목 증가
+    const inf = incomeTaxSchedule({ ...base, inflation: 2.5, wageGross: 3000 }, 2026, undefined, [shop]);
+    expect(y(inf, 2028).salary).toBeCloseTo(3000 * 1.025 ** 2, 6);
+  });
+
+  it('은퇴 후 변동성 권장 범위: 초과수익 ÷ 샤프 0.4~0.2, 벗어나면 낮음(낙관)·높음(보수)', () => {
+    expect(volRange(4)).toEqual({ min: 2.5, max: 5 });
+    expect(volRange(6)).toEqual({ min: 7.5, max: 15 });
+    expect(volRange(8)).toEqual({ min: 12.5, max: 25 });
+    expect(volRange(4.5)).toEqual({ min: 4, max: 7.5 }); // 3.75 → 0.5 단위 반올림
+    expect(volRange(2)).toEqual({ min: 0, max: 3 }); // 예금 수준 이하는 0~3
+    expect(volCheck(6, 7)).toBe('low');
+    expect(volCheck(6, 10)).toBe('ok');
+    expect(volCheck(4, 8)).toBe('high');
+    expect(volCheck(6, 7.5)).toBe('ok'); // 경계 포함
+  });
+
+  it('개인·퇴직연금 월액과 자산 탭 연금 계좌 중복 경고', () => {
+    const acct = (name: string, owner?: 'self' | 'spouse' | 'joint', amount = 10000) => ({ name, type: 'pension' as const, amount, expectedReturn: 5, volatility: 10, purpose: 'long' as const, nature: 'invest' as const, owner });
+    const assets = [acct('연금저축'), acct('IRP', 'spouse'), acct('공동', 'joint'), acct('빈 계좌', 'self', 0), { ...acct('ETF'), type: 'etf' as const }];
+    expect(pensionOverlap(0, assets, 'self')).toEqual([]); // 월액 0이면 경고 없음
+    expect(pensionOverlap(50, assets, 'self').map((a) => a.name)).toEqual(['연금저축', '공동']);
+    expect(pensionOverlap(50, assets, 'spouse').map((a) => a.name)).toEqual(['IRP', '공동']);
+    expect(pensionOverlap(50, [], 'self')).toEqual([]);
+  });
+
+  it('월세 중복 입력 경고: 이름이 비슷하거나 월액이 같으면 겹친다고 봄', () => {
+    const a = (name: string, rent: number, rentCost = 0) => ({ name, type: 'realestate' as const, amount: 50000, expectedReturn: 3, volatility: 8, purpose: 'long' as const, nature: 'invest' as const, reUse: 'rental' as const, rent, rentCost });
+    const assets = [a('환타지아 상가(미용실)', 150), a('환타지아 상가(병원)', 300, 10)];
+    expect(rentDuplicates({ name: '환타지아 미용실 월세', monthly: 80 }, assets)).toEqual([]); // 포함 관계 아님, 금액 다름
+    expect(rentDuplicates({ name: '상가(병원) 임대료', monthly: 80 }, assets).map((x) => [x.asset.name, x.by])).toEqual([['환타지아 상가(병원)', 'name']]);
+    expect(rentDuplicates({ name: '환타지아', monthly: 80 }, assets)).toHaveLength(2);
+    expect(rentDuplicates({ name: '오피스텔', monthly: 150 }, assets).map((x) => x.by)).toEqual(['amount']);
+    expect(rentDuplicates({ name: '오피스텔', monthly: 270 }, assets).map((x) => x.asset.name)).toEqual(['환타지아 상가(병원)']); // 경비 10% 뺀 월세
+    expect(rentDuplicates({ name: '임대료', monthly: 100 }, assets)).toEqual([]); // 흔한 말만 있으면 이름 비교 안 함
+    expect(rentDuplicates({ name: '환타지아', monthly: 80 }, [{ ...assets[0], reUse: 'home' as const }])).toEqual([]);
   });
 
   it('국민연금 생일 월(첫해 월할)·연 인상률: 엑셀처럼 생일 다음 달부터, 2% 인상', () => {

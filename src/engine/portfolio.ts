@@ -33,6 +33,31 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
 export const isFinancial = (a: Asset) => a.type !== 'realestate';
 
+/**
+ * 기대수익률(%)에 맞는 변동성 권장 범위(%). 무위험 3%를 넘는 초과수익 ÷ 샤프비율 0.4~0.2로 잡음
+ * (예: 채권 4% → 2.5~5, 주식·채권 반반 6% → 7.5~15, 주식 8% → 12.5~25). 0.5% 단위.
+ */
+export function volRange(ret: number) {
+  const excess = Math.max(0, ret - 3);
+  const half = (v: number) => Math.round(v * 2) / 2;
+  return { min: half(excess / 0.4), max: Math.max(3, half(excess / 0.2)) };
+}
+
+/** 변동성이 수익률에 비해 낮음(결과 낙관적) · 높음(보수적) · 적정 */
+export function volCheck(ret: number, vol: number): 'low' | 'high' | 'ok' {
+  const r = volRange(ret);
+  return vol < r.min ? 'low' : vol > r.max ? 'high' : 'ok';
+}
+
+/**
+ * 프로필 ‘개인·퇴직연금 월액’과 겹칠 수 있는 자산 탭 연금 계좌. 월액이 0보다 클 때만:
+ * 본인 칸 = 본인·공동·명의 없음 계좌, 배우자 칸 = 배우자·공동 명의 계좌.
+ */
+export function pensionOverlap(monthly: number, assets: Asset[], who: 'self' | 'spouse'): Asset[] {
+  if (!(monthly > 0)) return [];
+  return assets.filter((a) => a.type === 'pension' && a.amount > 0 && (who === 'self' ? a.owner !== 'spouse' : a.owner === 'spouse' || a.owner === 'joint'));
+}
+
 export interface Summary {
   totalAssets: number;
   financialAssets: number;

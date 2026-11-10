@@ -2,8 +2,8 @@ import { useRef, useState } from 'react';
 import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
 import { INSURED_WHO, TABLES, type FieldDef } from '../db/schema';
-import { housePension, HP_LOAN, HP_PRICE_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
-import { ASSET_TYPES, insuredBirthYear, isInsuranceCashflow, isPaying, payEndSelfAge, RISK_PROFILES } from '../engine/portfolio';
+import { housePension, HP_LOAN, HP_PRICE_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentDuplicates, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
+import { ASSET_TYPES, insuredBirthYear, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, PageHeader } from '../components/ui';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
@@ -55,14 +55,29 @@ export default function Data() {
   );
 }
 
+/** ‘개인·퇴직연금 월액’과 자산 탭 연금 계좌가 겹칠 수 있을 때 그 칸 아래 경고 */
+function PensionOverlapNote({ accounts }: { accounts: Asset[] }) {
+  if (accounts.length === 0) return null;
+  return (
+    <p role="alert" className="col-span-2 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
+      <b>두 번 계산될 수 있어요.</b> 자산 탭 연금 계좌({accounts.map((a) => `${a.name || '연금'} ${won(a.amount)}`).join(', ')}) 잔액은 노후 인출에서 이미 꺼내 씁니다. 그 계좌에서 받을 월 수령액이라면 월액을 0으로 두고, 계좌와 별개로 정해진 금액이 나오는 연금(종신형 연금보험 등)만 넣으세요.
+    </p>
+  );
+}
+
 function useSaveProfile() {
   const { profile } = useFlp();
   return (patch: Partial<Profile>) => db.profile.put({ ...profile, ...patch });
 }
 
 function ProfileForm() {
-  const { profile: p, summary, start } = useFlp();
+  const { profile: p, summary, start, assets } = useFlp();
   const save = useSaveProfile();
+  const rentals = assets.filter((a) => a.type === 'realestate' && reUseOf(a) === 'rental' && (a.rent ?? 0) > 0);
+  const incomeHint = [
+    p.spouseBirthYear > 0 ? '배우자 소득 포함, 부부 합계' : '',
+    rentals.length > 0 ? `은퇴 전 월세(${rentals[0].name || '임대 부동산'}${rentals.length > 1 ? ' 등' : ''})도 합쳐 넣으세요` : '',
+  ].filter(Boolean).join(' · ');
   const n = (key: keyof Profile, label: string, unit?: string, hint?: string, step = 1) => (
     <Labeled label={label} hint={hint}>
       <NumberField value={(p[key] as number) ?? 0} unit={unit} step={step} onChange={(v) => save({ [key]: v })} />
@@ -82,7 +97,7 @@ function ProfileForm() {
             <TextField value={p.name} onChange={(v) => save({ name: v })} />
           </Labeled>
           {n('birthYear', '출생연도', '년', `현재 ${summary.age}세`)}
-          {n('monthlyIncome', '세후 월소득(가구)', '만원', hasSpouse ? '배우자 소득 포함, 부부 합계' : undefined)}
+          {n('monthlyIncome', '세후 월소득(가구)', '만원', incomeHint || undefined)}
           <Labeled label="투자 위험성향">
             <SelectField value={p.riskProfile} onChange={(v) => save({ riskProfile: v as Profile['riskProfile'] })} options={Object.fromEntries(Object.entries(RISK_PROFILES).map(([k, v]) => [k, v.label]))} />
           </Labeled>
@@ -116,6 +131,8 @@ function ProfileForm() {
               {n('nationalPensionAge', '국민연금 개시 나이', '세', selfYear(p.nationalPensionAge))}
               {n('privatePension', '개인·퇴직연금 월액', '만원', '정기 수령액. 계좌 잔액은 자산에 입력')}
               {n('privatePensionAge', '개인연금 개시 나이', '세', selfYear(p.privatePensionAge))}
+              <PensionOverlapNote accounts={pensionOverlap(p.privatePension, assets, 'self')} />
+              {n('wageGross', '은퇴 전 세전 총급여(연)', '만원', p.retireAge > summary.age ? `종소세 계산용 · ${selfYear(p.retireAge - 1)}까지` : '이미 은퇴 · 계산에 안 씀')}
               {n('birthMonth', '출생 월', '월', monthHint(p.birthMonth))}
               <Labeled label="국민연금 연 인상률" hint={p.npGrowth === undefined ? `지금은 물가(${p.inflation}%)와 같게 계산` : `명목 · 물가 ${p.inflation}%`}>
                 <NumberField value={p.npGrowth ?? p.inflation} unit="%" step={0.1} onChange={(v) => save({ npGrowth: v })} />
@@ -128,16 +145,18 @@ function ProfileForm() {
               {n('spouseBirthYear', '출생연도', '년', hasSpouse ? `본인보다 ${Math.abs(p.spouseBirthYear - p.birthYear)}살 ${p.spouseBirthYear > p.birthYear ? '적음' : p.spouseBirthYear < p.birthYear ? '많음' : '같음'}` : '0이면 배우자 없음(본인 나이로 계산)')}
               {n('spouseIncome', '세후 월소득', '만원', '가구 월소득 중 배우자 몫')}
               {n('spouseRetireAge', '은퇴 나이', '세', spouseYear(p.spouseRetireAge ?? 0))}
+              {n('spouseWageGross', '은퇴 전 세전 총급여(연)', '만원', hasSpouse && (p.spouseRetireAge ?? 0) > spouseNow ? `종소세 계산용 · ${p.spouseBirthYear + (p.spouseRetireAge ?? 0) - 1}년까지` : '이미 은퇴 · 계산에 안 씀')}
               {n('spouseBirthMonth', '출생 월', '월', monthHint(p.spouseBirthMonth))}
               {n('spousePension', '국민연금 월액', '만원', '국민연금공단 예상액')}
               {n('spousePensionAge', '국민연금 개시 나이', '세', spouseYear(p.spousePensionAge))}
               {n('spousePrivatePension', '개인·퇴직연금 월액', '만원', '정기 수령액')}
               {n('spousePrivatePensionAge', '개인연금 개시 나이', '세', spouseYear(p.spousePrivatePensionAge ?? 0))}
+              <PensionOverlapNote accounts={pensionOverlap(p.spousePrivatePension ?? 0, assets, 'spouse')} />
             </div>
           </div>
         </div>
         <p className="mt-3 text-xs text-muted">
-          배우자 소득은 가구 월소득에 포함된 것으로 봅니다. 배우자가 본인보다 먼저 은퇴하면 그때부터 저축이 줄고, 본인이 먼저 은퇴하면 배우자 은퇴 전까지 배우자 소득이 생활비를 보탭니다.
+          은퇴 전 세전 총급여는 원천징수영수증의 총급여(비과세 제외)를 오늘 기준으로 넣으세요. 저축·노후 계산에는 쓰지 않고, 종합소득세·건강보험료 추정에서 월세 등 다른 소득과 합쳐 세율 구간·근로소득세액공제·연말정산 기납부를 계산할 때만 씁니다(건보료는 직장에서 낸다고 봄). 배우자 소득은 가구 월소득에 포함된 것으로 봅니다. 배우자가 본인보다 먼저 은퇴하면 그때부터 저축이 줄고, 본인이 먼저 은퇴하면 배우자 은퇴 전까지 배우자 소득이 생활비를 보탭니다.
         </p>
       </Card>
       <IncomeList />
@@ -149,10 +168,19 @@ function ProfileForm() {
           {p.retireSeparate && (
             <>
               {n('retireReturn', '은퇴 후 기대수익률', '%', '예: 채권 위주 3.5~4.5', 0.1)}
-              {n('retireVolatility', '은퇴 후 변동성', '%', '예: 5~8', 0.1)}
+              {n('retireVolatility', '은퇴 후 변동성', '%', `수익률 ${p.retireReturn}%면 ${volRange(p.retireReturn).min}~${volRange(p.retireReturn).max}% 권장`, 0.1)}
             </>
           )}
         </div>
+        {p.retireSeparate && volCheck(p.retireReturn, p.retireVolatility) === 'low' && (
+          <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
+            <b>결과가 낙관적일 수 있어요.</b> 기대수익률 {p.retireReturn}%를 내려면 보통 변동성이 {volRange(p.retireReturn).min}% 이상입니다. 지금 {p.retireVolatility}%로는 하락장이 거의 없다고 보고 성공확률을 실제보다 높게 계산합니다. 변동성을 올리거나 기대수익률을 낮춰 주세요.
+          </p>
+        )}
+        {p.retireSeparate && volCheck(p.retireReturn, p.retireVolatility) === 'high' && (
+          <p className="mt-3 text-xs text-muted">변동성이 수익률 {p.retireReturn}%에 비해 큰 편({volRange(p.retireReturn).max}% 초과)이라 결과가 보수적으로 나옵니다.</p>
+        )}
+        <p className="mt-3 text-xs text-muted">권장 범위는 예금 금리(약 3%)를 넘는 초과수익 1%마다 변동성 2.5~5%로 잡은 대략적인 기준입니다(채권 위주 4% → 2.5~5%, 주식·채권 반반 6% → 7.5~15%, 주식 위주 8% → 12.5~25%).</p>
       </Card>
       <Card title="연금 세금" action={<span className="text-xs text-muted">노후 인출 스케줄의 세금 계산에 사용</span>}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -261,7 +289,7 @@ function IncomeTaxForm() {
           </div>
           <p className="mt-3 text-xs text-muted">
             {rentCount === 0 ? '임대소득은 ‘자산’ 탭의 임대용 부동산 월세나, ‘그 밖의 은퇴 후 소득’에서 종류를 ‘임대소득’으로 고른 항목만 계산에 들어갑니다. ' : ''}
-            ‘그 밖의 은퇴 후 소득’은 고른 종류대로 계산합니다(근로소득은 근로소득공제·근로소득세액공제·표준세액공제 13만을 하고 연말정산으로 낸 세금은 기납부로 빼서 5월에는 다른 소득과 합쳐 늘어난 만큼만, 사업소득은 항목별 필요경비율, 공무원·사학·군인연금은 국민연금과 합쳐 연금소득공제, 지역가입자 건보료는 근로·공적연금 × 반영률, 사업·임대 100%). 사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 {t.hiPropAuto ? '부동산 자산의 해마다 오르는 시세로 재산 과세표준을 구해 기본공제 1억을 빼고 2026년 재산등급 점수 × 211.5원으로 추정합니다(매각 연도부터 제외, 임대보증금은 빼지 않음, 자동차·전월세로 사는 집은 넣지 않음, 부부 한 세대)' + (t.hiLoanDeduct ? '. 주택 구입 대출 공제는 표시한 대출의 해마다 줄어드는 잔액(원리금 균등 상환) × 60%를 5,000만 한도로 빼고, 그 해 주택이 2채 이상이면 넣지 않습니다. 실제로는 공시가격 5억 이하 주택을 취득 전후 3개월 안에 빌린 대출이어야 하고 공단에 신청해야 합니다' : '') : '지금 고지서에서 역산해 고정합니다(부부 한 세대)'}. 첫해 부담은 이미 생활비에 들어 있다고 보고,
+            ‘부부 소득·연금’의 은퇴 전 세전 총급여는 각자 은퇴 전 해까지 근로소득으로 합쳐 세율 구간·근로소득세액공제·연말정산 기납부를 계산합니다(건보료는 직장에서 낸다고 봄). ‘그 밖의 은퇴 후 소득’은 고른 종류대로 계산합니다(근로소득은 근로소득공제·근로소득세액공제·표준세액공제 13만을 하고 연말정산으로 낸 세금은 기납부로 빼서 5월에는 다른 소득과 합쳐 늘어난 만큼만, 사업소득은 항목별 필요경비율, 공무원·사학·군인연금은 국민연금과 합쳐 연금소득공제, 지역가입자 건보료는 근로·공적연금 × 반영률, 사업·임대 100%). 사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 {t.hiPropAuto ? '부동산 자산의 해마다 오르는 시세로 재산 과세표준을 구해 기본공제 1억을 빼고 2026년 재산등급 점수 × 211.5원으로 추정합니다(매각 연도부터 제외, 임대보증금은 빼지 않음, 자동차·전월세로 사는 집은 넣지 않음, 부부 한 세대)' + (t.hiLoanDeduct ? '. 주택 구입 대출 공제는 표시한 대출의 해마다 줄어드는 잔액(원리금 균등 상환) × 60%를 5,000만 한도로 빼고, 그 해 주택이 2채 이상이면 넣지 않습니다. 실제로는 공시가격 5억 이하 주택을 취득 전후 3개월 안에 빌린 대출이어야 하고 공단에 신청해야 합니다' : '') : '지금 고지서에서 역산해 고정합니다(부부 한 세대)'}. 첫해 부담은 이미 생활비에 들어 있다고 보고,
             ‘인출에 더하기’를 고르면 국민연금 때문에 늘어나는 금액만 해마다 연금계좌에서 더 꺼냅니다.
           </p>
         </>
@@ -368,12 +396,12 @@ function IncomeList() {
       {list.length === 0 && (
         <div className="space-y-1 text-sm text-muted">
           <p>근로소득·사업소득·임대료처럼 <b>은퇴 후</b> 들어오는 돈이 있으면 추가하세요. 노후 진단과 노후 인출에 반영되고, 종류를 고르면 종합소득세·건강보험료에도 종류대로 들어갑니다.</p>
-          <p className="text-xs">은퇴 전 소득은 위 ‘세후 월소득(가구)’에 합쳐 넣고, 국민연금·개인·퇴직연금은 프로필의 전용 칸에 넣으세요. 여기에 또 넣으면 두 번 계산됩니다.</p>
+          <p className="text-xs">은퇴 전 소득(지금 받는 월세 포함)은 위 ‘세후 월소득(가구)’에 합쳐 넣고, 국민연금·개인·퇴직연금은 프로필의 전용 칸에 넣으세요. 여기에 또 넣으면 두 번 계산됩니다.</p>
         </div>
       )}
       {rentals.length > 0 && (
         <p className="mb-3 rounded-lg bg-sunken px-3 py-2 text-xs text-muted">
-          임대용 부동산 자산({rentals.map((a) => a.name).join(', ')})의 월세는 ‘자산’ 탭에서 넣은 금액으로 자동 반영됩니다. 같은 임대료를 여기에 또 넣으면 두 번 계산됩니다.
+          임대용 부동산 자산({rentals.map((a) => a.name).join(', ')})의 월세는 <b>은퇴 후({p.birthYear + p.retireAge}년~)</b>부터 ‘자산’ 탭에서 넣은 금액으로 자동 반영됩니다. <b>은퇴 전 월세</b>는 위 ‘세후 월소득(가구)’에 합쳐 넣으세요. 같은 임대료를 여기에 또 넣으면 두 번 계산됩니다.
         </p>
       )}
       <div className="space-y-3">
@@ -407,6 +435,16 @@ function IncomeList() {
               </div>
               <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${x.name}'을(를) 삭제할까요?`) && save({ incomes: list.filter((_, j) => j !== i) })}>삭제</button>
             </div>
+            {incomeKindOf(x) === 'rent' && (() => {
+              const dup = rentDuplicates(x, assets);
+              if (dup.length === 0) return null;
+              const why = dup.map((d) => `${d.asset.name || '임대 부동산'}(${d.by === 'name' ? '이름이 비슷함' : `월세 ${won(d.asset.rent ?? 0)}과 같음`})`).join(', ');
+              return (
+                <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
+                  <b>두 번 계산될 수 있어요.</b> 자산 탭 임대용 부동산 {why}의 월세는 은퇴 후 소득에 이미 자동으로 들어갑니다. 같은 월세라면 이 항목을 삭제하고, 다른 임대료라면 이름을 구분되게 바꿔 주세요.
+                </p>
+              );
+            })()}
           </div>
         ))}
       </div>
