@@ -66,6 +66,19 @@ describe('CSV 입출력', () => {
     expect(old.errors).toEqual([]);
     expect(old.rows[0].payEndAge ?? 0).toBe(0);
   });
+  it('보험 피보험자·자녀 출생연도 선택 열 왕복, 비어 있으면 본인', () => {
+    const ins = [
+      { name: '자녀 실손', death: 0, critical: 0, care: 0, monthlyPremium: 3, payEndAge: 20, insured: 'child', insuredBirthYear: 2015 },
+      { name: '배우자 종신', death: 10000, critical: 0, care: 0, monthlyPremium: 15, payEndAge: 60, insured: 'spouse' },
+      { name: '본인 암보험', death: 0, critical: 3000, care: 0, monthlyPremium: 5, payEndAge: 0 },
+    ];
+    const csv = toCSV('insurance', ins);
+    expect(csv.split(/\r?\n/)[0]).toContain('피보험자');
+    expect(csv).toContain('자녀');
+    const { rows, errors } = fromCSV('insurance', csv);
+    expect(errors).toEqual([]);
+    expect(rows).toEqual(ins);
+  });
   it('양식에 부동산 예시 행 포함', () => {
     const { rows, errors } = fromCSV('assets', templateCSV('assets'));
     expect(errors).toEqual([]);

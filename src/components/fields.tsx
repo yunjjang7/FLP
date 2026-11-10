@@ -23,6 +23,10 @@ export function NumberField({ value, onChange, step = 1, unit, min }: { value: n
           const n = Number(e.target.value);
           if (e.target.value !== '' && Number.isFinite(n)) onChange(n);
         }}
+        // 커서가 있을 때 마우스 휠로 값이 바뀌지 않게: 휠을 굴리면 포커스를 빼서 페이지만 스크롤
+        onWheel={(e) => {
+          if (document.activeElement === e.currentTarget) e.currentTarget.blur();
+        }}
         onBlur={() => {
           if (text === '' || !Number.isFinite(Number(text))) setText(String(value ?? 0));
         }}

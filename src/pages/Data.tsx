@@ -1,9 +1,9 @@
 import { useRef, useState } from 'react';
 import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
-import { TABLES, type FieldDef } from '../db/schema';
+import { INSURED_WHO, TABLES, type FieldDef } from '../db/schema';
 import { housePension, HP_LOAN, HP_PRICE_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
-import { ASSET_TYPES, RISK_PROFILES } from '../engine/portfolio';
+import { ASSET_TYPES, insuredBirthYear, isInsuranceCashflow, isPaying, payEndSelfAge, RISK_PROFILES } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, PageHeader } from '../components/ui';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
@@ -371,26 +371,103 @@ function loanNote(l: Liability, age: number, retireAge: number) {
   return `${end}세에 상환 종료(${src}) → 은퇴 후에도 ${end - 1}세까지 상환액을 자산에서 인출`;
 }
 
-/** 보험 카드 아래 안내: 납입 종료 나이와 그 이후 효과 */
-function insuranceNote(p: Insurance, age: number, retireAge: number) {
-  const end = p.payEndAge ?? 0;
+/** 보험 카드 아래 안내: 납입 종료 나이와 그 이후 효과(계산은 본인 나이로 바꿔서) */
+function insuranceNote(p: Insurance, profile: Profile, age: number, retireAge: number) {
+  if (!((p.payEndAge ?? 0) > 0) || !(p.monthlyPremium > 0)) return '';
+  if (p.insured === 'child' && !((p.insuredBirthYear ?? 0) > 0)) return '자녀 출생연도를 넣어야 자녀 나이로 납입 종료를 계산합니다(비우면 본인 나이로 계산).';
+  if (p.insured === 'spouse' && !(profile.spouseBirthYear > 0)) return '기본 정보에 배우자 출생연도가 없어 본인 나이로 계산합니다.';
+  const end = payEndSelfAge(p, profile);
   if (!(end > 0) || !(p.monthlyPremium > 0)) return '';
+  // 피보험자가 본인이 아니면 피보험자 나이와 본인 나이를 함께 보여 줌
+  const who = (p.insured ?? 'self') !== 'self' && insuredBirthYear(p, profile) !== profile.birthYear ? `${INSURED_WHO[p.insured!]} ${p.payEndAge}세 = 본인 ${end}세 · ` : '';
+  return who + insuranceEffect(p, end, age, retireAge);
+}
+
+function insuranceEffect(p: Insurance, end: number, age: number, retireAge: number) {
   if (end <= age) return `${end}세에 납입 완료 → 지출에 더하지 않음`;
-  return end < retireAge
-    ? `${end - 1}세까지 납입 → ${end}세부터 월 ${won(p.monthlyPremium)} 저축 증가로 계산`
-    : `${end - 1}세까지 납입(은퇴 전까지 지출에 계속 포함)`;
+  if (end < retireAge) return `${end - 1}세까지 납입 → ${end}세부터 월 ${won(p.monthlyPremium)} 저축 증가로 계산`;
+  if (end === retireAge) return `${end - 1}세까지 납입 → 은퇴와 함께 납입 완료`;
+  return `${end - 1}세까지 납입 → 은퇴 후 ${Math.max(retireAge, age)}~${end - 1}세 보험료 월 ${won(p.monthlyPremium)}(명목)은 자산에서 인출`;
+}
+
+/** 보험 탭 위 요약: 피보험자별 건수·월 보험료(지금 납입 중)·보장 합계 */
+function InsuranceSummary() {
+  const { insurance, profile, summary } = useFlp();
+  const groups = (Object.keys(INSURED_WHO) as (keyof typeof INSURED_WHO)[])
+    .map((k) => {
+      const list = insurance.filter((p) => (p.insured ?? 'self') === k);
+      const sumOf = (f: (p: Insurance) => number) => list.reduce((a, p) => a + (f(p) || 0), 0);
+      return {
+        key: k,
+        label: INSURED_WHO[k],
+        count: list.length,
+        premium: sumOf((p) => (isPaying(p, summary.age, profile) ? p.monthlyPremium : 0)),
+        death: sumOf((p) => p.death),
+        critical: sumOf((p) => p.critical),
+        care: sumOf((p) => p.care),
+      };
+    })
+    .filter((g) => g.count > 0);
+  if (!groups.length) return null;
+  const total = groups.reduce((a, g) => a + g.premium, 0);
+  return (
+    <Card>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[480px] text-sm">
+          <thead>
+            <tr className="border-b border-line text-xs text-muted">
+              <th className="py-1.5 text-left font-medium">피보험자</th>
+              <th className="py-1.5 text-right font-medium">건수</th>
+              <th className="py-1.5 text-right font-medium">월 보험료(납입 중)</th>
+              <th className="py-1.5 text-right font-medium">사망보장</th>
+              <th className="py-1.5 text-right font-medium">진단비</th>
+              <th className="py-1.5 text-right font-medium">간병보장</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map((g) => (
+              <tr key={g.key} className="border-b border-line/60 last:border-0">
+                <td className="py-1.5 font-medium">{g.label}</td>
+                <td className="py-1.5 text-right tabular-nums">{g.count}건</td>
+                <td className="py-1.5 text-right tabular-nums">{won(g.premium)}</td>
+                <td className="py-1.5 text-right tabular-nums">{won(g.death)}</td>
+                <td className="py-1.5 text-right tabular-nums">{won(g.critical)}</td>
+                <td className="py-1.5 text-right tabular-nums">{won(g.care)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        월 보험료는 지금 납입 중인 보험만 더한 금액입니다(합계 월 {won(total)}).
+        {summary.insuranceDup.length > 0 && total > 0 && ' 지출에 보험료 항목이 따로 있어 이 금액은 지출에 더하지 않았습니다.'}
+      </p>
+    </Card>
+  );
 }
 
 /** 지출 입력 안내: 보험료·대출 원리금·재무목표는 자동 반영되므로 지출에 다시 넣지 않음 */
 function CashflowGuide() {
-  const { summary: s } = useFlp();
+  const { summary: s, cashflows } = useFlp();
   const dup = s.insuranceDup.length > 0 && s.insuranceTotal > 0;
+  // 보험료로 보이는 지출 항목을 지우면 보험 탭 보험료가 자동으로 더해짐
+  const removeDup = async () => {
+    const items = cashflows.filter(isInsuranceCashflow);
+    const list = items.map((c) => `‘${c.name}’(월 ${won(c.monthly)})`).join(', ');
+    if (!confirm(`지출에서 ${list} 항목을 지울까요? 대신 보험 탭 보험료 월 ${won(s.insuranceTotal)}이 지출에 자동으로 더해집니다. 되돌리려면 다시 추가해야 합니다.`)) return;
+    await db.cashflows.bulkDelete(items.map((c) => c.id!).filter((id) => id !== undefined));
+  };
   return (
     <div className="space-y-2">
       {dup && (
         <div className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn">
           <b>보험료 중복 의심</b> · 지출의 {s.insuranceDup.map((n) => `‘${n}’`).join(', ')} 항목이 보험료로 보입니다. 그래서 보험 탭의 보험료 {s.insuranceCount}건(월 {won(s.insuranceTotal)})은 지출에 더하지 않았습니다.
           같은 보험이라면 지출에서 이 항목을 지우세요. 보험 탭 금액이 자동으로 더해집니다.
+          <div className="mt-2">
+            <button className="rounded-lg border border-warn px-3 py-1 text-xs font-semibold hover:bg-warn hover:text-white" onClick={removeDup}>
+              지출에서 이 항목 지우기
+            </button>
+          </div>
         </div>
       )}
       <Guide
@@ -444,6 +521,11 @@ function ListEditor({ table }: { table: ListTable }) {
             : f,
           )
           .concat({ key: 'reUse', label: '부동산 용도', kind: 'select', options: RE_USE, hint: RE_USE_HINT[(r.reUse as ReUse) ?? 'home'] })
+      : table === 'insurance'
+        ? // 상품명 다음에 피보험자, 자녀면 출생연도까지(납입 종료 나이를 그 사람 나이로 입력)
+          [fields[0], { key: 'insured', label: '피보험자', kind: 'select', options: INSURED_WHO } as FieldDef]
+            .concat(r.insured === 'child' ? [{ key: 'insuredBirthYear', label: '자녀 출생연도', short: '자녀 출생', kind: 'number', hint: '예: 2015' }] : [])
+            .concat(fields.slice(1))
       : fields;
 
   return (
@@ -465,11 +547,13 @@ function ListEditor({ table }: { table: ListTable }) {
           ]}
         />
       )}
+      {table === 'insurance' && <InsuranceSummary />}
       {table === 'insurance' && (
         <Guide
           items={[
             <><b>월 보험료</b>는 지출(저축 여력)에 자동으로 더합니다. 지출 탭에 보험료를 또 넣지 마세요.</>,
-            <><b>납입 종료 나이</b>(본인 나이)를 넣으면 그 나이부터 보험료가 지출에서 빠지고, 은퇴 전이면 그만큼 저축이 늘어나는 것으로 계산합니다. 0이면 계속 납입합니다.</>,
+            <><b>피보험자</b>(본인·배우자·자녀)를 고르고 <b>납입 종료 나이</b>를 그 사람 나이로 넣으세요. 배우자는 기본 정보의 배우자 출생연도, 자녀는 자녀 출생연도로 본인 나이로 바꿔 계산합니다.</>,
+            <>납입 종료 나이를 넣으면 그 나이부터 보험료가 지출에서 빠지고, 은퇴 전이면 그만큼 저축이 늘어나는 것으로 계산합니다. 은퇴 나이보다 늦으면 은퇴 후 그 전 해까지 보험료를 자산에서 꺼내 내는 것으로 계산합니다. 0이면 계속 납입하며, 은퇴 후 보험료는 은퇴 후 생활비에 들어 있다고 봅니다.</>,
           ]}
         />
       )}
@@ -525,7 +609,7 @@ function ListEditor({ table }: { table: ListTable }) {
             </div>
           )}
           <div className="mt-3 flex items-center justify-between gap-3">
-            <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}{table === 'insurance' && insuranceNote(r as unknown as Insurance, data.summary.age, data.profile.retireAge)}</span>
+            <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}{table === 'insurance' && insuranceNote(r as unknown as Insurance, data.profile, data.summary.age, data.profile.retireAge)}</span>
             <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
               삭제
             </button>

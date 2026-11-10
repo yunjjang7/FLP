@@ -4,11 +4,12 @@ import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
 import { debtAnnualAt, expenseAt, incomeValue, pensionAt, retireOutflowAt } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
+import { loanEndAge, loanSchedule } from '../engine/goals';
 import { hpEstate, housePension, RE_USE, reUseOf, usesHp, willSell } from '../engine/realestate';
 import { Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
-import type { Level } from '../types';
+import type { Level, Liability } from '../types';
 
 export default function Retire() {
   const d = useFlp();
@@ -25,6 +26,13 @@ export default function Retire() {
   const expenseNote = draw ? `연금 생활비 명목 고정(월 ${won((inp.fixedDraw ?? 0) / 12)})` : inp.expenseGrowth !== undefined ? `생활비 명목 ${inp.expenseGrowth}% 증가` : '물가 연동';
   const wLevel = withdrawLevel(start.rate, p.criteria.withdrawRateMax);
   const lateDebts = (inp.debts ?? []).filter((x) => x.endAge > inp.retireAge);
+  // 은퇴 뒤까지 내는 보험료: 보험별 첫해 금액(실질)과 마지막 납입 나이
+  const premiumRows = inp.goals.filter((g) => g.premium);
+  const premiums = [...new Set(premiumRows.map((g) => g.premium!))].map((name) => {
+    const rows = premiumRows.filter((g) => g.premium === name);
+    return { name, first: rows[0], last: rows[rows.length - 1].age, total: rows.reduce((a, g) => a + g.amount, 0) };
+  });
+  const goalRows = inp.goals.filter((g) => !g.loan && !g.premium);
   // 부동산: 보유 중엔 운용자산에서 빼고, 임대 월세는 소득, 매각 예정이면 매각 연도에 순매각대금 유입
   const nowYear = p.birthYear + d.summary.age;
   const re = d.assets.filter((a) => a.type === 'realestate');
@@ -91,6 +99,9 @@ export default function Retire() {
             {(inp.inflows ?? []).map((x) => (
               <Line key={`${x.name}-${x.age}`} label={x.kind === 'credit' ? `+ 세액공제 환급(${x.age}세)` : x.kind === 'sale' ? `+ ${x.name} 매각(${x.age}세, 비용·보증금·새 집 뺀 금액)` : `+ ${x.name} 수령(${x.age}세, 세후 일시금)`} value={won(x.amount)} muted />
             ))}
+            {premiums.map((x) => (
+              <Line key={`prem-${x.name}`} label={`+ ${x.name} 보험료 (${x.last}세까지, 명목 고정)`} value={won(x.first.amount / 12)} muted />
+            ))}
             {lateDebts.map((x) => (
               <Line key={x.name} label={`+ ${x.name} 상환 (${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '종료 없음'}${x.decline ? ', 해마다 줄어듦' : ''})`} value={won(debtAnnualAt(x, inp.retireAge) / 12)} muted />
             ))}
@@ -99,7 +110,7 @@ export default function Retire() {
             <Line label={`${retired ? '현재' : `은퇴 첫해(${start.age}세)`} 인출률`} value={`${pct(start.rate, 1)} · 상한 ${p.criteria.withdrawRateMax}%`} />
             <div className="mt-0.5 text-xs text-muted">연 {won(start.outflow)} ÷ {retired ? '현재 금융자산' : '평균수익 가정 은퇴 시점 금융자산'} {won(start.balance)} · 노후 인출 화면과 같은 기준</div>
           </div>
-          <p className="mt-3 text-xs text-muted">소득 개시 전 기간에는 그만큼 더 자산에서 인출합니다. 인상률을 넣은 소득은 물가보다 덜 오르면 실질 금액이 줄어듭니다.{lateDebts.length > 0 && ' 은퇴 후에도 남는 대출 상환액은 상환이 끝날 때까지 추가로 인출합니다.'}</p>
+          <p className="mt-3 text-xs text-muted">소득 개시 전 기간에는 그만큼 더 자산에서 인출합니다. 인상률을 넣은 소득은 물가보다 덜 오르면 실질 금액이 줄어듭니다.{lateDebts.length > 0 && ' 은퇴 후에도 남는 대출 상환액은 상환이 끝날 때까지 추가로 인출합니다.'}{premiums.length > 0 && ' 은퇴 뒤까지 내는 보험료도 납입이 끝날 때까지 추가로 인출합니다.'}</p>
         </Card>
         <Card title="자산 고갈 시점 분포">
           {sim.depletionHistogram.length === 0 ? (
@@ -124,6 +135,8 @@ export default function Retire() {
 
       <ExpenseCompare />
 
+      <LoanTable liabilities={d.liabilities} age={d.summary.age} retireAge={inp.retireAge} lifeExpectancy={p.lifeExpectancy} birthYear={p.birthYear} />
+
       <Card title="시뮬레이션 가정" className="mt-4">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm md:grid-cols-4">
           <Assume k="시작 금융자산" v={won(inp.startBalance)} />
@@ -140,7 +153,8 @@ export default function Retire() {
           <Assume k="물가상승률" v={`${inp.inflation}%`} />
           <Assume k="은퇴 후 생활비" v={expenseNote} />
           {(inp.inflows ?? []).some((x) => !x.kind) && <Assume k="수령 전 자산(시작 자산에서 제외)" v={(inp.inflows ?? []).filter((x) => !x.kind).map((x) => `${x.name} ${x.age}세`).join(' · ')} />}
-          <Assume k="목적자금·반복 지출" v={`${d.goals.filter((g) => g.category !== 'retirement').length}건 · 총 ${won(inp.goals.reduce((a, g) => a + g.amount, 0))}`} />
+          <Assume k="목적자금·반복 지출" v={`${d.goals.filter((g) => g.category !== 'retirement').length}건 · 총 ${won(goalRows.reduce((a, g) => a + g.amount, 0))}`} />
+          {premiums.length > 0 && <Assume k="은퇴 후 보험료" v={premiums.map((x) => `${x.name} ${x.first.age}~${x.last}세 · 총 ${won(x.total)}`).join(' · ')} />}
           <Assume k="부동산" v={reNote} />
           {hpNote && <Assume k="주택연금 상속 시 남는 주택 가치" v={hpNote} />}
         </dl>
@@ -165,5 +179,71 @@ function Assume({ k, v }: { k: string; v: string }) {
       <dt className="text-xs text-muted">{k}</dt>
       <dd className="font-medium">{v}</dd>
     </div>
+  );
+}
+
+const REPAY_LABEL = { amort: '원리금균등', equal: '원금균등', bullet: '만기일시' } as const;
+
+/** 대출별 연도별 상환액·연말 잔액(지금 금액 기준 추정). 원금균등은 해마다 줄고, 만기일시는 만기 나이에 원금을 한 번에 갚음 */
+function LoanTable({ liabilities, age, retireAge, lifeExpectancy, birthYear }: { liabilities: Liability[]; age: number; retireAge: number; lifeExpectancy: number; birthYear: number }) {
+  const loans = liabilities.filter((l) => l.balance > 0);
+  if (loans.length === 0) return null;
+  // 상환이 끝나는 마지막 해까지(만기일시는 만기 나이, 끝나지 않으면 기대수명까지)
+  const lastOf = (l: Liability) => {
+    const end = loanEndAge(l, age).age;
+    if (!Number.isFinite(end)) return lifeExpectancy;
+    return l.repay === 'bullet' ? end : end - 1;
+  };
+  const lastAge = Math.min(lifeExpectancy, Math.max(age, ...loans.map(lastOf)));
+  const rows = loans.map((l) => ({ l, end: lastOf(l), years: loanSchedule(l, age, lastAge) }));
+  const ages = rows[0].years.map((y) => y.age);
+  return (
+    <Card title="대출 연도별 상환" className="mt-4">
+      <div className="max-h-96 overflow-auto">
+        <table className="w-full min-w-max text-sm">
+          <thead className="sticky top-0 bg-surface">
+            <tr className="border-b border-line text-right text-xs text-muted">
+              <th className="py-2 text-left font-medium" rowSpan={2}>나이</th>
+              {rows.map(({ l }) => (
+                <th key={l.id ?? l.name} colSpan={2} className="px-2 pt-2 text-center font-semibold text-ink">
+                  {l.name}
+                  <div className="text-xs font-normal text-muted">{REPAY_LABEL[l.repay ?? 'amort']} · {l.rate}%</div>
+                </th>
+              ))}
+            </tr>
+            <tr className="border-b border-line text-right text-xs text-muted">
+              {rows.flatMap(({ l }) => [
+                <th key={`${l.id ?? l.name}-p`} className="px-2 py-1 font-medium">연 상환액</th>,
+                <th key={`${l.id ?? l.name}-b`} className="px-2 py-1 font-medium">연말 잔액</th>,
+              ])}
+            </tr>
+          </thead>
+          <tbody>
+            {ages.map((a, i) => (
+              <tr key={a} className={`border-b border-line text-right last:border-0 ${a === retireAge ? 'bg-sunken' : ''}`}>
+                <td className="py-1.5 text-left font-medium">
+                  {a}세<span className="ml-1 text-xs font-normal text-muted">{birthYear + a}{a === retireAge ? ' · 은퇴' : ''}</span>
+                </td>
+                {rows.flatMap(({ l, end, years }) => {
+                  const y = years[i];
+                  if (a > end) return [<td key={`${l.id ?? l.name}-p`} className="px-2 text-muted">—</td>, <td key={`${l.id ?? l.name}-b`} className="px-2 text-muted">—</td>];
+                  return [
+                    <td key={`${l.id ?? l.name}-p`} className="whitespace-nowrap px-2">
+                      {y.payment > 0 ? won(y.payment) : ''}
+                      {y.principal > 0 && <div className="text-xs font-semibold text-warn">원금 {won(y.principal)} 일시 상환</div>}
+                    </td>,
+                    <td key={`${l.id ?? l.name}-b`} className="px-2 text-muted">{won(y.balance)}</td>,
+                  ];
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <p className="mt-2 text-xs text-muted">
+        지금 월 상환액·잔액·금리로 추정한 금액(물가 반영 전)입니다. 원리금균등은 매년 같고, 원금균등은 이자가 줄어 해마다 줄며, 만기일시는 이자만 내다가 만기 나이에 원금을 한 번에 갚습니다(노란 글씨).
+        상환이 끝나지 않는 대출은 기대수명까지 보여 줍니다. 회색 행은 은퇴 나이입니다.
+      </p>
+    </Card>
   );
 }

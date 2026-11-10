@@ -43,6 +43,13 @@ const assetCsvExtra: FieldDef[] = [
   { key: 'hpAnnualFee', label: '주택연금 연보증료', kind: 'number', unit: '%', reOnly: true },
 ];
 
+/** 보험 피보험자: 납입 종료 나이를 누구 나이로 입력했는지 */
+export const INSURED_WHO: Record<string, string> = { self: '본인', spouse: '배우자', child: '자녀' };
+const insuranceCsvExtra: FieldDef[] = [
+  { key: 'insured', label: '피보험자', kind: 'select', options: INSURED_WHO },
+  { key: 'insuredBirthYear', label: '자녀 출생연도', kind: 'number' },
+];
+
 export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; example: Record<string, unknown>; csvExtra?: FieldDef[]; csvExamples?: Record<string, unknown>[] }> = {
   assets: {
     label: '자산',
@@ -107,8 +114,9 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
       { key: 'critical', label: '진단비', kind: 'number', unit: '만원' },
       { key: 'care', label: '간병보장', kind: 'number', unit: '만원' },
       { key: 'monthlyPremium', label: '월 보험료', kind: 'number', unit: '만원', hint: '지출(저축 여력)에 자동 반영' },
-      { key: 'payEndAge', label: '납입 종료 나이', short: '납입 종료', kind: 'number', unit: '세', hint: '0이면 계속 납입 · 본인 나이' },
+      { key: 'payEndAge', label: '납입 종료 나이', short: '납입 종료', kind: 'number', unit: '세', hint: '0이면 계속 납입 · 피보험자 나이' },
     ],
     example: { name: '암보험', death: 0, critical: 3000, care: 0, monthlyPremium: 5, payEndAge: 0 },
+    csvExtra: insuranceCsvExtra,
   },
 };

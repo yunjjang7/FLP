@@ -1,7 +1,7 @@
 import type { Asset, Goal, Liability, Profile } from '../types';
 import { contribSchedule, creditInflows, incomeTaxSchedule, npCostOutflows } from './incomeTax';
 import { fvLump, monthlyRate, payoffMonths, pmtForTarget, realRate } from './finance';
-import type { IncomeStream, PlanInput } from './montecarlo';
+import { debtAnnualAt, type Debt, type IncomeStream, type PlanInput } from './montecarlo';
 import { isFinancial, type Summary } from './portfolio';
 import { hpStreams, rentStreams, saleInflows } from './realestate';
 
@@ -146,6 +146,55 @@ export function bulletRepayments(liabilities: Liability[], currentAge: number, i
     .filter((l) => l.repay === 'bullet' && l.balance > 0 && (l.endAge ?? 0) > currentAge)
     .map((l) => ({ name: l.name, age: l.endAge!, nominal: l.balance, amount: l.balance / Math.pow(1 + inflation / 100, l.endAge! - currentAge) }));
 }
+/** 대출 → 시뮬레이션 상환 흐름(지금 월 상환액 기준, 원금균등은 해마다 줄어듦) */
+export function loanDebt(l: Liability, currentAge: number): Debt {
+  return {
+    name: l.name,
+    endAge: loanEndAge(l, currentAge).age,
+    annual: l.monthlyPayment * 12,
+    ...(l.repay === 'bullet' ? { bullet: true } : {}),
+    // 원금균등은 잔액이 줄어 상환액이 해마다 줄고, 줄어든 만큼 저축이 늘어남
+    ...(l.repay === 'equal' ? { decline: equalMonthlyDecline(l, currentAge) * 12, fromAge: currentAge } : {}),
+  };
+}
+
+export interface LoanYear {
+  age: number;
+  payment: number; // 그 해 상환액(원금 + 이자, 만기일시는 이자)
+  principal: number; // 만기일시: 그 해 한 번에 갚는 원금
+  balance: number; // 연말 잔액
+}
+
+/**
+ * 대출 연도별 상환표(지금 금액 기준 추정): 지금 나이 ~ lastAge.
+ * 상환액은 시뮬레이션과 같은 흐름(원금균등은 해마다 줄어듦), 잔액은 loanBalanceAt, 만기일시는 만기 나이에 원금.
+ */
+export function loanSchedule(l: Liability, currentAge: number, lastAge: number): LoanYear[] {
+  const d = loanDebt(l, currentAge);
+  const out: LoanYear[] = [];
+  for (let age = currentAge; age <= lastAge; age++) {
+    const principal = l.repay === 'bullet' && age === d.endAge ? l.balance : 0;
+    // 마지막 해는 남은 잔액 + 이자까지만 냄(만기일시는 이자만 내므로 그대로)
+    const start = loanBalanceAt(l, currentAge, age - currentAge);
+    const due = debtAnnualAt(d, age);
+    const payment = l.repay === 'bullet' || !Number.isFinite(d.endAge) || age < d.endAge - 1 ? due : Math.min(due, start * (1 + l.rate / 100));
+    out.push({ age, payment, principal, balance: loanBalanceAt(l, currentAge, age - currentAge + 1) });
+  }
+  return out;
+}
+
+/**
+ * 은퇴 후에도 내는 보험료: 납입 종료 나이가 은퇴 나이보다 늦으면 은퇴(이미 은퇴했으면 지금)부터 종료 전 해까지 매년 자산에서 뺌.
+ * 보험료는 명목 고정이라 실질 금액 = 연 보험료 ÷ (1 + 물가)^(햇수). 보험 탭 보험료를 지출에 자동으로 더한 경우만.
+ */
+export function retirePremiums(s: Summary, retireAge: number, inflation: number) {
+  const out: { age: number; amount: number; premium: string }[] = [];
+  if (!(s.insurance > 0)) return out;
+  for (const x of s.insuranceEnds.filter((e) => e.age > retireAge))
+    for (let age = Math.max(retireAge, s.age); age < x.age; age++) out.push({ age, amount: (x.monthly * 12) / Math.pow(1 + inflation / 100, age - s.age), premium: x.name });
+  return out;
+}
+
 /** 아직 수령 전인 묶인 자산(노란우산 등) */
 export const isLocked = (a: Asset, nowYear: number) => isFinancial(a) && (a.lockYear ?? 0) > nowYear;
 
@@ -201,14 +250,7 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
     // 월상환액은 현재 금액 그대로(실질 일정) 가정
     debts: liabilities
       .filter((l) => l.monthlyPayment > 0 || l.repay === 'bullet') // 만기일시는 이자가 0이어도 만기 점검용으로 남김
-      .map((l) => ({
-        name: l.name,
-        endAge: loanEndAge(l, s.age).age,
-        annual: l.monthlyPayment * 12,
-        ...(l.repay === 'bullet' ? { bullet: true } : {}),
-        // 원금균등은 잔액이 줄어 상환액이 해마다 줄고, 줄어든 만큼 저축이 늘어남
-        ...(l.repay === 'equal' ? { decline: equalMonthlyDecline(l, s.age) * 12, fromAge: s.age } : {}),
-      })),
+      .map((l) => loanDebt(l, s.age)),
     savingsChanges: savingsChanges(profile, s, o.retireAge ?? profile.retireAge),
     currentAge: s.age,
     retireAge: o.retireAge ?? profile.retireAge,
@@ -233,6 +275,8 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
       })
       // 만기일시 상환 대출은 만기 나이에 원금을 한 번에 갚음
       .concat(bulletRepayments(liabilities, s.age, inflation).map(({ name, age, amount }) => ({ age, amount, loan: name })))
+      // 은퇴 뒤까지 내는 보험료는 그 해 자산에서 뺌
+      .concat(retirePremiums(s, o.retireAge ?? profile.retireAge, inflation))
       .concat(npCost),
   };
 }

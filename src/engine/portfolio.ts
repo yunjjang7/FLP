@@ -72,8 +72,24 @@ export interface Summary {
 /** 지출 항목 중 보험료로 보이는 것(이름·분류에 '보험') */
 export const isInsuranceCashflow = (c: Cashflow) => /보험/.test(`${c.name} ${c.category}`);
 
-/** 해당 나이에 아직 보험료를 내는지(납입 종료 나이가 0이거나 그보다 어리면 납입 중) */
-export const isPaying = (p: Insurance, age: number) => !((p.payEndAge ?? 0) > 0 && age >= p.payEndAge!);
+/** 피보험자 출생연도: 배우자는 프로필의 배우자 출생연도, 자녀는 보험에 넣은 출생연도. 모르면 본인 */
+export function insuredBirthYear(p: Insurance, profile: Profile) {
+  if (p.insured === 'spouse' && profile.spouseBirthYear > 0) return profile.spouseBirthYear;
+  if (p.insured === 'child' && (p.insuredBirthYear ?? 0) > 0) return p.insuredBirthYear!;
+  return profile.birthYear;
+}
+
+/** 납입 종료 나이(피보험자 나이)를 본인 나이로 바꿈. 0이면 계속 납입 */
+export function payEndSelfAge(p: Insurance, profile: Profile) {
+  const end = p.payEndAge ?? 0;
+  return end > 0 ? end + insuredBirthYear(p, profile) - profile.birthYear : 0;
+}
+
+/** 본인 나이 age에 아직 보험료를 내는지(납입 종료 나이가 0이거나 아직 그 나이 전이면 납입 중) */
+export const isPaying = (p: Insurance, age: number, profile: Profile) => {
+  const end = payEndSelfAge(p, profile);
+  return !(end > 0 && age >= end);
+};
 
 export function summarize(profile: Profile, assets: Asset[], liabilities: Liability[], cashflows: Cashflow[], year = new Date().getFullYear(), policies: Insurance[] = []): Summary {
   const totalAssets = sum(assets.map((a) => a.amount));
@@ -88,9 +104,9 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
   // 보험 탭 보험료는 자동으로 지출에 더함. 지출에 보험료 항목이 이미 있으면 두 번 빠지지 않게 더하지 않음
   // 납입이 끝난 보험은 빼고, 앞으로 끝나는 보험은 그 나이부터 저축이 늘도록 따로 모음
   const age = year - profile.birthYear;
-  const paying = policies.filter((p) => isPaying(p, age) && p.monthlyPremium > 0);
+  const paying = policies.filter((p) => isPaying(p, age, profile) && p.monthlyPremium > 0);
   const insuranceTotal = sum(paying.map((p) => p.monthlyPremium));
-  const insuranceEnds = paying.filter((p) => (p.payEndAge ?? 0) > age).map((p) => ({ name: p.name, age: p.payEndAge!, monthly: p.monthlyPremium }));
+  const insuranceEnds = paying.filter((p) => payEndSelfAge(p, profile) > age).map((p) => ({ name: p.name, age: payEndSelfAge(p, profile), monthly: p.monthlyPremium }));
   const insuranceDup = cashflows.filter(isInsuranceCashflow).map((c) => c.name);
   const insurance = insuranceDup.length ? 0 : insuranceTotal;
   const expense = fixed + variable + debtPayment + insurance;

@@ -83,8 +83,12 @@ export interface Insurance {
   critical: number; // 암·중대질병 진단비
   care: number; // 간병·장기요양 보장
   monthlyPremium: number;
-  payEndAge?: number; // 납입 종료 나이(본인 나이, 0이면 계속 납입): 이 나이부터 보험료가 지출에서 빠짐
+  payEndAge?: number; // 납입 종료 나이(피보험자 나이, 0이면 계속 납입): 이 나이부터 보험료가 지출에서 빠짐
+  insured?: InsuredWho; // 피보험자(기본 본인): 납입 종료 나이를 누구 나이로 입력했는지
+  insuredBirthYear?: number; // 피보험자가 자녀일 때 자녀 출생연도
 }
+
+export type InsuredWho = 'self' | 'spouse' | 'child';
 
 export interface Snapshot {
   id?: number;

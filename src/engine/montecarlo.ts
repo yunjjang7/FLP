@@ -43,7 +43,7 @@ export interface PlanInput {
   retireExpenseAnnual: number; // 은퇴 후 연 생활비
   pensions: IncomeStream[]; // 국민연금·개인연금·임대료 등 은퇴 후 소득
   /** 해당 나이에 지출되는 목적자금·반복 지출(실질). loan 이 있으면 만기일시 상환 대출의 원금 상환(그 대출 이름) */
-  goals: { age: number; amount: number; loan?: string }[];
+  goals: { age: number; amount: number; loan?: string; premium?: string }[]; // loan: 만기일시 대출 원금, premium: 은퇴 후 보험료
   /** 은퇴 후 자산 운용(미지정 시 은퇴 전과 동일) */
   retireMeanReturn?: number;
   retireVolatility?: number;

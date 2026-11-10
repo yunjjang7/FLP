@@ -91,8 +91,15 @@ function WithdrawInner() {
   const others = planInput.pensions.filter((x) => x.name !== '국민연금' && x.name !== '개인·퇴직연금');
   // 만기일시 대출 원금 상환은 재무목표 지출과 나눠 보여 줌
   const loanRepays = planInput.goals.filter((g) => g.loan && g.age >= startAge);
-  const extras = planInput.goals.filter((g) => !g.loan && g.age >= startAge);
+  const premiums = planInput.goals.filter((g) => g.premium && g.age >= startAge);
+  const extras = planInput.goals.filter((g) => !g.loan && !g.premium && g.age >= startAge);
   const loanAt = (age: number) => loanRepays.filter((g) => g.age === age);
+  const premiumAt = (age: number) => premiums.filter((g) => g.age === age).reduce((a, g) => a + g.amount, 0);
+  // 보험별 은퇴 후 납입 기간
+  const premiumNames = [...new Set(premiums.map((g) => g.premium!))].map((name) => {
+    const ages = premiums.filter((g) => g.premium === name).map((g) => g.age);
+    return `${name} ${Math.min(...ages)}~${Math.max(...ages)}세`;
+  });
 
   return (
     <>
@@ -146,6 +153,9 @@ function WithdrawInner() {
         )}
         {loanRepays.length > 0 && (
           <p className="mt-1 text-xs text-warn">만기일시 대출 원금 상환 {loanRepays.map((g) => `${g.loan} ${g.age}세 ${won(g.amount)}`).join(', ')}을 그 해 인출액에 더했습니다(스케줄의 ‘대출 원금 상환’ 표시).</p>
+        )}
+        {premiums.length > 0 && (
+          <p className="mt-1 text-xs text-warn">은퇴 후에도 내는 보험료 {premiumNames.join(', ')}(합계 {won(premiums.reduce((a, g) => a + g.amount, 0))}, 명목 고정이라 실질로는 해마다 줄어듦)를 그 해 인출액에 더했습니다(스케줄의 ‘보험료’ 표시).</p>
         )}
         {lateDebts.length > 0 && (
           <p className="mt-1 text-xs text-warn">은퇴 후에도 남는 대출 상환 {lateDebts.map((x) => `${x.name} 월 ${won(debtAnnualAt(x, startAge) / 12)}${x.decline ? '부터 점점 줄어듦' : ''}(${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '상환 미종료'})`).join(', ')}을 인출액에 포함했습니다.</p>
@@ -280,6 +290,7 @@ function WithdrawInner() {
                     {loanAt(r.age).map((g) => (
                       <div key={g.loan} className="text-xs font-semibold text-warn">대출 원금 상환 {won(g.amount)}</div>
                     ))}
+                    {premiumAt(r.age) > 0 && <div className="text-xs text-muted">보험료 {won(premiumAt(r.age))}</div>}
                   </td>
                   <td>{won(r.endBalance)}</td>
                 </tr>
@@ -289,7 +300,7 @@ function WithdrawInner() {
           </table>
         </div>
         <p className="mt-2 text-xs text-muted">
-          빨간 행은 소득이 필요 지출(생활비 + 남은 대출 상환 + 목적자금·반복 지출 + 만기일시 대출 원금)의 90%에 못 미치는 해입니다. ‘대출 원금 상환’은 필요 지출 가운데 만기에 한 번에 갚는 대출 원금입니다.
+          빨간 행은 소득이 필요 지출(생활비 + 남은 대출 상환 + 목적자금·반복 지출 + 만기일시 대출 원금 + 은퇴 후 보험료)의 90%에 못 미치는 해입니다. ‘대출 원금 상환’은 필요 지출 가운데 만기에 한 번에 갚는 대출 원금, ‘보험료’는 은퇴 뒤까지 내는 보험료입니다.
           {tax && ` 노란 행은 과세재원 인출이 1인 연 ${PENSION_SLOT.toLocaleString()}만원(세전, 명목)을 넘어 초과분에 ${OVER_RATE}% 분리과세가 붙거나, 계좌별 연금수령한도를 넘어 연금외수령이 생기는(‘수령한도↑’) 해입니다. 한도 열은 그 해 과세재원 인출액(만원, 명목)입니다. 세금·세전 인출은 오늘 물가 기준입니다.`}
         </p>
       </Card>

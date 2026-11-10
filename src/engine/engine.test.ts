@@ -7,7 +7,7 @@ import { deterministicPath, expenseAt, incomeValue, publicPensionAt, retireOutfl
 import { contribSchedule, creditInflows, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
-import { summarize } from './portfolio';
+import { isPaying, payEndSelfAge, summarize } from './portfolio';
 import { prescriptions } from './prescribe';
 import { financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
@@ -90,6 +90,22 @@ describe('샘플 데이터 통합', () => {
     // 지출에 보험료 항목이 따로 있으면(보험 탭 금액을 더하지 않았으면) 저축 변화도 넣지 않음
     const dup = summarize(d.profile, d.assets, d.liabilities, [...d.cashflows, { name: '보험료', kind: 'fixed' as const, category: '보험', monthly: 45 }], 2026, ins);
     expect(buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, dup).savingsChanges).toBeUndefined();
+  });
+  it('피보험자별 납입 종료 나이: 배우자·자녀 나이를 본인 나이로 바꿔 계산', () => {
+    const [a, b, c] = d.insurance;
+    const p = { ...d.profile, spouseBirthYear: d.profile.birthYear + 2 }; // 배우자가 2살 어림
+    const spouse = { ...a, insured: 'spouse' as const, payEndAge: 50 }; // 배우자 50세 = 본인 52세
+    const child = { ...b, insured: 'child' as const, insuredBirthYear: d.profile.birthYear + 30, payEndAge: 20 }; // 자녀 20세 = 본인 50세
+    const noYear = { ...c, insured: 'child' as const, payEndAge: 48 }; // 자녀 출생연도가 없으면 본인 나이
+    expect(payEndSelfAge(spouse, p)).toBe(52);
+    expect(payEndSelfAge(child, p)).toBe(50);
+    expect(payEndSelfAge(noYear, p)).toBe(48);
+    expect(payEndSelfAge({ ...a, insured: 'spouse', payEndAge: 50 }, { ...p, spouseBirthYear: 0 })).toBe(50);
+    expect(payEndSelfAge({ ...a, payEndAge: 0, insured: 'child', insuredBirthYear: 2015 }, p)).toBe(0);
+    expect(isPaying(spouse, 51, p)).toBe(true);
+    expect(isPaying(spouse, 52, p)).toBe(false);
+    const s2 = summarize(p, d.assets, d.liabilities, d.cashflows, 2026, [spouse, child, noYear]);
+    expect(s2.insuranceEnds.map((e) => e.age)).toEqual([52, 50, 48]);
   });
   it('보험 탭 보험료를 지출에 더하고, 지출에 보험료 항목이 있으면 더하지 않음', () => {
     expect(s.insurance).toBe(45);

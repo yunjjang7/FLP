@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sampleData } from '../db/sample';
 import type { Asset } from '../types';
-import { buildPlanInput, bulletRepayments, equalMonthlyDecline, equalPrincipal, loanBalanceAt, loanEndAge, planGoals } from './goals';
+import { buildPlanInput, bulletRepayments, equalMonthlyDecline, loanSchedule, retirePremiums, equalPrincipal, loanBalanceAt, loanEndAge, planGoals } from './goals';
 import { hiLoanDeduct, hiPropBase, hiPropScore, incomeTaxSchedule } from './incomeTax';
 import { debtAnnualAt, debtPaymentAt, incomeValue, inflowAt, savingsAt } from './montecarlo';
 import { summarize } from './portfolio';
@@ -252,6 +252,51 @@ describe('원금균등 상환 대출', () => {
     const base = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
     expect(savingsAt(plan, s.age + 3) - savingsAt(base, s.age + 3)).toBeCloseTo(216, 9);
     expect(debtPaymentAt(plan, s.age + 3) - debtPaymentAt(base, s.age + 3)).toBeCloseTo(1920 - 216, 9);
+  });
+});
+
+describe('대출 연도별 상환표', () => {
+  const age = 45;
+  it('원금균등은 상환액이 해마다 줄고 잔액이 일정하게 줄어 끝남', () => {
+    const eq = { name: '원금균등', balance: 12000, rate: 6, monthlyPayment: 160, endAge: 0, repay: 'equal' as const };
+    const t = loanSchedule(eq, age, age + 11);
+    expect(t).toHaveLength(12);
+    expect(t[0]).toMatchObject({ age, payment: 1920, principal: 0 });
+    expect(t[1].payment).toBeCloseTo(1920 - 72, 9);
+    expect(t[0].balance).toBeCloseTo(12000 - 1200, 6);
+    expect(t[9].balance).toBe(0); // 55세에 상환 종료 → 54세 말 잔액 0
+    expect(t[10].payment).toBe(0);
+  });
+  it('만기일시는 이자만 내다가 만기 나이에 원금', () => {
+    const b = { name: '만기', balance: 5000, rate: 4, monthlyPayment: 17, endAge: age + 3, repay: 'bullet' as const };
+    const t = loanSchedule(b, age, age + 3);
+    expect(t.map((y) => y.payment)).toEqual([204, 204, 204, 0]);
+    expect(t.map((y) => y.principal)).toEqual([0, 0, 0, 5000]);
+    expect(t[1].balance).toBe(5000);
+    expect(t[2].balance).toBe(0);
+  });
+});
+
+describe('은퇴 후 보험료', () => {
+  const d = sampleData(Y); // 본인 45세, 은퇴 60세
+  const [a, ...rest] = d.insurance;
+  const ins = [{ ...a, payEndAge: 65 }, ...rest];
+  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, ins);
+  it('납입 종료 나이가 은퇴보다 늦으면 은퇴~종료 전 해까지 매년 자산에서 뺌(실질)', () => {
+    const p = retirePremiums(s, 60, d.profile.inflation);
+    expect(p.map((x) => x.age)).toEqual([60, 61, 62, 63, 64]);
+    expect(p[0].premium).toBe(a.name);
+    expect(p[0].amount).toBeCloseTo((a.monthlyPremium * 12) / Math.pow(1 + d.profile.inflation / 100, 15), 6);
+    const plan = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
+    expect(plan.goals.filter((g) => g.premium)).toEqual(p);
+    // 은퇴 전에 끝나거나(저축 증가로 처리) 0이면 은퇴 후 보험료 없음
+    expect(retirePremiums(summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, [{ ...a, payEndAge: 55 }, ...rest]), 60, 2.5)).toEqual([]);
+    expect(retirePremiums(summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance), 60, 2.5)).toEqual([]);
+  });
+  it('은퇴 나이를 바꾸면 기간이 따라 바뀌고, 지출에 보험료 항목이 따로 있으면 넣지 않음', () => {
+    expect(buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s, { retireAge: 63 }).goals.filter((g) => g.premium).map((g) => g.age)).toEqual([63, 64]);
+    const dup = summarize(d.profile, d.assets, d.liabilities, [...d.cashflows, { name: '보험료', kind: 'fixed' as const, category: '보험', monthly: 45 }], Y, ins);
+    expect(retirePremiums(dup, 60, 2.5)).toEqual([]);
   });
 });
 
