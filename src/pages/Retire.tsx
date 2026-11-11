@@ -94,6 +94,11 @@ export default function Retire() {
 
       <Card title="생애 자산 잔액 곡선" className="mt-4" action={<span className="text-xs text-muted">{inp.currentAge}세 → {p.lifeExpectancy}세</span>}>
         <LifeChart sim={sim} retireAge={inp.retireAge} />
+        {!retired && inp.annualSavings < 0 && (
+          <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
+            지금은 지출이 소득보다 많아 매달 {won(-inp.annualSavings / 12)}을 금융자산에서 꺼내 쓰는 것으로 계산했습니다. 은퇴({inp.retireAge}세) 전 {inp.retireAge - inp.currentAge}년 동안 약 {won((-inp.annualSavings * (inp.retireAge - inp.currentAge)))}(오늘 물가, 수익 제외)이 빠져 곡선이 은퇴 전부터 내려갑니다{(inp.savingsChanges ?? []).length > 0 || (inp.debts ?? []).some((x) => x.endAge < inp.retireAge) ? '(대출 상환 완료·보험 납입 완료로 줄어드는 부족분은 따로 반영)' : ''}. 이미 은퇴했다면 ‘데이터·설정 → 노후 계획’의 은퇴 희망 나이를 지금 나이 이하로 바꾸세요.
+          </p>
+        )}
       </Card>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
@@ -164,7 +169,7 @@ export default function Retire() {
       <Card title="시뮬레이션 가정" className="mt-4">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm md:grid-cols-4">
           <Assume k="시작 금융자산" v={won(inp.startBalance)} />
-          <Assume k="연 저축액(은퇴 전)" v={won(inp.annualSavings)} />
+          <Assume k="연 저축액(은퇴 전)" v={inp.annualSavings < 0 ? `연 ${won(-inp.annualSavings)} 부족 · 금융자산에서 인출` : won(inp.annualSavings)} />
           <Assume k={inp.retireMeanReturn === undefined ? '기대수익률 / 변동성' : '은퇴 전 수익률 / 변동성'} v={`${inp.meanReturn.toFixed(1)}% / ${inp.volatility.toFixed(1)}%`} />
           {inp.retireMeanReturn !== undefined && <Assume k="은퇴 후 수익률 / 변동성" v={`${inp.retireMeanReturn.toFixed(1)}% / ${(inp.retireVolatility ?? inp.volatility).toFixed(1)}%`} />}
           {(inp.debts ?? []).map((x) => (

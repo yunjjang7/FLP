@@ -9,7 +9,7 @@ import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, s
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
-import { prescriptions, savingsPrescription } from './prescribe';
+import { bucketMap, goalPrescription, prescriptions, savingsPrescription } from './prescribe';
 import { financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
 import type { PlanBase } from '../types';
@@ -126,6 +126,19 @@ describe('샘플 데이터 통합', () => {
     const rx = prescriptions(d.profile, short, inp, rate, planGoals(d.goals, d.assets, s.age), insuranceGap(d.profile, short, d.insurance, d.goals));
     const sv = rx.find((x) => x.area === '저축' && x.detail.includes('꺼내 쓰는'));
     expect(sv?.title).toMatch(/부족/);
+  });
+  it('목적자금 처방·바구니: 저축 여력이 마이너스면 부족분까지 합친 개선액을 보여 줌', () => {
+    const g = goalPrescription(-476, 120);
+    expect(g.level).toBe('danger');
+    expect(g.title).toBe('목적자금 월 적립 120만원 필요 — 지금은 매달 476만원 부족');
+    expect(g.detail).toContain('월 596만원(부족분 476만원 + 적립 120만원)');
+    expect(goalPrescription(100, 120).detail).toContain('월 20만원 많습니다');
+    expect(goalPrescription(200, 120).level).toBe('good');
+    // 바구니 권장 배치는 잔액 기준이라 부족분과 무관하게 마이너스가 나오지 않음
+    const short = { ...s, savings: -476 };
+    const b = bucketMap(d.profile, short, planGoals(d.goals, d.assets, s.age));
+    expect(b.every((x) => x.target >= 0)).toBe(true);
+    expect(b.map((x) => x.target)).toEqual(bucketMap(d.profile, s, planGoals(d.goals, d.assets, s.age)).map((x) => x.target));
   });
   it('민감도 표 생활비 행: 300만원 근처부터 지금 +100까지 50만원 간격', () => {
     expect(sensitivityExpenses(750)).toEqual([300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850]);

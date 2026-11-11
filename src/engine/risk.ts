@@ -49,7 +49,7 @@ export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdr
     {
       key: 'savings', label: '저축률', value: `${s.savingsRate.toFixed(1)}%`,
       score: scale(s.savingsRate, c.savingsRate / 2, c.savingsRate), level: 'good',
-      detail: `월 저축여력 ${Math.round(s.savings).toLocaleString()}만원. 목표 저축률 ${c.savingsRate}%.`,
+      detail: s.savings < 0 ? `매달 ${Math.round(-s.savings).toLocaleString()}만원이 모자라 금융자산에서 꺼내 씁니다. 목표 저축률 ${c.savingsRate}%.` : `월 저축여력 ${Math.round(s.savings).toLocaleString()}만원. 목표 저축률 ${c.savingsRate}%.`,
     },
     {
       key: 'debt', label: '부채비율', value: `${debtRatio.toFixed(1)}%`,

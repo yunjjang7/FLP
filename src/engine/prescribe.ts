@@ -87,6 +87,21 @@ export function savingsPrescription(s: Pick<Summary, 'income' | 'savings'>, need
   };
 }
 
+/** 목적자금 월 적립 처방. 저축 여력이 마이너스면 부족분까지 메워야 적립이 시작된다는 점을 함께 보여 줌 */
+export function goalPrescription(savings: number, goalMonthly: number): Prescription {
+  const title = `목적자금 월 적립 ${fmt(goalMonthly)}원 필요`;
+  if (savings < 0) {
+    return {
+      area: '목표', level: 'danger',
+      title: `${title} — 지금은 매달 ${fmt(-savings)}원 부족`,
+      detail: `지금은 지출이 소득보다 많아 적립할 돈이 없고, 오히려 매달 ${fmt(-savings)}원을 금융자산에서 꺼내 씁니다. 목표대로 적립하려면 소득을 늘리거나 지출을 줄여 부족분까지 합친 월 ${fmt(goalMonthly - savings)}원(부족분 ${fmt(-savings)}원 + 적립 ${fmt(goalMonthly)}원)을 마련해야 합니다. 어렵다면 목표 시기·금액 조정을 검토하세요.`,
+    };
+  }
+  return goalMonthly > savings
+    ? { area: '목표', level: 'danger', title, detail: `현재 저축여력(${fmt(savings)}원)보다 월 ${fmt(goalMonthly - savings)}원 많습니다. 목표 시기·금액 조정 또는 지출 절감이 필요합니다.` }
+    : { area: '목표', level: 'good', title, detail: `현재 저축여력 ${fmt(savings)}원 안에서 감당 가능합니다.` };
+}
+
 export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap): Prescription[] {
   const c = profile.criteria;
   const out: Prescription[] = [];
@@ -208,17 +223,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
   }
 
   const goalMonthly = goalPlans.reduce((a, g) => a + g.monthlyNeeded, 0);
-  if (goalMonthly > 0) {
-    out.push({
-      area: '목표', level: goalMonthly > Math.max(0, s.savings) ? 'danger' : 'good',
-      title: `목적자금 월 적립 ${fmt(goalMonthly)}원 필요`,
-      detail: goalMonthly > Math.max(0, s.savings)
-        ? s.savings < 0
-          ? `지금은 저축 여력이 없고 매달 ${fmt(-s.savings)}원이 모자랍니다. 목표 시기·금액 조정 또는 지출 절감이 필요합니다.`
-          : `현재 저축여력(${fmt(s.savings)}원)보다 많습니다. 목표 시기·금액 조정 또는 지출 절감이 필요합니다.`
-        : `현재 저축여력 ${fmt(s.savings)}원 안에서 감당 가능합니다.`,
-    });
-  }
+  if (goalMonthly > 0) out.push(goalPrescription(s.savings, goalMonthly));
 
   for (const l of ins.lines) {
     if (l.level !== 'good') out.push({ area: '보장', level: l.level, title: `${ins.people.length > 1 ? `${l.person} ` : ''}${l.label} ${fmt(l.gap)}원 부족`, detail: `필요 ${fmt(l.need)}원 대비 현재 ${fmt(l.current)}원(${l.ratio.toFixed(0)}%).` });

@@ -133,6 +133,13 @@ function PrescribeInner() {
               );
             })}
           </div>
+          {s.savings < 0 && (
+            <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
+              매달 {won(-s.savings)}이 모자라 금융자산에서 빠져나갑니다.{' '}
+              {buckets[0].current > 0 ? `비상금 바구니(${won(buckets[0].current)})에서 먼저 꺼내 쓰면 약 ${(buckets[0].current / -s.savings).toFixed(1)}개월이면 바닥나고, 그 뒤로는 목적자금·노후자금이 줄어듭니다.` : '비상금 바구니가 비어 있어 목적자금·노후자금이 바로 줄어듭니다.'}{' '}
+              권장 배치는 지금 잔액 기준이라 부족분이 이어지면 다시 맞춰야 합니다.
+            </p>
+          )}
           <p className="mt-3 text-xs text-muted">비상금 = 월 지출 × {p.criteria.emergencyMonths}개월, 목적자금 = 10년 이내 목표의 현재 필요액, 노후자금 = 나머지 금융자산(부동산은 제외 · 매각 계획은 노후 진단에 반영).</p>
         </Card>
 
