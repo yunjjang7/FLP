@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { NPS_DEFER, NPS_EARLY, npsFactor } from '../engine/finance';
 import { deterministicPath, simulate, type PlanInput } from '../engine/montecarlo';
 import { won } from '../lib/format';
@@ -31,11 +31,26 @@ export function Sensitivity() {
   const expenses = sensitivityExpenses(p.retireMonthlyExpense);
   const returns = [-2, -1, 0, 1, 2, 3].map((x) => +(baseReturn + x).toFixed(1)).filter((x) => x > 0);
 
-  const grid = useMemo(
-    () => expenses.map((e) => returns.map((r) => evaluate({ ...inp, retireExpenseAnnual: e * 12, retireMeanReturn: r, retireVolatility: vol }, metric))),
+  // 칸이 많아(최대 12×6, 시뮬레이션 72번) 한 번에 계산하면 화면이 멈추므로 한 줄씩 나눠 계산하고 다 될 때까지 빈칸으로 둠
+  const [grid, setGrid] = useState<(number | null)[][]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const rows: (number | null)[][] = [];
+    setGrid([]);
+    const step = (i: number) => {
+      if (cancelled || i >= expenses.length) return;
+      rows.push(returns.map((r) => evaluate({ ...inp, retireExpenseAnnual: expenses[i] * 12, retireMeanReturn: r, retireVolatility: vol }, metric)));
+      setGrid([...rows]);
+      timer = setTimeout(() => step(i + 1), 0);
+    };
+    timer = setTimeout(() => step(0), 0);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [inp, metric, p.retireMonthlyExpense, baseReturn, vol],
-  );
+  }, [inp, metric, p.retireMonthlyExpense, baseReturn, vol]);
 
   // 국민연금 개시 나이: 아직 받기 전일 때만 바꿔 볼 수 있음
   const nps = inp.pensions.find((x) => x.name === '국민연금');
@@ -89,8 +104,9 @@ export function Sensitivity() {
               {expenses.map((e, i) => (
                 <tr key={e}>
                   <td className={`py-1 pr-2 ${e === p.retireMonthlyExpense ? 'font-semibold' : 'text-muted'}`}>{won(e)}</td>
-                  {grid[i].map((v, j) => {
-                    const c = cell(v);
+                  {returns.map((_, j) => {
+                    if (!grid[i]) return <td key={j} className="p-0.5"><div className="rounded-md bg-sunken py-1.5 text-center text-muted">…</div></td>;
+                    const c = cell(grid[i][j]);
                     const current = e === p.retireMonthlyExpense && returns[j] === baseReturn;
                     return (
                       <td key={j} className="p-0.5">

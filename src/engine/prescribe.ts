@@ -55,6 +55,37 @@ export function bulletPrescriptions(input: PlanInput): Prescription[] {
   return out;
 }
 
+/** 부호 있는 금액: −476만 / 120만 */
+const signed = (v: number) => (v < 0 ? `−${fmt(-v)}` : fmt(v));
+
+/** 필요 월 저축 처방. 지금 저축 여력이 마이너스(매달 자산에서 꺼내 씀)여도 자연스럽게 읽히도록 */
+export function savingsPrescription(s: Pick<Summary, 'income' | 'savings'>, need: number, target: number, freed = 0): Prescription {
+  const note = freed > 0 ? ` (은퇴 전 대출 상환이 끝나며 늘어나는 저축 월 ${fmt(freed / 12)}원은 별도로 반영됨)` : '';
+  const gap = need - s.savings;
+  const rate = (v: number) => (s.income > 0 ? (v / s.income) * 100 : null);
+  const from = rate(s.savings);
+  const to = rate(need);
+  const level: Level = s.savings < 0 || (from !== null && to !== null && to - from > 15) ? 'danger' : 'caution';
+  if (s.savings < 0) {
+    return {
+      area: '저축', level,
+      title: need >= 0
+        ? `월 ${fmt(-s.savings)}원 부족 → 월 ${fmt(need)}원 저축으로 전환 필요`
+        : `월 부족분 ${fmt(-s.savings)}원 → ${fmt(-need)}원 이하로 줄여야 함`,
+      detail:
+        `지금은 지출이 소득보다 많아 매달 ${fmt(-s.savings)}원을 금융자산에서 꺼내 쓰는 것으로 계산했습니다. ` +
+        `노후 성공확률 ${target}%를 맞추려면 월 저축 여력을 ${signed(s.savings)}원 → ${signed(need)}원으로 월 ${fmt(gap)}원 개선해야 합니다(소득을 늘리거나 지출을 줄이기).` +
+        (from !== null && to !== null ? ` 저축률로는 ${from.toFixed(0)}% → ${to.toFixed(0)}%입니다.` : '') +
+        note,
+    };
+  }
+  return {
+    area: '저축', level,
+    title: from !== null && to !== null ? `저축률 ${from.toFixed(0)}% → ${to.toFixed(0)}%로 상향 필요` : `월 저축 ${fmt(s.savings)}원 → ${fmt(need)}원 상향 필요`,
+    detail: `노후 성공확률 ${target}% 달성을 위해 월 저축을 ${fmt(s.savings)}원 → ${fmt(need)}원으로 늘려야 합니다.${note}`,
+  };
+}
+
 export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap): Prescription[] {
   const c = profile.criteria;
   const out: Prescription[] = [];
@@ -66,15 +97,10 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
 
   if (successRate < c.successTarget) {
     // 이미 은퇴했으면 저축·은퇴 나이 처방은 의미가 없어 건너뜀
-    const needSavings = retired ? null : solveFor(input, (i, v) => ({ ...i, annualSavings: v * 12 }), 0, Math.max(500, s.income * 2), c.successTarget);
-    if (needSavings !== null && s.income > 0) {
-      const from = (Math.max(0, s.savings) / s.income) * 100;
-      const to = (needSavings / s.income) * 100;
-      out.push({
-        area: '저축', level: to - from > 15 ? 'danger' : 'caution',
-        title: `저축률 ${from.toFixed(0)}% → ${to.toFixed(0)}%로 상향 필요`,
-        detail: `노후 성공확률 ${c.successTarget}% 달성을 위해 월 저축을 ${fmt(Math.max(0, s.savings))}원 → ${fmt(needSavings)}원으로 늘려야 합니다.${freed > 0 ? ` (은퇴 전 대출 상환이 끝나며 늘어나는 저축 월 ${fmt(freed / 12)}원은 별도로 반영됨)` : ""}`,
-      });
+    // 저축 여력이 마이너스(매달 자산에서 꺼내 씀)면 하한도 그만큼 내려, '부족분을 얼마로 줄이면 되는지'까지 찾음
+    const needSavings = retired ? null : solveFor(input, (i, v) => ({ ...i, annualSavings: v * 12 }), Math.min(0, s.savings), Math.max(500, s.income * 2, -s.savings * 2), c.successTarget);
+    if (needSavings !== null && needSavings > s.savings + 1) {
+      out.push(savingsPrescription(s, needSavings, c.successTarget, freed));
     }
     // 이미 은퇴했으면 은퇴 후 수익률을, 아니면 은퇴 전 수익률을 역산
     const curReturn = retired ? (input.retireMeanReturn ?? input.meanReturn) : input.meanReturn;
@@ -186,7 +212,9 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
       area: '목표', level: goalMonthly > Math.max(0, s.savings) ? 'danger' : 'good',
       title: `목적자금 월 적립 ${fmt(goalMonthly)}원 필요`,
       detail: goalMonthly > Math.max(0, s.savings)
-        ? `현재 저축여력(${fmt(Math.max(0, s.savings))}원)보다 많습니다. 목표 시기·금액 조정 또는 지출 절감이 필요합니다.`
+        ? s.savings < 0
+          ? `지금은 저축 여력이 없고 매달 ${fmt(-s.savings)}원이 모자랍니다. 목표 시기·금액 조정 또는 지출 절감이 필요합니다.`
+          : `현재 저축여력(${fmt(s.savings)}원)보다 많습니다. 목표 시기·금액 조정 또는 지출 절감이 필요합니다.`
         : `현재 저축여력 ${fmt(s.savings)}원 안에서 감당 가능합니다.`,
     });
   }

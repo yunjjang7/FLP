@@ -9,7 +9,7 @@ import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, s
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
-import { prescriptions } from './prescribe';
+import { prescriptions, savingsPrescription } from './prescribe';
 import { financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
 import type { PlanBase } from '../types';
@@ -104,6 +104,26 @@ describe('샘플 데이터 통합', () => {
     // 1년 뒤 자산 차이 = 저축 차이(부족분 + 원래 저축)
     expect(det(ok)[1] - det(inp)[1]).toBeCloseTo((s.savings + 476) * 12, 6);
     expect(simulate(inp, 300, 7).successRate).toBeLessThan(simulate(ok, 300, 7).successRate);
+  });
+  it('처방: 저축 여력이 마이너스면 ‘부족분 → 필요액’으로 보여 주고 필요액도 마이너스까지 찾음', () => {
+    const a = savingsPrescription({ income: 500, savings: -476 }, 120, 80);
+    expect(a.title).toBe('월 476만원 부족 → 월 120만원 저축으로 전환 필요');
+    expect(a.detail).toContain('−476만원 → 120만원으로 월 596만원 개선');
+    expect(a.level).toBe('danger');
+    const b = savingsPrescription({ income: 500, savings: -476 }, -200, 80);
+    expect(b.title).toBe('월 부족분 476만원 → 200만원 이하로 줄여야 함');
+    expect(b.detail).toContain('−476만원 → −200만원');
+    // 소득이 0이어도 처방이 나옴(저축률 문구만 빠짐)
+    expect(savingsPrescription({ income: 0, savings: -300 }, 50, 80).detail).not.toContain('저축률');
+    expect(savingsPrescription({ income: 500, savings: 100 }, 200, 80).title).toBe('저축률 20% → 40%로 상향 필요');
+    // 통합: 부족분이 있는 계획에서도 저축 처방이 나오고, 지금보다 나은 값을 요구
+    const short = { ...s, savings: -476 };
+    const inp = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, short);
+    const rate = simulate(inp, 1000, 7).successRate;
+    expect(rate).toBeLessThan(d.profile.criteria.successTarget);
+    const rx = prescriptions(d.profile, short, inp, rate, planGoals(d.goals, d.assets, s.age), insuranceGap(d.profile, short, d.insurance, d.goals));
+    const sv = rx.find((x) => x.area === '저축' && x.detail.includes('꺼내 쓰는'));
+    expect(sv?.title).toMatch(/부족/);
   });
   it('민감도 표 생활비 행: 300만원 근처부터 지금 +100까지 50만원 간격', () => {
     expect(sensitivityExpenses(750)).toEqual([300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850]);
