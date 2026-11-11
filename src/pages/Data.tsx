@@ -735,7 +735,7 @@ function ListEditor({ table }: { table: ListTable }) {
               <div key={f.key} id={`field-${table}-${r.id}-${f.key}`} className={f.key === 'name' ? 'col-span-2 md:col-span-1' : ''}>
                 <Labeled label={f.unit ? `${f.short ?? f.label}(${f.unit})` : f.short ?? f.label} hint={f.hint}>
                   {f.kind === 'number' ? (
-                    <NumberField value={Number(r[f.key] ?? 0)} step={f.step} onChange={(v) => update(r, f.key, v)} />
+                    <NumberField plain={/Year$/.test(f.key)} value={Number(r[f.key] ?? 0)} step={f.step} onChange={(v) => update(r, f.key, v)} />
                   ) : f.kind === 'select' ? (
                     <SelectField value={String(r[f.key] ?? Object.keys(f.options!)[0])} options={f.options!} onChange={(v) => update(r, f.key, v)} />
                   ) : (
@@ -829,7 +829,7 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
           </Labeled>
         )}
         <Labeled label="수령 연도" hint={locked ? `${nowYear}~${a.lockYear! - 1}년 인출 불가` : '0이면 지금 인출 가능'}>
-          <NumberField value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
+          <NumberField plain value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
         </Labeled>
         <Labeled label="수령 시 세율(%)" hint="일시금 실효세율">
           <NumberField value={a.lockTax ?? 0} step={0.1} onChange={(v) => onChange('lockTax', v)} />
@@ -846,10 +846,10 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
               <div className="py-2 text-sm font-semibold">{won(Math.max(0, a.amount - (a.taxFree ?? 0) - (a.retirePart ?? 0)))}</div>
             </Labeled>
             <Labeled label="연금수령 1년차 연도" hint={yearNoHint(a, p, nowYear)}>
-              <NumberField value={a.pensionYear1 ?? 0} onChange={(v) => onChange('pensionYear1', v)} />
+              <NumberField plain value={a.pensionYear1 ?? 0} onChange={(v) => onChange('pensionYear1', v)} />
             </Labeled>
             <Labeled label="인출 시작 연도" hint={(a.drawStartYear ?? 0) > nowYear ? `${a.drawStartYear! - 1}년까지 꺼내지 않음 · 추가 납입 계좌` : '0이면 바로(55세부터)'}>
-              <NumberField value={a.drawStartYear ?? 0} onChange={(v) => onChange('drawStartYear', v)} />
+              <NumberField plain value={a.drawStartYear ?? 0} onChange={(v) => onChange('drawStartYear', v)} />
             </Labeled>
             <Labeled label="꺼내는 순서" hint="같은 명의 안에서 작을수록 먼저 · 0이면 입력 순서">
               <NumberField value={a.drawOrder ?? 0} min={0} onChange={(v) => onChange('drawOrder', v)} />
@@ -946,7 +946,7 @@ function RealEstateExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asse
         {!hp && (
           <>
             <Labeled label="매각 연도" hint={sale ? `${nowYear}~${sale.year - 1}년 보유 · 본인 ${sale.age}세에 매각` : pastSale ? '지난 연도는 무시(계속 보유)' : '0이면 팔지 않음'}>
-              <NumberField value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
+              <NumberField plain value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
             </Labeled>
             <Labeled label="매각 비용률(%)" hint={use === 'home' ? '1주택 비과세면 중개보수 등 0.5 안팎' : '양도세+중개보수 실효율'}>
               <NumberField value={a.lockTax ?? 0} step={0.1} onChange={(v) => onChange('lockTax', v)} />

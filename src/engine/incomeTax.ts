@@ -104,11 +104,23 @@ export const HI_DEP_BIZ_FREE = 500;
  * (주택임대는 등록과 상관없이 탈락, 상가 임대는 사업자등록이 필수).
  */
 export function hiDependent(biz: number, income: number, propBase: number | null, noReg?: { rent: number }) {
-  if (noReg ? noReg.rent > 0 || biz - noReg.rent > HI_DEP_BIZ_FREE : biz > 0) return false;
-  if (income > HI_DEP_INCOME) return false;
-  if (propBase === null) return true;
-  if (propBase > HI_DEP_PROP_MAX) return false;
-  return propBase <= HI_DEP_PROP || income <= HI_DEP_PROP_INCOME;
+  return hiDependentWhy(biz, income, propBase, noReg) === null;
+}
+
+const man = (v: number) => `${Math.round(v).toLocaleString('ko-KR')}만원`;
+const eok = (v: number) => `${(v / 10000).toFixed(1)}억`;
+
+/** 피부양자에서 빠지는 이유(채우면 null). privIncl: 합산소득에 들어간 사적연금(0이면 표시 안 함) */
+export function hiDependentWhy(biz: number, income: number, propBase: number | null, noReg?: { rent: number }, privIncl = 0): string | null {
+  if (noReg) {
+    if (noReg.rent > 0) return '임대소득 있음';
+    if (biz - noReg.rent > HI_DEP_BIZ_FREE) return `임대 외 사업소득 ${man(biz - noReg.rent)}(500만원 초과)`;
+  } else if (biz > 0) return '임대·사업소득 있음(사업자등록 있다고 봄)';
+  if (income > HI_DEP_INCOME) return `합산소득 ${man(income)}${privIncl > 0.5 ? `(사적연금 ${man(privIncl)} 포함)` : ''}이 2,000만원 초과`;
+  if (propBase === null) return null;
+  if (propBase > HI_DEP_PROP_MAX) return `본인 명의 재산 과표 ${eok(propBase)}이 9억 초과`;
+  if (propBase <= HI_DEP_PROP || income <= HI_DEP_PROP_INCOME) return null;
+  return `재산 과표 ${eok(propBase)}이 5.4억 초과이고 합산소득 ${man(income)}이 1,000만원 초과`;
 }
 
 /** 한 사람 명의(공동명의는 지분) 부동산이 그 해 세대 부동산 시세에서 차지하는 비율(0~1). 부동산이 없으면 null */
@@ -215,6 +227,7 @@ export interface IncomeTaxRow {
   other: number; // ‘그 밖의 은퇴 후 소득’ 중 근로·사업·공적연금·사적연금 수입(연, 세전, 명목)
   salary: number; // 은퇴 전 세전 총급여(부부, 연, 명목): 근로소득으로 종소세에 합산, 건보료(보수월액분)는 직장에서 내므로 제외
   hiMode: HiMode; // 그 해 건보료 자격(급여가 있는 사람은 직장가입자)
+  hiDepWhy?: string; // workRegion 일 때 피부양자에서 빠진 이유(예: "배우자: 합산소득 2,400만원(사적연금 2,400만원 포함)이 2,000만원 초과")
   hiWork: number; // 월 소득월액 보험료(직장가입자의 급여 외 소득 2,000만 초과분, 장기요양 포함)
   incomeSelf: number; // 본인 종합소득금액(임대·사업소득 + 근로소득금액 + 연금소득금액)
   incomeSpouse: number;
@@ -369,10 +382,12 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
       const loanDed = gross > 0 ? (loanFull * own) / gross : 0;
       const propBase = own - loanDed;
       const noReg = s.hiDepNoReg ? { rent: prevBy.rent[k] } : undefined;
-      if (hiDependent(prevBy.biz[k], prevBy.biz[k] + penOf(k) + prevBy.wage[k], s.hiPropAuto ? propBase : null, noReg)) return { mode: 'workDep' as HiMode, work, Q: 0, R: 0, Z: 0, share: 1, propBase: 0, loanDed: 0 };
+      const why = hiDependentWhy(prevBy.biz[k], prevBy.biz[k] + penOf(k) + prevBy.wage[k], s.hiPropAuto ? propBase : null, noReg, prevPrivBy[k]);
+      if (why === null) return { mode: 'workDep' as HiMode, work, Q: 0, R: 0, Z: 0, share: 1, propBase: 0, loanDed: 0 };
+      const depWhy = `${k === 0 ? '본인' : '배우자'}: ${why}`;
       // 고지서 역산 방식: 세대 재산분을 그 사람 명의 부동산 비율만큼만(부동산 자산이 없으면 나눌 수 없어 전체)
       const share = s.hiPropAuto ? 1 : (hiPropShare(assets, nowYear, year, k as 0 | 1) ?? 1);
-      return { mode: 'workRegion' as HiMode, work, Q: (extra(k) / 12) * rate, R: s.hiPropAuto ? hiPropMonthly(propBase) : propNow * share, Z: 0, share, propBase, loanDed }; // 사적연금은 extra 에 들어 있어 Z 는 0
+      return { mode: 'workRegion' as HiMode, work, Q: (extra(k) / 12) * rate, R: s.hiPropAuto ? hiPropMonthly(propBase) : propNow * share, Z: 0, share, propBase, loanDed, depWhy }; // 사적연금은 extra 에 들어 있어 Z 는 0
     };
     if (n === 0) {
       // 재산분 역산: 지금 고지서에서 소득분을 뺀 나머지. 한 명 직장 + 한 명 지역이면 소득월액 보험료와 지역 소득분을 뺌.
@@ -406,7 +421,7 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
       npHi = hiYear - (no.work + no.Q + no.R + no.Z) * ltc * 12;
     }
     const npPart = due - taxNoNP + npHi;
-    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, salary, hiMode: hi.mode, hiWork: hi.work * ltc, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, baseYear: base.year, npPart, rentPart: increase - npPart });
+    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, salary, hiMode: hi.mode, hiDepWhy: 'depWhy' in hi ? hi.depWhy : undefined, hiWork: hi.work * ltc, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, baseYear: base.year, npPart, rentPart: increase - npPart });
     prevP = P;
     prevNP = np;
     prevSlot = slotOf(year)[0] + slotOf(year)[1];

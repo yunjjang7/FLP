@@ -181,8 +181,8 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
         <Labeled label="12월 말 금융자산" hint={acct ? '아래 계좌별 평가액의 합계' : '평가액 합계(명목) · 수령 전 노란우산 등 제외'}>
           {acct ? <div className="py-1.5 text-lg font-bold">{won(acctSum)}</div> : <NumberField value={balance} unit="만원" onChange={setBalance} />}
           {list.length > 0 && (
-            <button type="button" className="mt-1 block text-[11px] text-brand hover:underline" onClick={() => (acct ? (setBalance(Math.round(acctSum * 10) / 10), setAcct(null)) : openAcct(year))}>
-              {acct ? '합계만 입력' : '계좌별로 입력(다음 해 계획에 이어받기)'}
+            <button type="button" className="mt-1 block max-w-full truncate whitespace-nowrap text-[11px] text-brand hover:underline" title={acct ? undefined : '계좌별 평가액을 넣고 다음 해 계획에 이어받기'} onClick={() => (acct ? (setBalance(Math.round(acctSum * 10) / 10), setAcct(null)) : openAcct(year))}>
+              {acct ? '합계만 입력' : '계좌별 입력(이어받기)'}
             </button>
           )}
         </Labeled>
@@ -338,7 +338,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
         <li>매년 1월에 전년도 12월 말 평가액과 그 해 실제 인출액을 넣으세요. 판정은 1년에 한 번만 하고, 연중 등락에는 반응하지 않습니다.</li>
         <li>기준선과 계획 인출액은 물가를 반영한 그 해 금액입니다. 첫해는 기준선을 고정한 달부터 12월까지만 셉니다.</li>
         <li>실제 수익률(추정) = 12월 말 자산 ÷ (연초 자산 − 그 해 인출) − 1입니다. 연초 자산은 직전 해 결산값(첫해는 기준선을 고정할 때의 자산)을 쓰고, 직전 해 결산이 없으면 계산하지 않습니다. 연중에 넣은 돈(추가 납입·일시금 수령)이 있으면 그만큼 높게 나옵니다.</li>
-        <li>‘계좌별로 입력’으로 저장하면 ‘이어받기’로 자산 탭 금액을 12월 말 평가액으로 한 번에 바꾸고, 연금계좌는 그 해 실제 인출(월별 기록)만큼 과세제외 금액·퇴직금 재원도 줄일 수 있습니다. 잘못 적용했으면 ‘이어받기 되돌리기’로 적용 직전 값으로 돌아갑니다. 합계만 넣었다면 ‘데이터·설정 → 자산’ 금액을 직접 12월 말 평가액으로 고쳐야 노후 진단·인출 계획이 그 값에서 다시 계산됩니다.</li>
+        <li>‘계좌별 입력(이어받기)’으로 저장하면 ‘이어받기’로 자산 탭 금액을 12월 말 평가액으로 한 번에 바꾸고, 연금계좌는 그 해 실제 인출(월별 기록)만큼 과세제외 금액·퇴직금 재원도 줄일 수 있습니다. 잘못 적용했으면 ‘이어받기 되돌리기’로 적용 직전 값으로 돌아갑니다. 합계만 넣었다면 ‘데이터·설정 → 자산’ 금액을 직접 12월 말 평가액으로 고쳐야 노후 진단·인출 계획이 그 값에서 다시 계산됩니다.</li>
       </ul>
     </Card>
   );

@@ -5,14 +5,14 @@ import { drawYears, monthKey, OTHER_ACCOUNT, reviewDraws } from '../engine/drawL
 import type { TaxResult } from '../engine/tax';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
-import { SelectField } from './fields';
+import { groupDigits, SelectField } from './fields';
 import { Badge, Button, Card } from './ui';
 
 const round1 = (v: number) => Math.round(v * 10) / 10;
 
 /** 표 안 금액 입력칸: 빈칸이면 계획 금액을 흐리게 보여 주고, 포커스를 벗어날 때 저장 */
 function Cell({ value, plan, label, onSave }: { value: number; plan: number; label: string; onSave: (v: number) => void }) {
-  const show = (v: number) => (v > 0 ? String(round1(v)) : '');
+  const show = (v: number) => (v > 0 ? groupDigits(String(round1(v))) : '');
   const [text, setText] = useState(show(value));
   useEffect(() => setText(show(value)), [value]);
   return (
@@ -21,7 +21,7 @@ function Cell({ value, plan, label, onSave }: { value: number; plan: number; lab
       inputMode="decimal"
       aria-label={label}
       value={text}
-      placeholder={plan > 0.05 ? String(round1(plan)) : ''}
+      placeholder={plan > 0.05 ? groupDigits(String(round1(plan))) : ''}
       onChange={(e) => setText(e.target.value)}
       onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
       onBlur={() => {

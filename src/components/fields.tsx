@@ -1,34 +1,85 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 const base = 'w-full rounded-lg border border-line bg-surface px-2.5 py-1.5 text-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-soft';
 
-/** 숫자 입력: 입력 중에는 문자열을 유지하고, 유효한 숫자일 때만 반영 */
-export function NumberField({ value, onChange, step = 1, unit, min }: { value: number; onChange: (v: number) => void; step?: number; unit?: string; min?: number }) {
-  const [text, setText] = useState(String(value ?? 0));
+/** 입력 문자열에 천 단위 콤마: "-1234567.5" → "-1,234,567.5" (입력 중인 "12." 같은 꼴은 그대로 둠) */
+export function groupDigits(raw: string): string {
+  const m = /^(-?)(\d*)(\.\d*)?$/.exec(raw);
+  if (!m) return raw;
+  return m[1] + m[2].replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (m[3] ?? '');
+}
+
+/**
+ * 숫자 입력: 입력 중에는 문자열을 유지하고, 유효한 숫자일 때만 반영.
+ * 천 단위 콤마를 붙여 보여 준다(연도처럼 콤마가 어색한 칸은 plain, 단위가 ‘년’이면 자동).
+ */
+export function NumberField({ value, onChange, step = 1, unit, min, plain }: { value: number; onChange: (v: number) => void; step?: number; unit?: string; min?: number; plain?: boolean }) {
+  const noGroup = plain ?? unit === '년';
+  const fmt = (raw: string) => (noGroup ? raw : groupDigits(raw));
+  const [text, setText] = useState(fmt(String(value ?? 0)));
+  const ref = useRef<HTMLInputElement>(null);
+  /** 콤마를 다시 붙인 뒤 커서를 ‘앞쪽 숫자 개수’가 같은 자리로 되돌림 */
+  const caret = useRef<number | null>(null);
+  // 글자가 그대로여도(콤마 지우기·허용 안 되는 글자) 커서를 되돌리도록 다시 그리게 함
+  const [tick, setTick] = useState(0);
+  const num = (t: string) => Number(t.replace(/,/g, ''));
   useEffect(() => {
-    if (Number(text) !== value) setText(String(value ?? 0));
+    if (num(text) !== value) setText(fmt(String(value ?? 0)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (caret.current == null || !el || document.activeElement !== el) return;
+    let seen = 0;
+    let pos = 0;
+    while (pos < text.length && seen < caret.current) {
+      if (text[pos] !== ',') seen++;
+      pos++;
+    }
+    el.setSelectionRange(pos, pos);
+    caret.current = null;
+  }, [text, tick]);
   return (
     <div className="relative">
       <input
+        ref={ref}
         className={`${base} ${unit ? 'pr-10' : ''} text-right`}
-        type="number"
+        type="text"
         inputMode="decimal"
-        step={step}
-        min={min}
+        data-step={step}
+        data-min={min}
         value={text}
         onChange={(e) => {
-          setText(e.target.value);
-          const n = Number(e.target.value);
-          if (e.target.value !== '' && Number.isFinite(n)) onChange(n);
+          const el = e.target;
+          const strip = (t: string) => t.replace(/[,\s]/g, '');
+          let raw = strip(el.value);
+          let before = strip(el.value.slice(0, el.selectionStart ?? el.value.length)).length;
+          // 숫자·소수점·앞의 마이너스만 받음(다른 글자는 무시하고 커서만 제자리)
+          if (!/^-?\d*\.?\d*$/.test(raw)) {
+            caret.current = Math.max(0, before - 1);
+            setTick((t) => t + 1);
+            return;
+          }
+          // 콤마만 지운 경우: 백스페이스면 콤마 앞 숫자, Delete 면 콤마 뒤 숫자를 지움
+          if (raw === strip(text) && el.value.length < text.length) {
+            const fwd = (e.nativeEvent as InputEvent).inputType === 'deleteContentForward';
+            const at = fwd ? before : before - 1;
+            if (at >= 0 && at < raw.length) {
+              raw = raw.slice(0, at) + raw.slice(at + 1);
+              if (!fwd) before = at;
+            }
+          }
+          caret.current = before;
+          setText(fmt(raw));
+          setTick((t) => t + 1);
+          const n = Number(raw);
+          if (raw !== '' && raw !== '-' && raw !== '.' && Number.isFinite(n)) onChange(n);
         }}
-        // 커서가 있을 때 마우스 휠로 값이 바뀌지 않게: 휠을 굴리면 포커스를 빼서 페이지만 스크롤
-        onWheel={(e) => {
-          if (document.activeElement === e.currentTarget) e.currentTarget.blur();
-        }}
+        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
         onBlur={() => {
-          if (text === '' || !Number.isFinite(Number(text))) setText(String(value ?? 0));
+          const n = num(text);
+          if (text === '' || text === '-' || text === '.' || !Number.isFinite(n)) setText(fmt(String(value ?? 0)));
+          else setText(fmt(String(n)));
         }}
       />
       {unit && <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-xs text-muted">{unit}</span>}

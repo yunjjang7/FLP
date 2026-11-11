@@ -1011,10 +1011,36 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(wr.hiMode).toBe('workRegion');
     expect(wr.hiWork).toBeCloseTo((400 / 12) * k, 6);
     expect(wr.hiMonth).toBeCloseTo(((400 + 1200) / 12) * k, 6);
+    // 피부양자에서 빠진 이유가 행에 남음
+    expect(wr.hiDepWhy).toBe('배우자: 합산소득 2,400만원(사적연금 2,400만원 포함)이 2,000만원 초과');
+    expect(ws.hiDepWhy).toBeUndefined();
+    expect(hers.hiDepWhy).toBe('배우자: 임대·사업소득 있음(사업자등록 있다고 봄)');
     // 배우자 사적연금 1,800만(2,000만 이하)은 피부양자 유지
     const dep = incomeTaxSchedule(priv, 2026, new Map([[2026, [0, 1800] as [number, number]]]), [shop('self')])[1];
     expect(dep.hiMode).toBe('workDep');
     expect(dep.hiMonth).toBeCloseTo((400 / 12) * k, 6);
+  });
+
+  it('부부 모두 직장일 때 사적연금은 각자 급여 외 소득에만 더해져 2,000만 초과분을 따로 계산', () => {
+    const d = retiree();
+    // 본인(58세)·배우자(53세) 모두 60세 넘어서까지 급여, 소득은 사적연금뿐
+    const p = { ...d.profile, retireAge: 62, spouseBirthYear: 1973, spouseRetireAge: 60, spouseWageGross: 4000, inflation: 0, nationalPension: 0, spousePension: 0, incomes: [], wageGross: 5000, incomeTax: { ...DEFAULT_TAX_ON, hiNow: 0, hiPropAuto: true, hiPrivate: true } };
+    const k = 0.0719 * 1.1314;
+    // 본인 5,000만 → 50% 2,500만(500만 초과), 배우자 3,000만 → 1,500만(문턱 아래)
+    const both = incomeTaxSchedule(p, 2026, new Map<number, [number, number]>([[2026, [5000, 3000]]]), [])[1];
+    expect(both.hiMode).toBe('work');
+    expect(both.hiWork).toBeCloseTo((500 / 12) * k, 6);
+    expect(both.hiMonth).toBeCloseTo((500 / 12) * k, 6);
+    expect(both.hiDepWhy).toBeUndefined();
+    // 같은 합계 8,000만이라도 반씩(4,000·4,000)이면 둘 다 2,000만 → 0 (부부 합산이 아님)
+    const half = incomeTaxSchedule(p, 2026, new Map<number, [number, number]>([[2026, [4000, 4000]]]), [])[1];
+    expect(half.hiMonth).toBeCloseTo(0, 9);
+    // 둘 다 문턱 초과: 각자 초과분 합계
+    const over = incomeTaxSchedule(p, 2026, new Map<number, [number, number]>([[2026, [6000, 5000]]]), [])[1];
+    expect(over.hiMonth).toBeCloseTo(((1000 + 500) / 12) * k, 6);
+    // 끄면 사적연금이 빠져 0
+    const off = incomeTaxSchedule({ ...p, incomeTax: { ...p.incomeTax, hiPrivate: false } }, 2026, new Map<number, [number, number]>([[2026, [6000, 5000]]]), [])[1];
+    expect(off.hiMonth).toBeCloseTo(0, 9);
   });
 
   it('은퇴 전 급여가 있으면 ‘첫해 대비’를 은퇴 전·후로 나눠 은퇴 후는 급여가 끝난 해 기준', () => {
