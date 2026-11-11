@@ -75,7 +75,24 @@ export function NumberField({ value, onChange, step = 1, unit, min, plain }: { v
           const n = Number(raw);
           if (raw !== '' && raw !== '-' && raw !== '.' && Number.isFinite(n)) onChange(n);
         }}
-        onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') return e.currentTarget.blur();
+          if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+          // ↑/↓: 칸의 step 만큼 증감(type="number" 시절 동작 복원), 커서는 ‘뒤쪽 숫자 개수’ 기준으로 유지
+          e.preventDefault();
+          const el = e.currentTarget;
+          const cur = num(text);
+          const n0 = text === '' || !Number.isFinite(cur) ? (value ?? 0) : cur;
+          const dec = (x: number) => (String(x).split('.')[1] ?? '').length;
+          let n = Number((n0 + (e.key === 'ArrowUp' ? step : -step)).toFixed(Math.max(dec(step), dec(n0))));
+          if (min != null && n < min) n = min;
+          const raw = String(n);
+          const after = el.value.slice(el.selectionEnd ?? el.value.length).replace(/,/g, '').length;
+          caret.current = Math.max(0, raw.length - after);
+          setText(fmt(raw));
+          setTick((t) => t + 1);
+          if (n !== value) onChange(n);
+        }}
         onBlur={() => {
           const n = num(text);
           if (text === '' || text === '-' || text === '.' || !Number.isFinite(n)) setText(fmt(String(value ?? 0)));

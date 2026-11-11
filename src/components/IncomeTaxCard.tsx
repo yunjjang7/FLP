@@ -125,7 +125,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
                 <td className="whitespace-nowrap">
                   {r.hiMode !== 'region' && <span className="mr-1 rounded bg-sunken px-1 text-[10px] text-muted" title={r.hiDepWhy ? `피부양자 탈락 — ${r.hiDepWhy}` : undefined}>{HI_MODE[r.hiMode]}</span>}
                   {won(r.hiMonth)}
-                  {r.hiDepWhy && <div className="ml-auto max-w-[15rem] whitespace-normal text-[10px] leading-snug text-warn">피부양 탈락 · {r.hiDepWhy}</div>}
+                  {r.hiDepWhy && <div className="ml-auto max-w-[9rem] whitespace-normal sm:max-w-[15rem] text-[10px] leading-snug text-warn">피부양 탈락 · {r.hiDepWhy}</div>}
                 </td>
                 <td className="font-semibold">{won(r.total)}</td>
                 <td className={r.increase > 0.5 ? 'text-warn' : ''}>{won(r.increase)}</td>
