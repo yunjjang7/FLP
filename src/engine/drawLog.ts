@@ -1,4 +1,6 @@
-import type { Draw } from '../types';
+import type { AccountBalance, Asset, Draw } from '../types';
+import { isLocked } from './goals';
+import { isFinancial } from './portfolio';
 import { pensionLimit, type TaxRow } from './tax';
 
 /** 연금계좌 밖 자산(ISA·일반계좌 등)에서 꺼낸 돈을 적는 계좌 이름 */
@@ -110,6 +112,54 @@ export function reviewDraws(row: TaxRow | undefined, year: number, records: Draw
 
 /** 그 해 실제 인출 합계(세전): 연말결산 ‘그 해 실제 인출’에 넣을 값 */
 export const drawTotal = (records: Draw[], year: number) => records.filter((r) => r.month.startsWith(`${year}-`) && r.amount > 0).reduce((s, r) => s + r.amount, 0);
+
+/** 연말결산 때 계좌별로 평가액을 넣는 자산: 그 해 12월 말에 꺼내 쓸 수 있는 금융자산(부동산·수령 전 노란우산 등 제외) */
+export const yearEndAccounts = (assets: Asset[], year: number) => assets.filter((a) => isFinancial(a) && !isLocked(a, year));
+
+export interface CarryRow {
+  id?: number;
+  name: string;
+  pension: boolean;
+  amount: number; // 지금 자산 탭 금액
+  next: number; // 12월 말 평가액 → 다음 해 시작 금액
+  drawn: number; // 그 해 월별 기록의 실제 인출 합계(연금계좌만, 세전)
+  free: number; // 지금 과세제외 금액
+  freeNext: number;
+  retire: number; // 지금 퇴직금 재원
+  retireNext: number;
+  changed: boolean;
+}
+
+/**
+ * 연말결산 이어받기: 계좌별 12월 말 평가액을 자산 탭 금액(= 다음 해 계획의 시작 자산)으로 넘김.
+ * funds 가 참이면 연금계좌는 그 해 실제 인출(월별 기록)만큼 법정 인출 순서대로 과세제외 금액 → 퇴직금 재원을 줄임
+ * (운용수익은 과세재원이라 두 재원은 인출로만 줄어듦). 재원은 새 잔액을 넘지 않게 맞춤.
+ * 계좌는 자산 id 로, 없으면 이름으로 찾고, 지워진 계좌는 건너뜀.
+ */
+export function carryOverPlan(assets: Asset[], balances: AccountBalance[], records: Draw[], year: number, funds = true): CarryRow[] {
+  const out: CarryRow[] = [];
+  for (const b of balances) {
+    const a = assets.find((x) => b.id !== undefined && x.id === b.id) ?? assets.find((x) => x.name === b.name);
+    if (!a || !isFinancial(a)) continue;
+    const pension = a.type === 'pension';
+    const next = Math.max(0, b.balance);
+    const free = Math.max(0, a.taxFree ?? 0);
+    const retire = Math.max(0, a.retirePart ?? 0);
+    const drawn = pension ? records.filter((r) => r.account === a.name && r.month.startsWith(`${year}-`) && r.amount > 0).reduce((s, r) => s + r.amount, 0) : 0;
+    const useFunds = pension && funds;
+    const freeNext = pension ? Math.min(next, useFunds ? Math.max(0, free - drawn) : free) : free;
+    const retireNext = pension ? Math.min(Math.max(0, next - freeNext), useFunds ? Math.max(0, retire - Math.max(0, drawn - free)) : retire) : retire;
+    const round = (v: number) => Math.round(v * 10) / 10;
+    const row = { id: a.id, name: a.name, pension, amount: a.amount, next, drawn, free, freeNext: round(freeNext), retire, retireNext: round(retireNext) };
+    out.push({ ...row, changed: Math.abs(row.amount - next) > 0.05 || Math.abs(free - row.freeNext) > 0.05 || Math.abs(retire - row.retireNext) > 0.05 });
+  }
+  return out;
+}
+
+/** 이어받기로 바뀌는 자산 필드(바뀐 것만) */
+export function carryPatch(r: CarryRow): Partial<Asset> {
+  return { amount: r.next, ...(r.pension && (r.free > 0 || r.freeNext > 0) ? { taxFree: r.freeNext } : {}), ...(r.pension && (r.retire > 0 || r.retireNext > 0) ? { retirePart: r.retireNext } : {}) };
+}
 
 /** 기록이 있는 연도(오름차순) */
 export const drawYears = (records: Draw[]) => [...new Set(records.map((r) => Number(r.month.slice(0, 4))).filter((y) => Number.isFinite(y) && y > 0))].sort((a, b) => a - b);

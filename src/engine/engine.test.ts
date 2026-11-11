@@ -5,7 +5,7 @@ import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, re
 import { buildPlanInput, expenseSteps, goalItemsFrom, goalPlanSkips, loanEndAge, onceGoalPlans, lockedInflow, planGoals, retireIncomes } from './goals';
 import { CRITICAL_BASE, insuranceGap } from './insurance';
 import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, GUARD_CUTS, GUARD_DROPS, guardrailSim, incomeValue, weakestGuardrail, outflowAt, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, yearShareAt, type PlanInput } from './montecarlo';
-import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
+import { contribSchedule, creditInflows, hiDependent, hiPropMonthly, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
@@ -16,7 +16,7 @@ import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescripti
 import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
 import type { Draw, Goal, PlanBase } from '../types';
-import { drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws } from './drawLog';
+import { carryOverPlan, carryPatch, drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws, yearEndAccounts } from './drawLog';
 import { balanceAt, checkAges, lumpGrid, lumpTotal, returnScenarios, runScenario, scaleLiving, scaleLumps } from './scenarios';
 import { sensitivityExpenses } from '../components/Sensitivity';
 
@@ -911,8 +911,17 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(y(none, 2026).due).toBeCloseTo(232.65, 6);
     // 배우자는 급여만이라 연말정산으로 끝(5월 추가 0)
     expect(y(rows, 2026).taxSpouse).toBeCloseTo(wageWithholding(3000, 150), 6);
-    // 건보료는 직장에서 낸다고 보고 지역 건보료 소득에 넣지 않음
-    expect(rows.map((r) => r.hiMonth)).toEqual(none.map((r) => r.hiMonth));
+    // 급여가 있는 해는 직장가입자: 재산분 없이 급여 외 소득(월세 2,400만) 중 2,000만 초과분에만 소득월액 보험료
+    const extra = (400 / 12) * 0.0719 * 1.1314;
+    expect(rows.filter((r) => r.year <= 2029).map((r) => r.hiMode)).toEqual(['work', 'work', 'work', 'workDep']); // 2029: 배우자 은퇴 → 소득·사업 없어 피부양자
+    for (const n of [2026, 2028, 2029]) {
+      expect(y(rows, n).hiMonth).toBeCloseTo(extra, 6);
+      expect(y(rows, n).hiWork).toBeCloseTo(extra, 6);
+      expect(y(rows, n).hiProp).toBe(0);
+      expect(y(rows, n).hiMonth).toBeLessThan(y(none, n).hiMonth);
+    }
+    // 둘 다 은퇴한 해부터는 급여를 안 넣었을 때와 같은 지역 건보료
+    expect(rows.filter((r) => r.year >= 2030).map((r) => [r.hiMode, r.hiMonth])).toEqual(none.filter((r) => r.year >= 2030).map((r) => ['region', r.hiMonth]));
     // 배우자 56세(2029)부터, 본인 62세(2030)부터 급여 0 → 은퇴 후엔 급여 없을 때와 같은 세금
     expect(y(rows, 2028).salary).toBeCloseTo(6000, 6);
     expect(y(rows, 2029).salary).toBeCloseTo(3000, 6);
@@ -921,6 +930,49 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     // 물가만큼 명목 증가
     const inf = incomeTaxSchedule({ ...base, inflation: 2.5, wageGross: 3000 }, 2026, undefined, [shop]);
     expect(y(inf, 2028).salary).toBeCloseTo(3000 * 1.025 ** 2, 6);
+  });
+
+  it('부부 중 한 명만 일할 때: 다른 한 명은 피부양자 요건을 채우면 0, 못 채우면 혼자 지역가입자', () => {
+    // 피부양자 요건: 사업소득 없음 · 합산소득 2,000만 이하 · 재산 과표 5.4억 이하(9억 이하 + 소득 1,000만 이하도 인정)
+    expect(hiDependent(0, 2000, null)).toBe(true);
+    expect(hiDependent(1, 1, null)).toBe(false);
+    expect(hiDependent(0, 2001, null)).toBe(false);
+    expect(hiDependent(0, 1500, 54000)).toBe(true);
+    expect(hiDependent(0, 1500, 60000)).toBe(false);
+    expect(hiDependent(0, 1000, 60000)).toBe(true);
+    expect(hiDependent(0, 0, 90001)).toBe(false);
+    // 본인(58세)은 62세까지 급여, 배우자는 이미 은퇴(은퇴 나이 0) · 상가 월세 200(연 2,400만, 경비 0)
+    const d = retiree();
+    const shop = (owner: 'self' | 'spouse', amount = 50000) => ({ name: '상가', type: 'realestate' as const, amount, expectedReturn: 0, volatility: 8, purpose: 'long' as const, nature: 'invest' as const, reUse: 'rental' as const, rent: 200, deposit: 0, renewCycle: 2, renewRate: 0, rentCost: 0, owner });
+    const p = { ...d.profile, retireAge: 62, spouseBirthYear: 1973, spouseRetireAge: 0, inflation: 0, nationalPension: 0, spousePension: 0, incomes: [], wageGross: 5000, incomeTax: { ...DEFAULT_TAX_ON, hiNow: 0, hiPropAuto: true } };
+    const k = 0.0719 * 1.1314;
+    // 상가가 본인(직장가입자) 명의: 배우자는 소득·재산이 없어 피부양자 → 본인 소득월액 보험료만
+    const mine = incomeTaxSchedule(p, 2026, undefined, [shop('self')])[0];
+    expect(mine.hiMode).toBe('workDep');
+    expect(mine.hiMonth).toBeCloseTo((400 / 12) * k, 6);
+    expect(mine.hiProp).toBe(0);
+    // 상가가 배우자 명의: 임대 사업소득이 있어 피부양자 탈락 → 배우자만 지역가입자(임대소득 전액 + 배우자 명의 재산분), 본인은 급여 외 소득이 없어 0
+    const hers = incomeTaxSchedule(p, 2026, undefined, [shop('spouse')])[0];
+    expect(hers.hiMode).toBe('workRegion');
+    expect(hers.hiWork).toBe(0);
+    expect(hers.propBase).toBeCloseTo(50000 * 0.69 * 0.6, 6);
+    expect(hers.hiMonth).toBeCloseTo(((2400 / 12) * 0.0719 + hiPropMonthly(50000 * 0.69 * 0.6)) * 1.1314, 6);
+    // 공동명의 50%: 본인 몫 1,200만은 2,000만 이하라 0, 배우자는 자기 몫 1,200만 + 자기 지분 재산만
+    const joint = incomeTaxSchedule(p, 2026, undefined, [{ ...shop('self'), owner: 'joint' as const, ownerShare: 50 }])[0];
+    expect(joint.hiWork).toBe(0);
+    expect(joint.hiMonth).toBeCloseTo(((1200 / 12) * 0.0719 + hiPropMonthly(25000 * 0.69 * 0.6)) * 1.1314, 6);
+    // 은퇴한 해(2030)부터는 세대 합산 지역가입자
+    const later = incomeTaxSchedule(p, 2026, undefined, [shop('spouse')]).find((r) => r.year === 2030)!;
+    expect(later.hiMode).toBe('region');
+    expect(later.hiMonth).toBeCloseTo(hers.hiMonth, 6);
+    // 고지서 역산 방식: 지금 고지서(배우자 지역 보험료) − 배우자 소득분 = 재산분
+    const bill = incomeTaxSchedule({ ...p, incomeTax: { ...DEFAULT_TAX_ON, hiNow: 30 } }, 2026, undefined, [shop('spouse')]);
+    expect(bill[0].hiMonth).toBeCloseTo(30, 6);
+    expect(bill[0].hiProp).toBeCloseTo(30 - (2400 / 12) * k, 6);
+    // 국민연금 몫: 직장가입자는 2,000만 문턱 때문에 국민연금이 문턱을 넘긴 만큼만 건보료가 늘어남
+    const np = incomeTaxSchedule({ ...p, nationalPension: 200, nationalPensionAge: 58 }, 2026, undefined, [shop('self')])[1];
+    expect(np.hiMonth).toBeCloseTo(((2400 + 1200 - 2000) / 12) * k, 6);
+    expect(np.npPart - (np.due - (incomeTaxSchedule(p, 2026, undefined, [shop('self')])[1].due))).toBeCloseTo(1200 * k, 6);
   });
 
   it('은퇴 전 급여가 있으면 ‘첫해 대비’를 은퇴 전·후로 나눠 은퇴 후는 급여가 끝난 해 기준', () => {
@@ -935,7 +987,7 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     expect(y(2029).increase).toBeCloseTo(y(2029).total - y(2026).total, 6);
     expect(y(2030).baseYear).toBe(2030);
     expect(y(2030).increase).toBe(0);
-    expect(y(2026).total).toBeGreaterThan(y(2030).total); // 급여가 빠져 세금이 줄어도
+    expect(y(2026).due).toBeGreaterThan(y(2030).due); // 급여가 빠져 세금이 줄어도(건보료는 은퇴 전 직장가입자라 오히려 은퇴 후가 큼)
     expect(rows.filter((r) => r.year >= 2030).every((r) => r.increase > -0.5)).toBe(true); // 은퇴 후엔 마이너스로 안 나옴
     expect(y(2035).increase).toBeCloseTo(y(2035).total - y(2030).total, 6);
     // 급여를 안 넣으면 기준은 계속 첫해
@@ -1337,6 +1389,47 @@ describe('나이 구간별 은퇴 후 생활비', () => {
   it('기본 생활비를 바꾸는 시나리오에서는 구간도 같은 비율로 따라감', () => {
     const more = buildPlanInput(p, d.assets, d.liabilities, d.goals, s, { retireMonthlyExpense: base * 2 });
     expect(expenseAt(more, 75)).toBeCloseTo(base * 2 * 12 * 0.8, 6);
+  });
+});
+
+describe('연말결산 계좌별 이어받기', () => {
+  const acct = (id: number, name: string, type: 'pension' | 'etf' | 'realestate' | 'other', amount: number, extra = {}) => ({ id, name, type, amount, expectedReturn: 4, volatility: 8, purpose: 'long' as const, nature: 'invest' as const, ...extra });
+  const assets = [
+    acct(1, '연금저축', 'pension', 10000, { taxFree: 300, retirePart: 2000 }),
+    acct(2, 'IRP', 'pension', 5000, { retirePart: 5000 }),
+    acct(3, 'ISA', 'etf', 3000),
+    acct(4, '집', 'realestate', 60000),
+    acct(5, '노란우산', 'other', 2000, { lockYear: 2030 }),
+  ];
+  const draws = [
+    { month: '2026-11', account: '연금저축', amount: 400 },
+    { month: '2026-12', account: '연금저축', amount: 500 },
+    { month: '2026-12', account: 'IRP', amount: 100 },
+    { month: '2026-12', account: 'ISA·일반', amount: 200 },
+    { month: '2027-01', account: '연금저축', amount: 999 },
+  ];
+  it('입력 대상: 그 해 12월 말에 꺼낼 수 있는 금융자산(부동산·수령 전 자산 제외)', () => {
+    expect(yearEndAccounts(assets, 2026).map((a) => a.name)).toEqual(['연금저축', 'IRP', 'ISA']);
+    expect(yearEndAccounts(assets, 2030).map((a) => a.name)).toEqual(['연금저축', 'IRP', 'ISA', '노란우산']);
+  });
+  it('12월 말 평가액이 다음 해 시작 금액이 되고, 그 해 인출만큼 과세제외 → 퇴직금 재원 순으로 줄어듦', () => {
+    const rows = carryOverPlan(assets, [{ id: 1, name: '연금저축', balance: 9400 }, { id: 2, name: 'IRP', balance: 5100 }, { id: 3, name: 'ISA', balance: 3000 }], draws, 2026);
+    // 연금저축: 그 해 900 인출 → 과세제외 300 모두 소진, 나머지 600은 퇴직금 재원에서
+    expect(rows[0]).toMatchObject({ next: 9400, drawn: 900, freeNext: 0, retireNext: 1400, changed: true });
+    // IRP: 100 인출 → 퇴직금 재원 4,900(평가액이 올라도 재원은 늘지 않음)
+    expect(rows[1]).toMatchObject({ next: 5100, drawn: 100, retireNext: 4900 });
+    // 연금계좌가 아니면 금액만, 같으면 바뀐 것 없음
+    expect(rows[2]).toMatchObject({ pension: false, drawn: 0, changed: false });
+    expect(carryPatch(rows[0])).toEqual({ amount: 9400, taxFree: 0, retirePart: 1400 });
+    expect(carryPatch(rows[2])).toEqual({ amount: 3000 });
+  });
+  it('재원은 새 잔액을 넘지 않고, 재원 줄이기를 끄면 금액만 넘김, 이름이 바뀐 계좌는 id 로·지워진 계좌는 건너뜀', () => {
+    const [low] = carryOverPlan(assets, [{ id: 2, name: 'IRP', balance: 3000 }], [], 2026);
+    expect(low.retireNext).toBe(3000);
+    const [keep] = carryOverPlan(assets, [{ id: 1, name: '연금저축', balance: 9400 }], draws, 2026, false);
+    expect(keep).toMatchObject({ next: 9400, freeNext: 300, retireNext: 2000 });
+    const rows = carryOverPlan(assets, [{ id: 3, name: '예전 이름', balance: 3500 }, { id: 99, name: '없는 계좌', balance: 1 }, { name: 'IRP', balance: 5000 }], draws, 2026);
+    expect(rows.map((r) => [r.name, r.next])).toEqual([['ISA', 3500], ['IRP', 5000]]);
   });
 });
 

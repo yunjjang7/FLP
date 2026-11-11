@@ -137,6 +137,15 @@ export interface YearEnd {
   balance: number; // 12월 말 금융자산 합계
   withdrawn: number; // 그 해 자산에서 실제로 꺼낸 금액
   note?: string;
+  accounts?: AccountBalance[]; // 계좌별 12월 말 평가액(계좌별로 입력했을 때): 합계 = balance
+  carried?: { at: string; funds: boolean }; // 다음 해 계획에 이어받은 날짜(YYYY-MM-DD)와 과세제외·퇴직금 재원까지 줄였는지
+}
+
+/** 연말결산의 계좌별 12월 말 평가액(자산 탭의 금융자산 한 줄) */
+export interface AccountBalance {
+  id?: number; // 자산 id(이름을 바꿔도 찾도록)
+  name: string;
+  balance: number;
 }
 
 /** 월별 실제 인출 기록: 그 달 그 계좌에서 실제로 꺼낸 세전 금액(명목, 만원) */

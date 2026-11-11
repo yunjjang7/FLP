@@ -1,7 +1,7 @@
 import type { Asset, ContribPlan, IncomeKind, IncomeTaxSettings, Liability, Profile, RetireIncome } from '../types';
 import { loanBalanceAt, npTerms, spouseRetireSelfAge, spouseToSelf } from './goals';
 import { incomeValue, type IncomeStream } from './montecarlo';
-import { rentStreams, reUseOf, usesHp, type RentStream } from './realestate';
+import { rentStreams, reUseOf, selfShare, usesHp, type RentStream } from './realestate';
 
 /** 종합소득세·건보료 기본값(2026년 기준 요율) */
 export const DEFAULT_INCOME_TAX: IncomeTaxSettings = {
@@ -76,6 +76,37 @@ export function hiPropBase(assets: Asset[], nowYear: number, year: number, pubRa
 
 /** 월 재산보험료(장기요양 제외, 만원) */
 export const hiPropMonthly = (base: number) => (hiPropScore(base - HI_PROP_DEDUCT) * HI_PROP_POINT) / 10000;
+
+/** 한 사람 명의(공동명의는 지분)의 재산 과세표준(명목, 만원). who: 0 본인 · 1 배우자 */
+export function hiPropBaseOf(assets: Asset[], nowYear: number, year: number, pubRatio: number, fairRatio: number, who: 0 | 1) {
+  const n = year - nowYear;
+  return assets
+    .filter((a) => heldIn(a, year))
+    .reduce((sum, a) => sum + a.amount * Math.pow(1 + a.expectedReturn / 100, n) * (who === 0 ? selfShare(a) : 1 - selfShare(a)), 0) * (pubRatio / 100) * (fairRatio / 100);
+}
+
+/** 직장가입자 소득월액 보험료: 보수(급여) 외 소득이 연 2,000만원을 넘는 부분에만 부과(만원) */
+export const HI_WORK_EXTRA = 2000;
+/** 피부양자 요건(만원): 합산소득 2,000만 이하 · 재산 과표 5.4억 이하(9억 이하이면서 소득 1,000만 이하도 인정) */
+export const HI_DEP_INCOME = 2000;
+export const HI_DEP_PROP = 54000;
+export const HI_DEP_PROP_MAX = 90000;
+export const HI_DEP_PROP_INCOME = 1000;
+
+/**
+ * 직장가입자의 피부양자가 될 수 있는지. biz: 사업소득금액(임대 포함), income: 합산소득(사업소득 + 공적연금·근로 총액),
+ * propBase: 그 사람 명의 재산 과세표준(모르면 null → 재산 요건은 보지 않음).
+ * 임대·사업소득이 조금이라도 있으면 사업자등록이 있다고 보고 탈락(보수적).
+ */
+export function hiDependent(biz: number, income: number, propBase: number | null) {
+  if (biz > 0 || income > HI_DEP_INCOME) return false;
+  if (propBase === null) return true;
+  if (propBase > HI_DEP_PROP_MAX) return false;
+  return propBase <= HI_DEP_PROP || income <= HI_DEP_PROP_INCOME;
+}
+
+/** 그 해 건보료 자격: region 세대 모두 지역 · work 모두 직장 · workDep 한 명 직장 + 한 명 피부양자 · workRegion 한 명 직장 + 한 명 지역 */
+export type HiMode = 'region' | 'work' | 'workDep' | 'workRegion';
 
 export const DEFAULT_CONTRIB: ContribPlan = { self: 0, spouse: 0, from: 0, to: 0, selfRate: 0, spouseRate: 0 };
 
@@ -170,7 +201,9 @@ export interface IncomeTaxRow {
   npSelf: number; // 본인 국민연금(연, 세전, 명목)
   npSpouse: number;
   other: number; // ‘그 밖의 은퇴 후 소득’ 중 근로·사업·공적연금·사적연금 수입(연, 세전, 명목)
-  salary: number; // 은퇴 전 세전 총급여(부부, 연, 명목): 근로소득으로 종소세에 합산, 건보료는 직장에서 내므로 제외
+  salary: number; // 은퇴 전 세전 총급여(부부, 연, 명목): 근로소득으로 종소세에 합산, 건보료(보수월액분)는 직장에서 내므로 제외
+  hiMode: HiMode; // 그 해 건보료 자격(급여가 있는 사람은 직장가입자)
+  hiWork: number; // 월 소득월액 보험료(직장가입자의 급여 외 소득 2,000만 초과분, 장기요양 포함)
   incomeSelf: number; // 본인 종합소득금액(임대·사업소득 + 근로소득금액 + 연금소득금액)
   incomeSpouse: number;
   taxSelf: number; // 본인 종합소득세 결정세액(지방세 포함, 근로소득세액공제 뒤)
@@ -198,7 +231,10 @@ export interface IncomeTaxRow {
  * 사업 = 항목별 필요경비율 차감·건보료 100%, 공적연금 = 국민연금과 합쳐 연금소득공제·건보료 × 반영률,
  * 사적연금 = 종소세 제외·건보료는 hiPrivate 일 때만, 그 밖 = 계산 제외. 임대 외에는 ‘나이 기준’ 사람의 소득으로 봄.
  * 은퇴 전 세전 총급여(wageGross·spouseWageGross)는 각자 은퇴 전 해까지 근로소득으로 합쳐 세율 구간·근로소득세액공제·기납부에 반영하고,
- * 건보료는 직장에서 이미 냈다고 보고 지역 건보료 소득에는 넣지 않음.
+ * 급여(보수월액)분 건보료는 직장에서 이미 냈다고 보고 넣지 않음.
+ * 급여가 있는 사람은 그 해 직장가입자: 재산분이 없고, 급여 외 소득(임대·사업 + (공적연금·근로) × 반영률)이 연 2,000만을 넘는 부분에만 소득월액 보험료.
+ * 부부 중 한 명만 일하면 다른 한 명은 피부양자 요건(hiDependent: 사업소득 없음 · 합산소득 2,000만 이하 · 자산별 추정일 때 본인 명의 재산 과표)을
+ * 채우면 0, 못 채우면 그 사람만 지역가입자(본인 소득 + 본인 명의 재산분, 고지서 역산 방식이면 세대 재산분 전체)로 계산.
  * 건보료 소득분은 전년도 소득 기준, 재산분은 현재 고지서에서 역산해 고정(증가율 입력 가능)하거나 부동산 자산으로 연도별 추정(hiPropAuto).
  * slotByYear: 사적연금도 건보료에 반영할 때 연도별 과세재원 인출액(명목).
  * liabilities: 자산별 추정에서 주택 구입 대출 공제(hiLoanDeduct)를 켰을 때 쓰는 부채 목록.
@@ -239,6 +275,7 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
   let prevNP = 0;
   let prevSlot = 0;
   let prevPriv = 0;
+  let prevBy: { biz: [number, number]; pen: [number, number]; wage: [number, number]; np: [number, number] } = { biz: [0, 0], pen: [0, 0], wage: [0, 0], np: [0, 0] };
   let base = { year: nowYear, total: 0 };
   let baseSwitched = false;
   const lastYear = profile.birthYear + profile.lifeExpectancy;
@@ -277,20 +314,48 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     const withheld = np * (1 - net) + wageWithheld;
     const due = taxSelf + taxSpouse - withheld;
     const P = rentSelf + rentSpouse + sum('business') + (np + sum('publicPension') + sum('wage')) * pub;
+    // 사람별 건보료 소득: 사업소득금액(임대 포함) · 공적연금 총액 · 근로 총급여(은퇴 전 급여 제외)
+    const biz: [number, number] = [rentSelf + by.business[0], rentSpouse + by.business[1]];
+    const pen: [number, number] = [npSelf + by.publicPension[0], npSpouse + by.publicPension[1]];
+    const npBy: [number, number] = [npSelf, npSpouse];
+    const emp: [boolean, boolean] = [salSelf > 0, salSpouse > 0];
+    const anyWork = emp[0] || emp[1];
     if (n === 0) {
       prevP = P;
       prevNP = np;
       prevSlot = slotByYear?.get(year) ?? 0;
       prevPriv = sum('privatePension');
-      prop = Math.max(0, s.hiNow / ltc - (P / 12) * rate);
+      prevBy = { biz, pen, wage: [by.wage[0], by.wage[1]], np: npBy };
     }
-    const Q = (prevP / 12) * rate;
     const gross = s.hiPropAuto ? hiPropBase(assets, nowYear, year, s.hiPubRatio ?? 69, s.hiFairRatio ?? 60) : 0;
-    const loanDed = s.hiPropAuto && s.hiLoanDeduct ? Math.min(gross, hiLoanDeduct(assets, liabilities, nowYear, year, currentAge)) : 0;
-    const propBase = gross - loanDed;
-    const R = s.hiPropAuto ? hiPropMonthly(propBase) : prop * Math.pow(1 + s.hiPropGrowth / 100, n);
+    const loanFull = s.hiPropAuto && s.hiLoanDeduct ? Math.min(gross, hiLoanDeduct(assets, liabilities, nowYear, year, currentAge)) : 0;
     const Z = s.hiPrivate ? ((prevSlot + prevPriv) * pub * rate) / 12 : 0;
-    const hiMonth = (Q + R + Z) * ltc;
+    // 급여가 있는 해: 일하는 사람은 직장가입자(소득월액 보험료), 나머지 한 명은 피부양자 또는 혼자 지역가입자. dropNP: 국민연금을 뺀 경우(국민연금 몫 계산용)
+    const mixed = (propNow: number, dropNP = false) => {
+      const penOf = (k: number) => prevBy.pen[k] - (dropNP ? prevBy.np[k] : 0);
+      const extra = (k: number) => prevBy.biz[k] + (penOf(k) + prevBy.wage[k]) * pub;
+      const who = hasSpouse ? [0, 1] : [0];
+      const work = who.filter((k) => emp[k]).reduce((a, k) => a + (Math.max(0, extra(k) - HI_WORK_EXTRA) / 12) * rate, 0);
+      const k = who.find((x) => !emp[x]);
+      if (k === undefined) return { mode: 'work' as HiMode, work, Q: 0, R: 0, Z: 0, propBase: 0, loanDed: 0 };
+      const own = s.hiPropAuto ? hiPropBaseOf(assets, nowYear, year, s.hiPubRatio ?? 69, s.hiFairRatio ?? 60, k as 0 | 1) : 0;
+      const loanDed = gross > 0 ? (loanFull * own) / gross : 0;
+      const propBase = own - loanDed;
+      if (hiDependent(prevBy.biz[k], prevBy.biz[k] + penOf(k) + prevBy.wage[k], s.hiPropAuto ? propBase : null)) return { mode: 'workDep' as HiMode, work, Q: 0, R: 0, Z: 0, propBase: 0, loanDed: 0 };
+      return { mode: 'workRegion' as HiMode, work, Q: (extra(k) / 12) * rate, R: s.hiPropAuto ? hiPropMonthly(propBase) : propNow, Z, propBase, loanDed };
+    };
+    if (n === 0) {
+      // 재산분 역산: 지금 고지서에서 소득분을 뺀 나머지. 한 명 직장 + 한 명 지역이면 소득월액 보험료와 지역 소득분을 뺌.
+      // 세대에 지역가입자가 없으면(모두 직장·피부양자) 입력값을 ‘지역가입자가 됐을 때의 보험료’로 보고 예전처럼 역산(은퇴 후 재산분에만 쓰임)
+      const m0 = anyWork ? mixed(0) : null;
+      prop = Math.max(0, m0?.mode === 'workRegion' ? s.hiNow / ltc - m0.work - m0.Q - m0.Z : s.hiNow / ltc - (P / 12) * rate);
+    }
+    const propNow = prop * Math.pow(1 + s.hiPropGrowth / 100, n);
+    const hi = anyWork
+      ? mixed(propNow)
+      : { mode: 'region' as HiMode, work: 0, Q: (prevP / 12) * rate, R: s.hiPropAuto ? hiPropMonthly(gross - loanFull) : propNow, Z, propBase: gross - loanFull, loanDed: loanFull };
+    const { R, propBase, loanDed } = hi;
+    const hiMonth = (hi.work + hi.Q + hi.R + hi.Z) * ltc;
     const hiYear = hiMonth * 12;
     const total = due + hiYear;
     // 은퇴 전 급여가 있으면 급여가 모두 끝난 해를 은퇴 후 구간의 기준으로 삼음(급여가 빠져 세금이 줄어든 걸 ‘감소’로 보이지 않게)
@@ -303,12 +368,19 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     const increase = total - base.total;
     // 국민연금이 없을 때 5월 납부액(근로 원천징수는 그대로 빠짐)
     const taxNoNP = personIncomeTax(incomeOf(0, rentSelf, 0), s.dedSelf, wage[0]) + personIncomeTax(incomeOf(1, rentSpouse, 0), s.dedSpouse, wage[1]) - wageWithheld;
-    const npPart = due - taxNoNP + prevNP * pub * rate * ltc;
-    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, salary, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, baseYear: base.year, npPart, rentPart: increase - npPart });
+    // 건보료 중 국민연금 몫: 지역은 전년도 국민연금 × 반영률 × 요율, 직장가입자가 있는 해는 국민연금을 뺐을 때와의 차이
+    let npHi = prevNP * pub * rate * ltc;
+    if (anyWork) {
+      const no = mixed(propNow, true);
+      npHi = hiYear - (no.work + no.Q + no.R + no.Z) * ltc * 12;
+    }
+    const npPart = due - taxNoNP + npHi;
+    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, salary, hiMode: hi.mode, hiWork: hi.work * ltc, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, baseYear: base.year, npPart, rentPart: increase - npPart });
     prevP = P;
     prevNP = np;
     prevSlot = slotByYear?.get(year) ?? 0;
     prevPriv = sum('privatePension');
+    prevBy = { biz, pen, wage: [by.wage[0], by.wage[1]], np: npBy };
   }
   return rows;
 }

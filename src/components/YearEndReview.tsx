@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { db } from '../db/db';
-import { drawTotal } from '../engine/drawLog';
+import { carryOverPlan, carryPatch, drawTotal, yearEndAccounts } from '../engine/drawLog';
 import { baseBalanceAt, DEFAULT_GUARDRAIL, guardrailBaseline, reviewYearEnds, yearsToYearEnd, type StrategyResult, type WithdrawInput, type YearEndPosition } from '../engine/withdrawal';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
-import type { Level, PlanBase } from '../types';
+import type { Asset, Level, PlanBase, YearEnd } from '../types';
 import { Labeled, NumberField, TextField } from './fields';
 import { Badge, Button, Card } from './ui';
 
@@ -62,7 +62,7 @@ const POSITION: Record<YearEndPosition, { label: string; level: Level }> = {
 
 /** 연말결산: 해마다 12월 말 실제 자산·인출액을 기록하고 고정한 기준선과 비교해 가드레일 판정 */
 export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: WithdrawInput; startAge: number; band: number; cut: number; cutOnly: boolean }) {
-  const { profile: p, yearEnds, draws } = useFlp();
+  const { profile: p, yearEnds, draws, assets } = useFlp();
   const now = new Date();
   const thisYear = now.getFullYear();
   const retiredNow = startAge <= thisYear - p.birthYear;
@@ -82,12 +82,49 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
   const [balance, setBalance] = useState(0);
   const [withdrawn, setWithdrawn] = useState(0);
   const [note, setNote] = useState('');
+  const existing = yearEnds.find((r) => r.year === year);
+  // 계좌별 입력: 그 해 12월 말에 꺼낼 수 있는 금융자산마다 평가액을 넣으면 합계가 ‘12월 말 금융자산’이 됨
+  const list = useMemo(() => yearEndAccounts(assets, year), [assets, year]);
+  const [acct, setAcct] = useState<Record<number, number> | null>(null);
+  const savedOf = (a: Asset, rec?: YearEnd) => rec?.accounts?.find((b) => (b.id !== undefined ? b.id === a.id : b.name === a.name))?.balance;
+  const openAcct = (y: number) => {
+    const rec = yearEnds.find((r) => r.year === y);
+    setAcct(Object.fromEntries(yearEndAccounts(assets, y).map((a) => [a.id!, savedOf(a, rec) ?? a.amount])));
+  };
+  const acctSum = acct ? list.reduce((s, a) => s + (acct[a.id!] ?? 0), 0) : 0;
+  const total = acct ? acctSum : balance;
+  const pickYear = (v: number) => {
+    const y = Math.round(v);
+    setYear(y);
+    setCarry(false);
+    if (acct) openAcct(y);
+  };
   const saveRecord = async () => {
-    const existing = yearEnds.find((r) => r.year === year);
-    const rec = { year, balance, withdrawn, note: note.trim() || undefined };
-    if (existing) await db.yearEnds.update(existing.id!, rec);
+    const rec: YearEnd = {
+      year,
+      balance: Math.round(total * 10) / 10,
+      withdrawn,
+      ...(note.trim() ? { note: note.trim() } : existing?.note ? { note: existing.note } : {}),
+      ...(acct ? { accounts: list.map((a) => ({ id: a.id, name: a.name, balance: acct[a.id!] ?? 0 })) } : {}),
+      ...(existing?.carried ? { carried: existing.carried } : {}),
+    };
+    if (existing) await db.yearEnds.put({ id: existing.id, ...rec });
     else await db.yearEnds.add(rec);
     setNote('');
+  };
+  // 이어받기: 저장한 계좌별 평가액을 자산 탭 금액으로 넘기고, 그 해 인출만큼 과세제외·퇴직금 재원을 줄임(한 번만)
+  const [carry, setCarry] = useState(false);
+  const [funds, setFunds] = useState(true);
+  const fundsDone = existing?.carried?.funds ?? false;
+  const carryRows = useMemo(() => (existing?.accounts?.length ? carryOverPlan(assets, existing.accounts, draws, year, funds && !fundsDone) : []), [assets, existing, draws, year, funds, fundsDone]);
+  const fundsApply = carryOverPlan(assets, existing?.accounts ?? [], draws, year, true).some((r) => r.pension && r.drawn > 0 && (r.free > 0 || r.retire > 0));
+  const applyCarry = async () => {
+    if (!existing) return;
+    await db.transaction('rw', [db.assets, db.yearEnds], async () => {
+      for (const r of carryRows) if (r.changed && r.id !== undefined) await db.assets.update(r.id, carryPatch(r));
+      await db.yearEnds.update(existing.id!, { carried: { at: new Date().toLocaleDateString('sv-SE'), funds: fundsDone || (funds && fundsApply) } });
+    });
+    setCarry(false);
   };
   // 월별 실제 인출 기록이 있으면 그 해 합계를 바로 넣을 수 있게
   const logged = drawTotal(draws, year);
@@ -126,8 +163,15 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
       )}
 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-        <Labeled label="결산 연도"><NumberField value={year} unit="년" onChange={(v) => setYear(Math.round(v))} /></Labeled>
-        <Labeled label="12월 말 금융자산" hint="평가액 합계(명목) · 수령 전 노란우산 등 제외"><NumberField value={balance} unit="만원" onChange={setBalance} /></Labeled>
+        <Labeled label="결산 연도"><NumberField value={year} unit="년" onChange={pickYear} /></Labeled>
+        <Labeled label="12월 말 금융자산" hint={acct ? '아래 계좌별 평가액의 합계' : '평가액 합계(명목) · 수령 전 노란우산 등 제외'}>
+          {acct ? <div className="py-1.5 text-lg font-bold">{won(acctSum)}</div> : <NumberField value={balance} unit="만원" onChange={setBalance} />}
+          {list.length > 0 && (
+            <button type="button" className="mt-1 block text-[11px] text-brand hover:underline" onClick={() => (acct ? (setBalance(Math.round(acctSum * 10) / 10), setAcct(null)) : openAcct(year))}>
+              {acct ? '합계만 입력' : '계좌별로 입력(다음 해 계획에 이어받기)'}
+            </button>
+          )}
+        </Labeled>
         <Labeled label="그 해 실제 인출" hint="계좌에서 꺼낸 합계">
           <NumberField value={withdrawn} unit="만원" onChange={setWithdrawn} />
           {logged > 0.5 && Math.abs(logged - withdrawn) > 0.5 && (
@@ -136,9 +180,83 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
         </Labeled>
         <Labeled label="메모(선택)"><TextField value={note} onChange={setNote} /></Labeled>
         <div className="self-end">
-          <Button onClick={saveRecord} disabled={balance <= 0}>{yearEnds.some((r) => r.year === year) ? '결산 고치기' : '결산 저장'}</Button>
+          <Button onClick={saveRecord} disabled={total <= 0}>{existing ? '결산 고치기' : '결산 저장'}</Button>
         </div>
       </div>
+
+      {acct && (
+        <div className="mt-3 rounded-xl bg-sunken p-3">
+          <div className="text-xs text-muted">{year}년 12월 말 계좌별 평가액(명목) — 처음에는 자산 탭의 지금 금액이 들어 있습니다. 증권사·은행 앱의 12월 말 평가액으로 고친 뒤 저장하세요.</div>
+          <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {list.map((a) => {
+              const d = a.type === 'pension' ? drawTotal(draws.filter((r) => r.account === a.name), year) : 0;
+              return (
+                <Labeled key={a.id} label={a.name || '이름 없음'} hint={`자산 탭 ${won(a.amount)}${d > 0.5 ? ` · 그 해 인출 ${won(d)}` : ''}`}>
+                  <NumberField value={acct[a.id!] ?? 0} unit="만원" min={0} onChange={(v) => setAcct({ ...acct, [a.id!]: v })} />
+                </Labeled>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {existing?.accounts?.length ? (
+        <div className="mt-3 rounded-xl border border-line p-3 text-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <b>{year + 1}년 계획에 이어받기</b>
+              <span className="ml-2 text-xs text-muted">
+                {existing.carried ? `${existing.carried.at}에 이어받음` : `${year}년 말 계좌별 평가액을 자산 탭 금액으로 넘깁니다`}
+              </span>
+            </div>
+            <Button variant="ghost" onClick={() => setCarry(!carry)}>{carry ? '닫기' : existing.carried ? '바뀔 내용 다시 보기' : '바뀔 내용 보기'}</Button>
+          </div>
+          {carry && (
+            <>
+              <div className="-mx-3 mt-2 overflow-x-auto px-3">
+                <table className="w-full min-w-[560px] text-sm num-table">
+                  <thead>
+                    <tr className="border-b border-line text-right text-xs text-muted">
+                      <th className="py-1.5 text-left font-medium">계좌</th>
+                      <th className="font-medium">자산 탭 금액</th>
+                      <th className="font-medium">그 해 인출<div className="font-normal">월별 기록</div></th>
+                      <th className="font-medium">과세제외 금액</th>
+                      <th className="font-medium">퇴직금 재원</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {carryRows.map((r) => {
+                      const move = (a: number, b: number) => (Math.abs(a - b) > 0.05 ? <>{won(a)} → <b>{won(b)}</b></> : a > 0 ? won(a) : '-');
+                      return (
+                        <tr key={r.id ?? r.name} className={`border-b border-line text-right last:border-0 ${r.changed ? '' : 'text-muted'}`}>
+                          <td className="py-1.5 text-left">{r.name}</td>
+                          <td className="whitespace-nowrap">{move(r.amount, r.next)}</td>
+                          <td>{r.pension && r.drawn > 0.5 ? won(r.drawn) : '-'}</td>
+                          <td className="whitespace-nowrap">{r.pension ? move(r.free, r.freeNext) : '-'}</td>
+                          <td className="whitespace-nowrap">{r.pension ? move(r.retire, r.retireNext) : '-'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              {fundsApply && !fundsDone && (
+                <label className="mt-2 flex items-start gap-2 text-xs">
+                  <input type="checkbox" className="mt-0.5" checked={funds} onChange={(e) => setFunds(e.target.checked)} />
+                  <span>그 해 실제 인출(월별 기록)만큼 과세제외 금액 → 퇴직금 재원 순서로 줄이기. 자산 탭의 두 금액을 이미 인출 뒤 값으로 고쳐 두었다면 끄세요(두 번 빠집니다).</span>
+                </label>
+              )}
+              {fundsDone && <p className="mt-2 text-xs text-muted">과세제외·퇴직금 재원은 이미 한 번 줄였으므로 다시 줄이지 않고, 금액만 넘깁니다.</p>}
+              <div className="mt-2 flex flex-wrap items-center gap-3">
+                <Button onClick={applyCarry} disabled={!carryRows.some((r) => r.changed)}>자산 탭에 적용</Button>
+                <span className="text-xs text-muted">
+                  {carryRows.some((r) => r.changed) ? '적용하면 노후 진단·인출 계획이 이 금액에서 다시 계산됩니다. 연금수령연차는 해가 바뀌면 자동으로 올라갑니다.' : '자산 탭이 이미 이 금액과 같습니다.'}
+                </span>
+              </div>
+            </>
+          )}
+        </div>
+      ) : null}
 
       {rows.length > 0 && (
         <>
@@ -203,7 +321,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
         <li>매년 1월에 전년도 12월 말 평가액과 그 해 실제 인출액을 넣으세요. 판정은 1년에 한 번만 하고, 연중 등락에는 반응하지 않습니다.</li>
         <li>기준선과 계획 인출액은 물가를 반영한 그 해 금액입니다. 첫해는 기준선을 고정한 달부터 12월까지만 셉니다.</li>
         <li>실제 수익률(추정) = 12월 말 자산 ÷ (연초 자산 − 그 해 인출) − 1입니다. 연초 자산은 직전 해 결산값(첫해는 기준선을 고정할 때의 자산)을 쓰고, 직전 해 결산이 없으면 계산하지 않습니다. 연중에 넣은 돈(추가 납입·일시금 수령)이 있으면 그만큼 높게 나옵니다.</li>
-        <li>결산을 넣은 뒤 ‘데이터·설정 → 자산’ 금액도 12월 말 평가액으로 고쳐야 노후 진단·인출 계획이 그 값에서 다시 계산됩니다.</li>
+        <li>‘계좌별로 입력’으로 저장하면 ‘이어받기’로 자산 탭 금액을 12월 말 평가액으로 한 번에 바꾸고, 연금계좌는 그 해 실제 인출(월별 기록)만큼 과세제외 금액·퇴직금 재원도 줄일 수 있습니다. 합계만 넣었다면 ‘데이터·설정 → 자산’ 금액을 직접 12월 말 평가액으로 고쳐야 노후 진단·인출 계획이 그 값에서 다시 계산됩니다.</li>
       </ul>
     </Card>
   );
