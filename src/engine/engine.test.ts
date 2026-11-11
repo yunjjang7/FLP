@@ -109,6 +109,8 @@ describe('샘플 데이터 통합', () => {
     const a = savingsPrescription({ income: 500, savings: -476 }, 120, 80);
     expect(a.title).toBe('월 476만원 부족 → 월 120만원 저축으로 전환 필요');
     expect(a.detail).toContain('−476만원 → 120만원으로 월 596만원 개선');
+    expect(a.detail).toContain('목표 저축률은 24%');
+    expect(savingsPrescription({ income: 500, savings: -476 }, 700, 80).detail).not.toContain('저축률'); // 100% 넘으면 생략
     expect(a.level).toBe('danger');
     const b = savingsPrescription({ income: 500, savings: -476 }, -200, 80);
     expect(b.title).toBe('월 부족분 476만원 → 200만원 이하로 줄여야 함');

@@ -14,7 +14,9 @@ import type { Level } from '../types';
 export default function Prescribe() {
   const d = useFlp();
   if (!d.hasData) return <><PageHeader title="처방 실행" /><EmptyState /></>;
-  return <PrescribeInner />;
+  // 데이터가 바뀌면(저축 여력·수익률·은퇴 나이·생활비) What-if 슬라이더 시작값도 새로 맞춤
+  const s = d.summary;
+  return <PrescribeInner key={`${Math.round(s.savings)}|${s.portfolioReturn.toFixed(1)}|${d.profile.retireAge}|${d.profile.retireMonthlyExpense}`} />;
 }
 
 function PrescribeInner() {
@@ -23,7 +25,8 @@ function PrescribeInner() {
   const rx = useMemo(() => prescriptions(p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins), [p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins]);
   const buckets = useMemo(() => bucketMap(p, s, d.goalPlans), [p, s, d.goalPlans]);
 
-  const initial = { monthlySavings: Math.max(0, Math.round(s.savings)), meanReturn: +s.portfolioReturn.toFixed(1), retireAge: p.retireAge, retireMonthlyExpense: p.retireMonthlyExpense };
+  // 저축 여력이 마이너스면(매달 금융자산에서 꺼내 씀) 그 값에서 시작해야 ‘현재 계획’과 같은 계산이 됨
+  const initial = { monthlySavings: Math.round(s.savings), meanReturn: +s.portfolioReturn.toFixed(1), retireAge: p.retireAge, retireMonthlyExpense: p.retireMonthlyExpense };
   const [o, setO] = useState<Required<Omit<PlanOverrides, 'volatility'>>>(initial);
   const changed = JSON.stringify(o) !== JSON.stringify(initial);
   const whatIf = useMemo(() => {
@@ -59,10 +62,10 @@ function PrescribeInner() {
       <Card title="계획 바꿔보기 (What-if)" className="mt-4" action={changed && <button className="text-xs font-medium text-brand" onClick={() => setO(initial)}>원래대로</button>}>
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
           <div className="space-y-5">
-            <Slider label="월 저축액" value={o.monthlySavings} min={0} max={Math.max(500, Math.round(s.income))} step={10} display={`${won(o.monthlySavings)} (저축률 ${s.income > 0 ? pct((o.monthlySavings / s.income) * 100) : '-'})`} onChange={(v) => setO({ ...o, monthlySavings: v })} />
+            <Slider label="월 저축액" value={o.monthlySavings} min={s.savings < 0 ? Math.floor((s.savings - 100) / 10) * 10 : 0} max={Math.max(500, Math.round(s.income), -Math.round(s.savings))} step={10} display={o.monthlySavings < 0 ? `월 ${won(-o.monthlySavings)} 부족 (금융자산에서 꺼냄)` : `${won(o.monthlySavings)} (저축률 ${s.income > 0 ? pct((o.monthlySavings / s.income) * 100) : '-'})`} onChange={(v) => setO({ ...o, monthlySavings: v })} />
             <Slider label={p.retireSeparate ? '기대수익률(은퇴 전)' : '기대수익률'} value={o.meanReturn} min={1} max={10} step={0.1} display={`${o.meanReturn.toFixed(1)}%`} onChange={(v) => setO({ ...o, meanReturn: v })} />
             {!d.start.retired && <Slider label="은퇴 나이" value={o.retireAge} min={Math.max(s.age, 45)} max={75} step={1} display={`${o.retireAge}세`} onChange={(v) => setO({ ...o, retireAge: v })} />}
-            <Slider label="은퇴 후 월 생활비" value={o.retireMonthlyExpense} min={100} max={800} step={10} display={won(o.retireMonthlyExpense)} onChange={(v) => setO({ ...o, retireMonthlyExpense: v })} />
+            <Slider label="은퇴 후 월 생활비" value={o.retireMonthlyExpense} min={100} max={Math.max(800, p.retireMonthlyExpense + 200)} step={10} display={won(o.retireMonthlyExpense)} onChange={(v) => setO({ ...o, retireMonthlyExpense: v })} />
             <div className="grid grid-cols-2 gap-3 rounded-xl bg-sunken p-3">
               <Stat label="현재 계획" value={pct(d.sim.successRate)} tone={lvl(d.sim.successRate)} />
               <Stat label="바꾼 계획" value={pct(whatIf.successRate)} tone={lvl(whatIf.successRate)} sub={changed ? `${delta >= 0 ? '+' : ''}${delta.toFixed(0)}%p` : '슬라이더를 움직여 보세요'} />
@@ -72,7 +75,7 @@ function PrescribeInner() {
                 은퇴 나이·생활비를 내 계획에 반영
               </Button>
             )}
-            <p className="text-xs text-muted">저축액·수익률은 실제 지출과 자산 구성을 바꿔야 반영됩니다. 수익률을 올리면 변동성도 같은 비율로 커진다고 가정합니다.{p.retireSeparate && ' 은퇴 후 수익률은 프로필 설정값을 그대로 씁니다.'}{d.liabilities.length > 0 && ' 대출 상환이 끝나면 그 상환액만큼 저축이 늘어납니다.'}</p>
+            <p className="text-xs text-muted">저축액·수익률은 실제 지출과 자산 구성을 바꿔야 반영됩니다. 월 저축액이 마이너스면 은퇴 전에도 그만큼을 매달 금융자산에서 꺼내 쓰는 것으로 계산합니다. 수익률을 올리면 변동성도 같은 비율로 커진다고 가정합니다.{p.retireSeparate && ' 은퇴 후 수익률은 프로필 설정값을 그대로 씁니다.'}{d.liabilities.length > 0 && ' 대출 상환이 끝나면 그 상환액만큼 저축이 늘어납니다.'}</p>
           </div>
           <LifeChart sim={whatIf} retireAge={o.retireAge} height={320} />
         </div>

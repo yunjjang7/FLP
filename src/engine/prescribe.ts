@@ -75,7 +75,8 @@ export function savingsPrescription(s: Pick<Summary, 'income' | 'savings'>, need
       detail:
         `지금은 지출이 소득보다 많아 매달 ${fmt(-s.savings)}원을 금융자산에서 꺼내 쓰는 것으로 계산했습니다. ` +
         `노후 성공확률 ${target}%를 맞추려면 월 저축 여력을 ${signed(s.savings)}원 → ${signed(need)}원으로 월 ${fmt(gap)}원 개선해야 합니다(소득을 늘리거나 지출을 줄이기).` +
-        (from !== null && to !== null ? ` 저축률로는 ${from.toFixed(0)}% → ${to.toFixed(0)}%입니다.` : '') +
+        // 저축률은 0~100% 안일 때만 의미가 있어 그때만 덧붙임
+        (to !== null && to >= 0 && to <= 100 ? ` 목표 저축률은 ${to.toFixed(0)}%입니다.` : '') +
         note,
     };
   }
