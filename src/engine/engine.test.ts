@@ -66,6 +66,25 @@ describe('몬테카를로', () => {
     expect(v).not.toBeNull();
     expect(simulate({ ...base, annualSavings: v }, 400, 7).successRate).toBeGreaterThanOrEqual(85);
   });
+  it('하락장 가드레일: 생활비를 줄이면 성공확률이 줄지 않고, 감축 0이면 그대로', () => {
+    const now = simulate(base, 500);
+    const g = simulate({ ...base, guardrail: { drop: 20, cut: 10 } }, 500);
+    expect(g.successRate).toBeGreaterThanOrEqual(now.successRate);
+    expect(g.cutYearsAvg).toBeGreaterThan(0);
+    expect(now.cutYearsAvg).toBe(0);
+    const off = simulate({ ...base, guardrail: { drop: 20, cut: 0 } }, 500);
+    expect(off.successRate).toBe(now.successRate);
+    expect(off.p50).toEqual(now.p50);
+    // 변동성 0이면 하락장이 없어 결과가 같음
+    expect(simulate({ ...base, volatility: 0, guardrail: { drop: 20, cut: 10 } }, 20).p50).toEqual(simulate({ ...base, volatility: 0 }, 20).p50);
+  });
+  it('가드레일 감축은 생활비(고정액)에만 적용, 대출 상환은 그대로', () => {
+    const debts = [{ name: '대출', endAge: 90, annual: 500 }];
+    const inp = { ...base, debts, currentAge: 70, retireAge: 65 };
+    expect(retireOutflowAt(inp, 70, 0.1)).toBeCloseTo(expenseAt(inp, 70) * 0.9 - publicPensionAt(inp, 70) * 0 - inp.pensions.reduce((a, p) => a + incomeValue(p, 70, inp.inflation), 0) + 500, 6);
+    const fixed = { ...inp, fixedDraw: 4000 };
+    expect(retireOutflowAt(fixed, 70, 0.1) - retireOutflowAt(fixed, 70)).toBeCloseTo(Math.min(0, Math.max(0, 3600 - publicPensionAt(fixed, 70)) - Math.max(0, 4000 - publicPensionAt(fixed, 70))), 6);
+  });
 });
 
 describe('샘플 데이터 통합', () => {

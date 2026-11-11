@@ -107,6 +107,8 @@ export interface Criteria {
   criticalMultiple: number; // 진단비 = 연소득 × N
   careNeed: number; // 간병 필요 보장액(만원)
   survivorRatio: number; // 유족 생활비 비율(%)
+  guardrailDrop: number; // 하락장 가드레일: 시장이 최고점보다 이만큼(%) 이상 떨어진 해에
+  guardrailCut: number; // 은퇴 후 생활비를 이만큼(%) 줄임(노후 진단 비교용, 0이면 비교 안 함)
 }
 
 /** 은퇴 후 소득(임대료 등). 금액은 오늘 기준, 인상률은 지금부터 주기마다 적용 */

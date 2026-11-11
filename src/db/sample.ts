@@ -9,6 +9,8 @@ export const DEFAULT_CRITERIA: Criteria = {
   criticalMultiple: 2,
   careNeed: 5000,
   survivorRatio: 70,
+  guardrailDrop: 20,
+  guardrailCut: 10,
 };
 
 export function defaultProfile(year = new Date().getFullYear()): Profile {

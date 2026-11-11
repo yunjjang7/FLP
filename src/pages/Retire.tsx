@@ -1,5 +1,6 @@
 import { Bar as RBar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ExpenseCompare } from '../components/ExpenseCompare';
+import { GuardrailCompare } from '../components/GuardrailCompare';
 import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
 import { debtAnnualAt, expenseAt, expenseRatioAt, GOAL_KIND_LABEL, goalBreakdownAt, goalKind, incomeValue, nominalFactor } from '../engine/montecarlo';
@@ -92,6 +93,8 @@ export default function Retire() {
           <p className="min-w-0 flex-1 basis-64 text-[15px] font-medium leading-relaxed">{verdict}</p>
         </div>
       </Card>
+
+      <GuardrailCompare />
 
       <div className="mt-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card><Stat label={retired ? '앞으로 필요한 자금' : '은퇴 시점 필요자금'} value={won(need.need)} sub={`${start.age}세~${p.lifeExpectancy}세 부족 생활비·지출의 현재가치`} /></Card>

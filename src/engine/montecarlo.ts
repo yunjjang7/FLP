@@ -59,7 +59,12 @@ export interface PlanInput {
   fixedDraw?: number;
   /** 수령 전 묶인 자산(노란우산 등)·부동산 매각(sale)·세액공제 환급(credit): 해당 나이에 세후 금액(실질)이 들어와 함께 운용됨 */
   inflows?: { name?: string; age: number; amount: number; kind?: 'credit' | 'sale' }[];
+  /** 하락장 가드레일: 시장(명목 누적수익률)이 직전 최고점보다 drop% 이상 낮은 해에는 은퇴 후 생활비를 cut% 줄임 */
+  guardrail?: Guardrail;
 }
+
+/** 하락장 가드레일 설정(%). 생활비(인출액 고정이면 고정액)만 줄이고 대출·목표 지출·보험료는 그대로 */
+export interface Guardrail { drop: number; cut: number }
 
 export interface SimResult {
   ages: number[];
@@ -71,6 +76,8 @@ export interface SimResult {
   depletionAges: (number | null)[]; // 시나리오별 첫 고갈 나이
   depletionHistogram: { age: number; count: number }[];
   medianDepletionAge: number | null;
+  /** 가드레일로 생활비를 줄인 해 수(시나리오 평균) */
+  cutYearsAvg: number;
   balanceAtRetire: { p10: number; p50: number; p90: number };
 }
 
@@ -128,11 +135,14 @@ export const savingsAt = (input: PlanInput, age: number) =>
   (input.debts ?? []).reduce((a, d) => a + d.annual - debtAnnualAt(d, age), 0) +
   (input.savingsChanges ?? []).filter((c) => age >= c.fromAge).reduce((a, c) => a + c.annual, 0);
 
-/** 은퇴 후 자산에서 꺼내야 할 금액(생활비 − 연금 + 남은 대출 상환). 인출액 고정이면 고정액(명목) − 국민·개인연금 + 대출 상환 */
-export const retireOutflowAt = (input: PlanInput, age: number) =>
+/**
+ * 은퇴 후 자산에서 꺼내야 할 금액(생활비 − 연금 + 남은 대출 상환). 인출액 고정이면 고정액(명목) − 국민·개인연금 + 대출 상환.
+ * cut: 생활비(고정액)를 줄이는 비율(0~1, 하락장 가드레일)
+ */
+export const retireOutflowAt = (input: PlanInput, age: number, cut = 0) =>
   input.fixedDraw !== undefined
-    ? Math.max(0, input.fixedDraw * nominalFactor(0, input.inflation, age - expenseBaseAge(input)) - publicPensionAt(input, age)) + debtPaymentAt(input, age)
-    : expenseAt(input, age) - pensionAt(input, age) + debtPaymentAt(input, age);
+    ? Math.max(0, input.fixedDraw * (1 - cut) * nominalFactor(0, input.inflation, age - expenseBaseAge(input)) - publicPensionAt(input, age)) + debtPaymentAt(input, age)
+    : expenseAt(input, age) * (1 - cut) - pensionAt(input, age) + debtPaymentAt(input, age);
 
 /** 해당 나이의 기대수익률·변동성(%) */
 export function returnAt(input: PlanInput, age: number) {
@@ -142,10 +152,10 @@ export function returnAt(input: PlanInput, age: number) {
   return { mean: input.meanReturn, vol: input.volatility };
 }
 
-export function outflowAt(input: PlanInput, age: number) {
+export function outflowAt(input: PlanInput, age: number, cut = 0) {
   let out = 0;
   for (const g of input.goals) if (g.age === age) out += g.amount;
-  if (age >= input.retireAge) out += retireOutflowAt(input, age);
+  if (age >= input.retireAge) out += retireOutflowAt(input, age, cut);
   return out - inflowAt(input, age);
 }
 
@@ -156,21 +166,30 @@ export function runPath(input: PlanInput, z: () => number) {
   let bal = input.startBalance;
   balances[0] = bal;
   let depletedAt: number | null = null;
+  // 하락장 가드레일: 시장 지수(명목 누적수익률)와 그 최고점. 인출과 무관하게 시장 흐름만으로 하락장을 판단
+  const g = input.guardrail;
+  let index = 1;
+  let peak = 1;
+  let cutYears = 0;
   for (let i = 0; i < years; i++) {
     const age = input.currentAge + i;
     const { mean, vol } = returnAt(input, age);
     const nominal = Math.max(-0.95, mean / 100 + (vol / 100) * z());
     const real = (1 + nominal) / (1 + input.inflation / 100) - 1;
     bal = bal * (1 + real);
+    index *= 1 + nominal;
+    peak = Math.max(peak, index);
+    const bear = g !== undefined && g.cut > 0 && age >= input.retireAge && index < peak * (1 - g.drop / 100);
+    if (bear && depletedAt === null) cutYears++;
     if (age < input.retireAge) bal += savingsAt(input, age);
-    bal -= outflowAt(input, age);
+    bal -= outflowAt(input, age, bear ? g!.cut / 100 : 0);
     if (bal < 0) {
       if (depletedAt === null) depletedAt = age + 1;
       bal = 0;
     }
     balances[i + 1] = bal;
   }
-  return { balances, depletedAt };
+  return { balances, depletedAt, cutYears };
 }
 
 export function deterministicPath(input: PlanInput) {
@@ -183,10 +202,12 @@ export function simulate(input: PlanInput, runs = 1000, seed = 42): SimResult {
   const gen = normalGen(seed);
   const columns: number[][] = ages.map(() => new Array<number>(runs));
   const depletionAges: (number | null)[] = [];
+  let cutYears = 0;
   for (let r = 0; r < runs; r++) {
-    const { balances, depletedAt } = runPath(input, gen);
-    for (let i = 0; i <= years; i++) columns[i][r] = balances[i];
-    depletionAges.push(depletedAt);
+    const run = runPath(input, gen);
+    for (let i = 0; i <= years; i++) columns[i][r] = run.balances[i];
+    depletionAges.push(run.depletedAt);
+    cutYears += run.cutYears;
   }
   const p10: number[] = [];
   const p50: number[] = [];
@@ -215,6 +236,7 @@ export function simulate(input: PlanInput, runs = 1000, seed = 42): SimResult {
     depletionHistogram: [...hist.entries()].sort((a, b) => a[0] - b[0]).map(([age, count]) => ({ age, count })),
     // 미고갈 시나리오를 무한대로 보고 전체 중앙값을 취함 → 과반이 고갈될 때만 값이 있음
     medianDepletionAge: failed.length > runs / 2 ? failed[Math.floor(runs / 2)] : null,
+    cutYearsAvg: runs > 0 ? cutYears / runs : 0,
     balanceAtRetire: { p10: p10[ri] ?? 0, p50: p50[ri] ?? 0, p90: p90[ri] ?? 0 },
   };
 }

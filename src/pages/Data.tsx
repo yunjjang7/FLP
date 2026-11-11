@@ -323,7 +323,7 @@ function CriteriaForm() {
   const c = profile.criteria;
   const set = (k: keyof Criteria) => (v: number) => save({ criteria: { ...c, [k]: v } });
   return (
-    <Card title="점검 기준" action={<span className="text-xs text-muted">홈·투자 점검·처방에서 이 기준으로 판정합니다</span>}>
+    <Card title="점검 기준" action={<span className="text-xs text-muted">홈·투자 점검·노후 진단·처방에서 이 기준으로 판정합니다</span>}>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Labeled label="비상금 목표"><NumberField value={c.emergencyMonths} unit="개월" onChange={set('emergencyMonths')} /></Labeled>
         <Labeled label="목표 저축률"><NumberField value={c.savingsRate} unit="%" onChange={set('savingsRate')} /></Labeled>
@@ -333,6 +333,8 @@ function CriteriaForm() {
         <Labeled label="진단비 기준" hint="연소득의 몇 배"><NumberField value={c.criticalMultiple} unit="배" step={0.5} onChange={set('criticalMultiple')} /></Labeled>
         <Labeled label="간병 필요 보장액"><NumberField value={c.careNeed} unit="만원" onChange={set('careNeed')} /></Labeled>
         <Labeled label="유족 생활비 비율" hint="현재 지출 대비"><NumberField value={c.survivorRatio} unit="%" onChange={set('survivorRatio')} /></Labeled>
+        <Labeled label="하락장 기준" hint="시장이 최고점보다 이만큼 떨어진 해"><NumberField value={c.guardrailDrop} unit="%" onChange={set('guardrailDrop')} /></Labeled>
+        <Labeled label="하락장 생활비 감축" hint="그해 은퇴 후 생활비를 줄이는 비율 · 0이면 비교 안 함"><NumberField value={c.guardrailCut} unit="%" onChange={set('guardrailCut')} /></Labeled>
       </div>
     </Card>
   );
