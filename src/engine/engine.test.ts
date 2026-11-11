@@ -9,8 +9,8 @@ import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, s
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
-import { bucketMap, goalPrescription, prescriptions, savingsPrescription } from './prescribe';
-import { financialScore, riskChecks } from './risk';
+import { bucketMap, emergencyPrescription, goalPrescription, prescriptions, savingsPrescription } from './prescribe';
+import { emergencyCap, emergencyRunway, financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
 import type { PlanBase } from '../types';
 import { sensitivityExpenses } from '../components/Sensitivity';
@@ -126,6 +126,28 @@ describe('샘플 데이터 통합', () => {
     const rx = prescriptions(d.profile, short, inp, rate, planGoals(d.goals, d.assets, s.age), insuranceGap(d.profile, short, d.insurance, d.goals));
     const sv = rx.find((x) => x.area === '저축' && x.detail.includes('꺼내 쓰는'));
     expect(sv?.title).toMatch(/부족/);
+  });
+  it('비상금: 저축 여력이 마이너스면 부족분으로 몇 개월 뒤 바닥나는지 보여 주고 점수를 낮춤', () => {
+    const fund = 3300;
+    const base = { ...s, emergencyFund: fund, expense: 300 }; // 월 지출 11개월분
+    const short = { ...base, savings: -476 };
+    expect(emergencyRunway(short)).toBeCloseTo(fund / 476, 6);
+    expect(emergencyRunway(base.savings < 0 ? { ...base, savings: 10 } : base)).toBe(Infinity);
+    expect(emergencyCap(short, 6)).toBe(0.6); // 6.9개월 > 목표 6개월 → 주의
+    expect(emergencyCap({ ...short, savings: -1000 }, 6)).toBe(0.4); // 3.3개월 → 위험
+    const target = d.profile.criteria.emergencyMonths;
+    const chk = (x: typeof s) => riskChecks(d.profile, d.assets, x).find((r) => r.key === 'emergency')!;
+    expect(chk({ ...base, savings: 10 }).level).toBe('good');
+    expect(chk(short).level).not.toBe('good');
+    expect(chk(short).detail).toContain(`약 ${(fund / 476).toFixed(1)}개월 뒤 바닥`);
+    // 처방: 월 지출 기준으로 충분해도 부족분으로 줄고 있으면 알림
+    const rx = emergencyPrescription(short, target)!;
+    expect(rx.title).toBe(`비상금 11.0개월분 — 매달 부족분으로 ${(fund / 476).toFixed(1)}개월 뒤 소진`);
+    expect(emergencyPrescription({ ...base, savings: 10 }, target)).toBeNull();
+    // 월 지출 기준으로도 부족하면 제목에 소진 기간을 덧붙이고, 목표보다 빨리 바닥나면 위험
+    const low = emergencyPrescription({ ...short, emergencyFund: 900 }, target)!;
+    expect(low.title).toMatch(/개월분\(.+원\) 부족 · 부족분으로 1\.9개월 뒤 소진/);
+    expect(low.level).toBe('danger');
   });
   it('목적자금 처방·바구니: 저축 여력이 마이너스면 부족분까지 합친 개선액을 보여 줌', () => {
     const g = goalPrescription(-476, 120);

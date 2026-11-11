@@ -4,7 +4,7 @@ import type { GoalPlan } from './goals';
 import type { InsuranceGap } from './insurance';
 import { debtAnnualAt, deterministicPath, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { RISK_PROFILES, type Summary } from './portfolio';
-import { emergencyMonths, withdrawLevel } from './risk';
+import { emergencyMonths, emergencyRunway, withdrawLevel } from './risk';
 
 export interface Prescription {
   title: string;
@@ -102,6 +102,34 @@ export function goalPrescription(savings: number, goalMonthly: number): Prescrip
     : { area: '목표', level: 'good', title, detail: `현재 저축여력 ${fmt(savings)}원 안에서 감당 가능합니다.` };
 }
 
+/**
+ * 비상금 처방: 월 지출 기준 부족분과, 저축 여력이 마이너스면 그 부족분으로 비상금이 몇 개월 뒤 바닥나는지.
+ * 월 지출 기준으로는 충분해도 매달 줄고 있으면 주의로 알림
+ */
+export function emergencyPrescription(s: Summary, target: number): Prescription | null {
+  const em = emergencyMonths(s);
+  const run = emergencyRunway(s);
+  const drain = Number.isFinite(run)
+    ? ` 지금은 매달 ${fmt(-s.savings)}원이 모자라 이를 비상금에서 메우면 약 ${run.toFixed(1)}개월 뒤 바닥납니다. 채워 넣기 전에 지출을 줄여 부족분부터 없애야 합니다.`
+    : '';
+  if (em < target) {
+    const short = (target - em) * s.expense;
+    return {
+      area: '비상금', level: em < target / 2 || run < target ? 'danger' : 'caution',
+      title: `비상금 ${(target - em).toFixed(1)}개월분(${fmt(short)}원) 부족${Number.isFinite(run) ? ` · 부족분으로 ${run.toFixed(1)}개월 뒤 소진` : ''}`,
+      detail: `단기·비상금 용도의 예금·현금성 자산을 먼저 채우세요. 투자자산을 급하게 팔지 않도록 하는 안전판입니다.${drain}`,
+    };
+  }
+  if (Number.isFinite(run)) {
+    return {
+      area: '비상금', level: run < target ? 'danger' : 'caution',
+      title: `비상금 ${em.toFixed(1)}개월분 — 매달 부족분으로 ${run.toFixed(1)}개월 뒤 소진`,
+      detail: `월 지출 기준으로는 목표 ${target}개월을 채웠습니다.${drain}`,
+    };
+  }
+  return null;
+}
+
 export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap): Prescription[] {
   const c = profile.criteria;
   const out: Prescription[] = [];
@@ -165,15 +193,8 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
     });
   }
 
-  const em = emergencyMonths(s);
-  if (em < c.emergencyMonths) {
-    const short = (c.emergencyMonths - em) * s.expense;
-    out.push({
-      area: '비상금', level: em < c.emergencyMonths / 2 ? 'danger' : 'caution',
-      title: `비상금 ${(c.emergencyMonths - em).toFixed(1)}개월분(${fmt(short)}원) 부족`,
-      detail: '단기·비상금 용도의 예금·현금성 자산을 먼저 채우세요. 투자자산을 급하게 팔지 않도록 하는 안전판입니다.',
-    });
-  }
+  const emRx = emergencyPrescription(s, c.emergencyMonths);
+  if (emRx) out.push(emRx);
 
   const debtRatio = s.totalAssets > 0 ? (s.totalDebt / s.totalAssets) * 100 : 0;
   if (debtRatio > c.debtRatioMax) {

@@ -17,6 +17,34 @@ export function emergencyMonths(s: Summary) {
   return s.expense > 0 ? s.emergencyFund / s.expense : s.emergencyFund > 0 ? 99 : 0;
 }
 
+/** 저축 여력이 마이너스일 때 그 부족분만으로 비상금이 바닥나기까지 개월 수(부족분이 없으면 Infinity) */
+export function emergencyRunway(s: Pick<Summary, 'savings' | 'emergencyFund'>) {
+  return s.savings < 0 ? Math.max(0, s.emergencyFund) / -s.savings : Infinity;
+}
+
+/**
+ * 비상금 점수(0~1): 월 지출 몇 개월분인지로 매기되, 매달 부족분으로 비상금이 줄고 있으면
+ * 주의(0.6) 이하로, 목표 개월 수보다 빨리 바닥나면 위험(0.4)으로 낮춤
+ */
+export function emergencyScore(s: Summary, target: number) {
+  return Math.min(scale(emergencyMonths(s), target / 2, target), emergencyCap(s, target));
+}
+
+/** 부족분으로 비상금이 줄고 있을 때 점수 상한: 목표 개월 수보다 빨리 바닥나면 0.4, 아니면 0.6, 부족분 없으면 1 */
+export function emergencyCap(s: Pick<Summary, 'savings' | 'emergencyFund'>, target: number) {
+  const run = emergencyRunway(s);
+  return !Number.isFinite(run) ? 1 : run < target ? 0.4 : 0.6;
+}
+
+/** 비상금 설명. 부족분이 있으면 ‘지금처럼 가면 몇 개월 뒤 바닥나는지’를 덧붙임 */
+export function emergencyDetail(s: Summary, target: number) {
+  const em = emergencyMonths(s);
+  const base = `단기·비상금 용도 유동자산이 월 지출의 ${em.toFixed(1)}개월분입니다. 목표 ${target}개월.`;
+  const run = emergencyRunway(s);
+  if (!Number.isFinite(run)) return base;
+  return `${base} 다만 지금은 매달 ${Math.round(-s.savings).toLocaleString()}만원이 모자라, 이 부족분을 비상금에서 메우면 약 ${run.toFixed(1)}개월 뒤 바닥납니다. 그 뒤 소득이 끊기면 버틸 돈이 없으니 지출부터 줄이세요.`;
+}
+
 export function concentration(assets: Asset[], s: Summary) {
   if (s.totalAssets <= 0) return { share: 0, name: '-' };
   const top = assets.reduce<Asset | null>((m, a) => (!m || a.amount > m.amount ? a : m), null);
@@ -43,8 +71,8 @@ export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdr
   const items: (RiskCheck & { score: number })[] = [
     {
       key: 'emergency', label: '비상금', value: `${em.toFixed(1)}개월`,
-      score: scale(em, c.emergencyMonths / 2, c.emergencyMonths), level: 'good',
-      detail: `단기·비상금 용도 유동자산이 월 지출의 ${em.toFixed(1)}개월분입니다. 목표 ${c.emergencyMonths}개월.`,
+      score: emergencyScore(s, c.emergencyMonths), level: 'good',
+      detail: emergencyDetail(s, c.emergencyMonths),
     },
     {
       key: 'savings', label: '저축률', value: `${s.savingsRate.toFixed(1)}%`,
@@ -112,7 +140,7 @@ export function financialScore(profile: Profile, assets: Asset[], s: Summary, su
     withdraw?.retired
       ? { label: '인출률', weight: 20, score: scale(withdraw.rate, c.withdrawRateMax * 1.5, (c.withdrawRateMax * 2) / 3) }
       : { label: '저축률', weight: 20, score: scale(s.savingsRate, 0, c.savingsRate) },
-    { label: '비상금', weight: 15, score: scale(emergencyMonths(s), 0, c.emergencyMonths) },
+    { label: '비상금', weight: 15, score: Math.min(scale(emergencyMonths(s), 0, c.emergencyMonths), emergencyCap(s, c.emergencyMonths)) },
     { label: '부채', weight: 15, score: scale(debtRatio, c.debtRatioMax * 2, c.debtRatioMax / 2) },
     { label: '노후 준비', weight: 25, score: scale(successRate, 30, c.successTarget) },
     { label: '분산·적합', weight: 10, score: (scale(fitDiff, 40, 10) + scale(conc, 80, 40)) / 2 },
