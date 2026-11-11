@@ -106,7 +106,7 @@ export function Sensitivity() {
             <tbody>
               {expenses.map((e, i) => (
                 <tr key={e}>
-                  <td className={`py-1 pr-2 ${e === baseExpense ? 'font-semibold' : 'text-muted'}`}>{won(e)}</td>
+                  <td className={`whitespace-nowrap py-1 pr-2 ${e === baseExpense ? 'font-semibold' : 'text-muted'}`}>{won(e)}</td>
                   {returns.map((_, j) => {
                     if (!grid[i]) return <td key={j} className="p-0.5"><div className="rounded-md bg-sunken py-1.5 text-center text-muted">…</div></td>;
                     const c = cell(grid[i][j]);
@@ -133,7 +133,7 @@ export function Sensitivity() {
       {npsRows.length > 0 && (
         <Card title="국민연금 개시 나이 비교">
           <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-            <table className="w-full min-w-[340px] text-sm">
+            <table className="num-table w-full min-w-[340px] text-sm">
               <thead>
                 <tr className="border-b border-line text-right text-xs text-muted">
                   <th className="py-1.5 text-left font-medium">개시 나이</th>
