@@ -368,14 +368,21 @@ describe('엑셀 반영: 인출 중 은퇴자·소득·가드레일·반복 지�
     const g = (name: string, targetAge: number, endAge: number | undefined, amountPV: number) => ({ name, category: 'other', targetAge, amountPV, growthRate: 0, endAge }) as Goal;
     // 중기 자산이 없으면 기대수익률 3%: 59세에 100 + 60세 몫 100/1.03
     const [tuition] = planGoals([g('등록금', 59, 60, 100)], [], 58);
-    expect(tuition.recurring).toEqual({ fromAge: 59, toAge: 60, count: 2, firstPayment: 100 });
+    expect(tuition.recurring).toMatchObject({ fromAge: 59, toAge: 60, count: 2, firstPayment: 100 });
     expect(tuition.years).toBe(1);
     expect(tuition.futureValue).toBeCloseTo(100 + 100 / 1.03, 6);
     expect(tuition.monthlyNeeded).toBeCloseTo(pmtForTarget(tuition.futureValue, 0, Math.pow(1.03, 1 / 12) - 1, 12), 6);
+    // 연도별: 59세 초 100 지출 → 남은 100/1.03 을 1년 굴리면 100, 60세 초 100 지출 → 0
+    expect(tuition.recurring!.schedule.map((y) => y.age)).toEqual([59, 60]);
+    expect(tuition.recurring!.schedule[0].payment).toBe(100);
+    expect(tuition.recurring!.schedule[0].balance).toBeCloseTo(100, 6);
+    expect(tuition.recurring!.schedule[1].balance).toBeCloseTo(0, 6);
     // 이미 시작한 반복 지출은 지금부터 남은 해만
     const [tax] = planGoals([g('보유세', 55, 100, 10)], [], 58);
     expect(tax.recurring).toMatchObject({ fromAge: 58, count: 43 });
     expect(tax.years).toBe(0);
+    expect(tax.recurring!.schedule).toHaveLength(43);
+    expect(tax.recurring!.schedule.at(-1)!.balance).toBeCloseTo(0, 4);
     // 중기 자산은 일시 목표에 먼저 배정(반복 지출이 더 빨라도)
     const d = sampleData();
     const mid = [{ ...d.assets.find((x) => x.type !== 'realestate')!, purpose: 'mid' as const, amount: 1000, expectedReturn: 0, lockYear: undefined }];

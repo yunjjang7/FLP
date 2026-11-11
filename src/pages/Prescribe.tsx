@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { Slider } from '../components/fields';
 import { LifeChart } from '../components/LifeChart';
 import { Badge, Bar, Button, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
@@ -24,8 +24,11 @@ function PrescribeInner() {
   const { profile: p, summary: s } = d;
   const rx = useMemo(() => prescriptions(p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins), [p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins]);
   const buckets = useMemo(() => bucketMap(p, s, d.goalPlans), [p, s, d.goalPlans]);
-  // 필요 적립액 표에서 빠지는 목표(반복 지출·지난 목표·은퇴 분류)와 이유
+  // 필요 적립액 표에서 빠지는 목표(끝난 반복 지출·지난 목표·은퇴 분류)와 이유
   const skips = goalPlanSkips(d.goals, s.age);
+  // 연도별로 펼친 반복 지출 행
+  const [openRows, setOpenRows] = useState<string[]>([]);
+  const toggleRow = (k: string) => setOpenRows((o) => (o.includes(k) ? o.filter((x) => x !== k) : [...o, k]));
 
   // 저축 여력이 마이너스면(매달 금융자산에서 꺼내 씀) 그 값에서 시작해야 ‘현재 계획’과 같은 계산이 됨
   const initial = { monthlySavings: Math.round(s.savings), meanReturn: +s.portfolioReturn.toFixed(1), retireAge: p.retireAge, retireMonthlyExpense: p.retireMonthlyExpense };
@@ -103,10 +106,21 @@ function PrescribeInner() {
                 </tr>
               </thead>
               <tbody>
-                {d.goalPlans.map((g) => (
-                  <tr key={g.goal.id} className="border-b border-line last:border-0">
+                {d.goalPlans.map((g, i) => {
+                  const k = String(g.goal.id ?? `${g.goal.name}-${i}`);
+                  const open = !!g.recurring && openRows.includes(k);
+                  return (
+                  <Fragment key={k}>
+                  <tr className={open ? '' : 'border-b border-line last:border-0'}>
                     <td className="py-2.5">
-                      <div className="font-medium">{g.goal.name}</div>
+                      {g.recurring ? (
+                        <button type="button" onClick={() => toggleRow(k)} aria-expanded={open} className="flex items-center gap-1 text-left font-medium hover:text-brand">
+                          <span className="inline-block w-3 text-xs text-muted">{open ? '▾' : '▸'}</span>
+                          {g.goal.name}
+                        </button>
+                      ) : (
+                        <div className="font-medium">{g.goal.name}</div>
+                      )}
                       <div className="text-xs text-muted">{g.recurring && <span className="mr-1 whitespace-nowrap rounded bg-brand-soft px-1.5 font-medium text-brand">매년 반복</span>}{GOAL_CATEGORY[g.goal.category]} · 상승률 {g.goal.growthRate}%</div>
                     </td>
                     <td>
@@ -123,15 +137,49 @@ function PrescribeInner() {
                     <td className="text-right font-medium">{won(g.futureValue)}</td>
                     <td className="text-right">{won(g.allocated)}</td>
                     <td className="text-right font-semibold">{won(g.monthlyNeeded)}</td>
-                    <td className="pl-3"><Bar value={g.fundedRatio} level={g.fundedRatio >= 100 ? 'good' : g.fundedRatio >= 50 ? 'caution' : 'danger'} /></td>
+                    <td className="pl-3">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-1"><Bar value={g.fundedRatio} level={g.fundedRatio >= 100 ? 'good' : g.fundedRatio >= 50 ? 'caution' : 'danger'} /></div>
+                        <span className="w-10 text-right text-xs font-medium tabular-nums">{Math.min(999, Math.round(g.fundedRatio))}%</span>
+                      </div>
+                    </td>
                   </tr>
-                ))}
+                  {open && g.recurring && (
+                    <tr className="border-b border-line last:border-0">
+                      <td colSpan={7} className="pb-3">
+                        <div className="rounded-lg bg-sunken px-3 py-2" style={{ maxHeight: 288, overflowY: 'auto' }}>
+                          <table className="w-full text-xs num-table">
+                            <thead>
+                              <tr className="text-left text-muted">
+                                <th className="py-1 font-medium">나이</th>
+                                <th className="text-right font-medium">그해 지출(명목)</th>
+                                <th className="text-right font-medium">지출 뒤 남은 적립 잔액(연말)</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {g.recurring.schedule.map((y) => (
+                                <tr key={y.age} className="border-t border-line">
+                                  <td className="py-1">{y.age}세</td>
+                                  <td className="text-right">{won(y.payment)}</td>
+                                  <td className="text-right">{won(y.balance)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <p className="mt-1.5 text-muted">{g.recurring.fromAge}세에 미래 필요액 {won(g.futureValue)}을 모두 모았다고 보고, 해마다 초에 그해 지출을 꺼낸 뒤 남은 돈을 중기 자산 기대수익률로 1년 굴린 잔액입니다. 마지막 해에 0이 됩니다.</p>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  );
+                })}
               </tbody>
             </table>
             <p className="mt-2 text-xs text-muted">‘중기·목적자금’ 용도 자산을 시기가 빠른 목표부터 배정하고, 부족분을 해당 자산의 기대수익률로 월 적립액을 계산했습니다.</p>
             {d.goalPlans.some((g) => g.recurring) && (
               <p className="mt-1 text-xs text-muted">
-                ‘매년 반복’ 지출의 미래 필요액은 시작 나이(이미 시작했으면 지금)에 남은 해의 지출을 모두 낼 수 있도록 한 번에 갖고 있어야 할 금액입니다. 그 돈을 같은 기대수익률로 굴리며 해마다 초에 꺼내 쓴다고 가정했습니다. 중기 자산은 일시 목표에 먼저 배정하고, 남는 금액을 반복 지출에 배정합니다. 반복 지출은 노후 진단에서도 해마다 지출로 빠지므로 처방의 목적자금 적립 합계와 목적자금 바구니에는 넣지 않았습니다.
+                ‘매년 반복’ 행은 눌러서 연도별 지출과 남은 잔액을 펼쳐 볼 수 있습니다. 미래 필요액은 시작 나이(이미 시작했으면 지금)에 남은 해의 지출을 모두 낼 수 있도록 한 번에 갖고 있어야 할 금액입니다. 그 돈을 같은 기대수익률로 굴리며 해마다 초에 꺼내 쓴다고 가정했습니다. 중기 자산은 일시 목표에 먼저 배정하고, 남는 금액을 반복 지출에 배정합니다. 반복 지출은 노후 진단에서도 해마다 지출로 빠지므로 처방의 목적자금 적립 합계와 목적자금 바구니에는 넣지 않았습니다.
               </p>
             )}
           </div>

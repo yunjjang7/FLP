@@ -13,7 +13,14 @@ export interface GoalPlan {
   monthlyNeeded: number; // 필요 월 적립액(명목)
   fundedRatio: number; // 배정액의 미래가치 / 필요액 %
   /** 매년 반복 지출: 지출 구간(지난 해는 빼고)과 첫해 지출액(명목) */
-  recurring?: { fromAge: number; toAge: number; count: number; firstPayment: number };
+  recurring?: {
+    fromAge: number;
+    toAge: number;
+    count: number;
+    firstPayment: number;
+    /** 시작 나이에 미래 필요액을 다 모았을 때 해마다: 그해 초 지출액(명목), 지출 뒤 1년 굴린 연말 잔액(명목) */
+    schedule: { age: number; payment: number; balance: number }[];
+  };
 }
 
 /**
@@ -36,9 +43,16 @@ export function planGoals(goals: Goal[], assets: Asset[], currentAge: number): G
     let recurring: GoalPlan['recurring'];
     if (isRecurring(goal)) {
       // 해마다 그해 초에 내고, 남은 돈은 계속 중기 자산 수익률로 굴린다고 봄
+      const payAt = (age: number) => fvLump(goal.amountPV, goal.growthRate / 100, age - currentAge);
       futureValue = 0;
-      for (let age = from; age <= goal.endAge!; age++) futureValue += fvLump(goal.amountPV, goal.growthRate / 100, age - currentAge) / Math.pow(1 + midReturn / 100, age - from);
-      recurring = { fromAge: from, toAge: goal.endAge!, count: goal.endAge! - from + 1, firstPayment: fvLump(goal.amountPV, goal.growthRate / 100, years) };
+      for (let age = from; age <= goal.endAge!; age++) futureValue += payAt(age) / Math.pow(1 + midReturn / 100, age - from);
+      const schedule: { age: number; payment: number; balance: number }[] = [];
+      let bal = futureValue;
+      for (let age = from; age <= goal.endAge!; age++) {
+        bal = (bal - payAt(age)) * (1 + midReturn / 100);
+        schedule.push({ age, payment: payAt(age), balance: Math.max(0, bal) });
+      }
+      recurring = { fromAge: from, toAge: goal.endAge!, count: goal.endAge! - from + 1, firstPayment: payAt(from), schedule };
     }
     const n = years * 12;
     const needNow = futureValue / Math.pow(1 + r, n); // 지금 이만큼 있으면 충분
