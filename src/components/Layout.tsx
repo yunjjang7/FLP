@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
+import { applySwUpdate, useSwUpdateReady } from '../lib/swUpdate';
 import { ErrorBoundary } from './ErrorBoundary';
 
 const I = ({ d }: { d: string }) => (
@@ -17,6 +18,23 @@ export const NAV: { to: string; label: string; icon: ReactNode }[] = [
 ];
 
 const SettingsIcon = <I d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />;
+
+/** 새 버전이 받아졌을 때 새로고침 안내(모바일은 하단 탭바 위, PC는 오른쪽 아래) */
+function UpdateBanner() {
+  const ready = useSwUpdateReady();
+  if (!ready) return null;
+  return (
+    <div role="status" className="fixed inset-x-3 z-20 mx-auto flex max-w-md items-center gap-3 rounded-2xl border border-line bg-surface px-4 py-3 shadow-lg bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] md:inset-x-auto md:right-6 md:bottom-6">
+      <span className="min-w-0 flex-1 text-sm">
+        <span className="font-semibold">새 버전이 있습니다.</span>
+        <span className="text-muted"> 새로고침하면 최신 화면이 열립니다(입력한 데이터는 그대로).</span>
+      </span>
+      <button type="button" onClick={applySwUpdate} className="shrink-0 rounded-xl bg-brand px-3 py-2 text-sm font-semibold text-white">
+        새로고침
+      </button>
+    </div>
+  );
+}
 
 export function Layout() {
   const { pathname } = useLocation();
@@ -59,6 +77,8 @@ export function Layout() {
             <Outlet />
           </ErrorBoundary>
         </main>
+
+        <UpdateBanner />
 
         {/* 모바일 하단 탭바 */}
         <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 border-t border-line bg-surface/95 backdrop-blur md:hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}>

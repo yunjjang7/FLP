@@ -996,6 +996,25 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     const np = incomeTaxSchedule({ ...p, nationalPension: 200, nationalPensionAge: 58 }, 2026, undefined, [shop('self')])[1];
     expect(np.hiMonth).toBeCloseTo(((2400 + 1200 - 2000) / 12) * k, 6);
     expect(np.npPart - (np.due - (incomeTaxSchedule(p, 2026, undefined, [shop('self')])[1].due))).toBeCloseTo(1200 * k, 6);
+    // 사적연금도 건보료에 반영: 급여가 있는 해에도 사람별로 들어감
+    const priv = { ...p, incomeTax: { ...p.incomeTax, hiPrivate: true } };
+    // 본인(직장가입자) 연금계좌 과세재원 인출 1,600만: 급여 외 소득 = 임대 2,400 + 1,600 × 50% = 3,200 → 1,200만 초과분
+    const slotSelf = new Map<number, [number, number]>([[2026, [1600, 0]]]);
+    const ws = incomeTaxSchedule(priv, 2026, slotSelf, [shop('self')])[1];
+    expect(ws.hiMode).toBe('workDep');
+    expect(ws.hiMonth).toBeCloseTo(((2400 + 800 - 2000) / 12) * k, 6);
+    // 끄면 사적연금은 빠짐
+    expect(incomeTaxSchedule(p, 2026, slotSelf, [shop('self')])[1].hiMonth).toBeCloseTo((400 / 12) * k, 6);
+    // 배우자 사적연금 2,400만(전액 합산 2,000만 초과) → 피부양자 탈락, 배우자만 지역가입자(2,400 × 50%), 본인 급여 외 소득에는 안 들어감
+    const slotSp = new Map<number, [number, number]>([[2026, [0, 2400]]]);
+    const wr = incomeTaxSchedule(priv, 2026, slotSp, [shop('self')])[1];
+    expect(wr.hiMode).toBe('workRegion');
+    expect(wr.hiWork).toBeCloseTo((400 / 12) * k, 6);
+    expect(wr.hiMonth).toBeCloseTo(((400 + 1200) / 12) * k, 6);
+    // 배우자 사적연금 1,800만(2,000만 이하)은 피부양자 유지
+    const dep = incomeTaxSchedule(priv, 2026, new Map([[2026, [0, 1800] as [number, number]]]), [shop('self')])[1];
+    expect(dep.hiMode).toBe('workDep');
+    expect(dep.hiMonth).toBeCloseTo((400 / 12) * k, 6);
   });
 
   it('은퇴 전 급여가 있으면 ‘첫해 대비’를 은퇴 전·후로 나눠 은퇴 후는 급여가 끝난 해 기준', () => {

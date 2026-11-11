@@ -249,10 +249,11 @@ export interface IncomeTaxRow {
  * 채우면 0, 못 채우면 그 사람만 지역가입자(본인 소득 + 본인 명의 재산분, 고지서 역산 방식이면 세대 재산분 × 본인 명의 부동산 비율)로 계산.
  * hiDepNoReg(사업자등록 없음)이면 임대 외 사업소득 연 500만 이하는 피부양자로 인정.
  * 건보료 소득분은 전년도 소득 기준, 재산분은 현재 고지서에서 역산해 고정(증가율 입력 가능)하거나 부동산 자산으로 연도별 추정(hiPropAuto).
- * slotByYear: 사적연금도 건보료에 반영할 때 연도별 과세재원 인출액(명목).
+ * slotByYear: 사적연금도 건보료에 반영할 때 연도별 과세재원 인출액(명목). [본인, 배우자]로 주면 사람별, 숫자 하나면 본인 몫으로 봄.
+ * hiPrivate 이면 급여가 있는 해에도 사적연금을 사람별로 넣음: 직장가입자 급여 외 소득(× 반영률), 피부양자 판정 합산소득(전액), 지역가입자 본인 소득(× 반영률).
  * liabilities: 자산별 추정에서 주택 구입 대출 공제(hiLoanDeduct)를 켰을 때 쓰는 부채 목록.
  */
-export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number>, assets: Asset[] = [], liabilities: Liability[] = []): IncomeTaxRow[] {
+export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number | [number, number]>, assets: Asset[] = [], liabilities: Liability[] = []): IncomeTaxRow[] {
   const s = { ...DEFAULT_INCOME_TAX, ...(profile.incomeTax ?? {}) };
   const inf = profile.inflation / 100;
   const currentAge = nowYear - profile.birthYear;
@@ -288,6 +289,17 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
   let prevNP = 0;
   let prevSlot = 0;
   let prevPriv = 0;
+  // 사람별 사적연금(과세재원 인출 + ‘그 밖의 소득’ 사적연금, hiPrivate 일 때만), 전년도
+  let prevPrivBy: [number, number] = [0, 0];
+  const slotOf = (year: number): [number, number] => {
+    const v = slotByYear?.get(year);
+    return v === undefined ? [0, 0] : typeof v === 'number' ? [v, 0] : [v[0], hasSpouse ? v[1] : 0];
+  };
+  const privOf = (year: number, b: Record<string, [number, number]>): [number, number] => {
+    if (!s.hiPrivate) return [0, 0];
+    const sl = slotOf(year);
+    return [sl[0] + b.privatePension[0], sl[1] + b.privatePension[1]];
+  };
   let prevBy: { biz: [number, number]; rent: [number, number]; pen: [number, number]; wage: [number, number]; np: [number, number] } = { biz: [0, 0], rent: [0, 0], pen: [0, 0], wage: [0, 0], np: [0, 0] };
   let base = { year: nowYear, total: 0 };
   let baseSwitched = false;
@@ -336,16 +348,18 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     if (n === 0) {
       prevP = P;
       prevNP = np;
-      prevSlot = slotByYear?.get(year) ?? 0;
+      prevSlot = slotOf(year)[0] + slotOf(year)[1];
       prevPriv = sum('privatePension');
+      prevPrivBy = privOf(year, by);
       prevBy = { biz, rent: [rentSelf, rentSpouse], pen, wage: [by.wage[0], by.wage[1]], np: npBy };
     }
     const gross = s.hiPropAuto ? hiPropBase(assets, nowYear, year, s.hiPubRatio ?? 69, s.hiFairRatio ?? 60) : 0;
     const loanFull = s.hiPropAuto && s.hiLoanDeduct ? Math.min(gross, hiLoanDeduct(assets, liabilities, nowYear, year, currentAge)) : 0;
     const Z = s.hiPrivate ? ((prevSlot + prevPriv) * pub * rate) / 12 : 0;
     // 급여가 있는 해: 일하는 사람은 직장가입자(소득월액 보험료), 나머지 한 명은 피부양자 또는 혼자 지역가입자. dropNP: 국민연금을 뺀 경우(국민연금 몫 계산용)
+    // 사적연금(hiPrivate)은 사람별로 연금처럼: 급여 외 소득·지역 소득분은 × 반영률, 피부양자 판정 합산소득은 전액
     const mixed = (propNow: number, dropNP = false) => {
-      const penOf = (k: number) => prevBy.pen[k] - (dropNP ? prevBy.np[k] : 0);
+      const penOf = (k: number) => prevBy.pen[k] - (dropNP ? prevBy.np[k] : 0) + prevPrivBy[k];
       const extra = (k: number) => prevBy.biz[k] + (penOf(k) + prevBy.wage[k]) * pub;
       const who = hasSpouse ? [0, 1] : [0];
       const work = who.filter((k) => emp[k]).reduce((a, k) => a + (Math.max(0, extra(k) - HI_WORK_EXTRA) / 12) * rate, 0);
@@ -358,7 +372,7 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
       if (hiDependent(prevBy.biz[k], prevBy.biz[k] + penOf(k) + prevBy.wage[k], s.hiPropAuto ? propBase : null, noReg)) return { mode: 'workDep' as HiMode, work, Q: 0, R: 0, Z: 0, share: 1, propBase: 0, loanDed: 0 };
       // 고지서 역산 방식: 세대 재산분을 그 사람 명의 부동산 비율만큼만(부동산 자산이 없으면 나눌 수 없어 전체)
       const share = s.hiPropAuto ? 1 : (hiPropShare(assets, nowYear, year, k as 0 | 1) ?? 1);
-      return { mode: 'workRegion' as HiMode, work, Q: (extra(k) / 12) * rate, R: s.hiPropAuto ? hiPropMonthly(propBase) : propNow * share, Z, share, propBase, loanDed };
+      return { mode: 'workRegion' as HiMode, work, Q: (extra(k) / 12) * rate, R: s.hiPropAuto ? hiPropMonthly(propBase) : propNow * share, Z: 0, share, propBase, loanDed }; // 사적연금은 extra 에 들어 있어 Z 는 0
     };
     if (n === 0) {
       // 재산분 역산: 지금 고지서에서 소득분을 뺀 나머지. 한 명 직장 + 한 명 지역이면 소득월액 보험료와 지역 소득분을 뺌.
@@ -395,8 +409,9 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, salary, hiMode: hi.mode, hiWork: hi.work * ltc, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, baseYear: base.year, npPart, rentPart: increase - npPart });
     prevP = P;
     prevNP = np;
-    prevSlot = slotByYear?.get(year) ?? 0;
+    prevSlot = slotOf(year)[0] + slotOf(year)[1];
     prevPriv = sum('privatePension');
+    prevPrivBy = privOf(year, by);
     prevBy = { biz, rent: [rentSelf, rentSpouse], pen, wage: [by.wage[0], by.wage[1]], np: npBy };
   }
   return rows;

@@ -1,9 +1,9 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HashRouter, Route, Routes } from 'react-router-dom';
-import { registerSW } from 'virtual:pwa-register';
 import { Layout } from './components/Layout';
 import './index.css';
+import { startSwUpdate } from './lib/swUpdate';
 import Data from './pages/Data';
 import Home from './pages/Home';
 import Invest from './pages/Invest';
@@ -12,7 +12,7 @@ import Retire from './pages/Retire';
 import Withdraw from './pages/Withdraw';
 import { FlpProvider } from './store/FlpContext';
 
-registerSW({ immediate: true });
+startSwUpdate();
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

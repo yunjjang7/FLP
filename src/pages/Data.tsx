@@ -306,7 +306,7 @@ function IncomeTaxForm() {
             {num('hiPublic', '연금·근로소득 건보료 반영률', '%', '지역가입자 50')}
             {!t.hiPropAuto && num('hiPropGrowth', '재산분 연 증가율', '%', '재산 과세표준이 오르면', 0.1)}
             {hasSpouse && ((p.wageGross ?? 0) > 0 || (p.spouseWageGross ?? 0) > 0) && yn('hiDepNoReg', '피부양자 판정: 사업자등록 없음', '예: 임대 외 사업소득 연 500만원 이하면 피부양자 인정')}
-            {yn('hiPrivate', '사적연금도 건보료에 반영', '제도가 바뀌면 예')}
+            {yn('hiPrivate', '사적연금도 건보료에 반영', '제도가 바뀌면 예 · 급여 있는 해의 직장가입자·피부양자 판정에도')}
             {yn('addToDraw', '늘어난 세금 인출에 더하기', '국민연금 몫만큼 연금계좌 인출 증가')}
           </div>
           <p className="mt-3 text-xs text-muted">
