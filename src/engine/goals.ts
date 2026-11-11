@@ -137,6 +137,9 @@ export function loanBalanceAt(l: Liability, currentAge: number, years: number) {
 }
 
 
+/** 만기일시 상환인데 상환 종료 나이(만기)가 비었거나 지난 대출: 원금 상환이 계산에 빠짐 */
+export const bulletNoMaturity = (l: Liability, currentAge: number) => l.repay === 'bullet' && l.balance > 0 && !((l.endAge ?? 0) > currentAge);
+
 /**
  * 만기일시 상환 대출의 원금 일시 상환: 만기 나이에 남은 원금을 자산에서 한 번에 뺌.
  * 원금은 명목 금액 그대로라 실질 금액 = 원금 ÷ (1 + 물가)^(만기까지 햇수). 만기 나이가 없거나 지났으면 없음.

@@ -1,4 +1,6 @@
-import type { Asset, Level, Profile } from '../types';
+import type { Asset, Level, Liability, Profile } from '../types';
+import { won } from '../lib/format';
+import { bulletNoMaturity } from './goals';
 import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
@@ -54,6 +56,19 @@ export function concentration(assets: Asset[], s: Summary) {
 /** 인출률 판정: 상한의 2/3 이하 양호, 상한 이하 주의, 초과 위험 */
 export function withdrawLevel(rate: number, max: number): Level {
   return rate <= (max * 2) / 3 ? 'good' : rate <= max ? 'caution' : 'danger';
+}
+
+/**
+ * 만기일시 상환인데 만기 나이가 비어 원금 상환이 계산에 빠진 대출 점검(위험).
+ * 점검 목록(홈·투자 점검)에만 보이고 재무점수(financialScore)에는 넣지 않음.
+ */
+export function bulletChecks(liabilities: Liability[], age: number): RiskCheck[] {
+  return liabilities
+    .filter((l) => bulletNoMaturity(l, age))
+    .map((l) => ({
+      key: `bullet-${l.id ?? l.name}`, label: `${l.name} 만기 나이 입력 필요`, value: `원금 ${won(l.balance)}`, level: 'danger',
+      detail: '만기일시 상환인데 상환 종료 나이가 비어 있어 원금 상환이 노후 계산에 빠져 있습니다. 데이터·설정 → 부채에서 만기 나이를 넣으세요.',
+    }));
 }
 
 export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdraw?: { rate: number; age: number; retired: boolean }): RiskCheck[] {

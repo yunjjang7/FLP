@@ -9,9 +9,9 @@ import { Button, Card, PageHeader } from '../components/ui';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
 import { won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
-import { equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
+import { bulletNoMaturity, equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
-import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf } from '../engine/incomeTax';
+import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf } from '../engine/incomeTax';
 import type { Asset, AssetType, ReUse, ContribPlan, Criteria, ExpenseBand, ExpenseMode, Goal, IncomeKind, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
@@ -257,8 +257,17 @@ function IncomeTaxForm() {
     </Labeled>
   );
   const hasSpouse = p.spouseBirthYear > 0;
-  const { assets, liabilities } = useFlp();
-  const loanCount = liabilities.filter((l) => l.homeLoan === 'buy').length;
+  const { assets, liabilities, summary } = useFlp();
+  const homeLoans = liabilities.filter((l) => l.homeLoan === 'buy');
+  // 올해 공제액: 표시한 대출 잔액 합계 × 60%, 한도 5,000만(주택이 2채 이상이면 0)
+  const nowYear = p.birthYear + summary.age;
+  const loanDed = hiLoanDeduct(assets, homeLoans, nowYear, nowYear, summary.age);
+  const loanBal = homeLoans.reduce((a, l) => a + l.balance, 0);
+  const loanWhy = loanBal > 0 && loanDed === 0 ? '주택 2채 이상이라 제외' : (loanBal * HI_LOAN_RATE) / 100 > HI_LOAN_CAP ? '잔액 × 60%가 한도 5,000만 넘음' : '잔액 × 60%';
+  const loanHint =
+    homeLoans.length === 0
+      ? '부채 탭에서 대출을 ‘실거주 주택 구입 대출’로 표시'
+      : `${homeLoans.map((l) => `${l.name} ${won(l.balance)}`).join(' · ')} → 올해 공제 ${won(loanDed)}(${loanWhy})${t.hiLoanDeduct ? '' : ' · ‘예’로 해야 반영'}`;
   const rentCount = (p.incomes ?? []).filter((i) => incomeKindOf(i) === 'rent').length + assets.filter((a) => a.type === 'realestate' && reUseOf(a) === 'rental' && (a.rent ?? 0) > 0).length;
   return (
     <Card
@@ -285,7 +294,7 @@ function IncomeTaxForm() {
               <>
                 {num('hiPubRatio', '시세 대비 공시가격', '%', '공동주택 평균 69 안팎', 1)}
                 {num('hiFairRatio', '공정시장가액비율', '%', '주택 60 · 토지·건물 70', 1)}
-                {yn('hiLoanDeduct', '주택 구입 대출 공제', loanCount > 0 ? `부채 탭 표시 대출 ${loanCount}건 · 잔액 × 60%, 한도 5,000만` : '부채 탭에서 대출을 ‘실거주 주택 구입 대출’로 표시')}
+                {yn('hiLoanDeduct', '주택 구입 대출 공제', loanHint)}
               </>
             ) : (
               num('hiNow', '현재 월 건강보험료', '만원', '고지서(장기요양 포함). 재산분 역산', 0.1)
@@ -714,10 +723,10 @@ function ListEditor({ table }: { table: ListTable }) {
       )}
       {rows.length === 0 && <Card><p className="py-6 text-center text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘가져오기·백업’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
       {rows.map((r) => (
-        <Card key={r.id}>
+        <Card key={r.id} className={table === 'liabilities' && bulletNoMaturity(r as unknown as Liability, data.summary.age) ? 'border-warn! ring-1 ring-warn' : ''}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
             {fieldsOf(r).map((f) => (
-              <div key={f.key} className={f.key === 'name' ? 'col-span-2 md:col-span-1' : ''}>
+              <div key={f.key} id={`field-${table}-${r.id}-${f.key}`} className={f.key === 'name' ? 'col-span-2 md:col-span-1' : ''}>
                 <Labeled label={f.unit ? `${f.short ?? f.label}(${f.unit})` : f.short ?? f.label} hint={f.hint}>
                   {f.kind === 'number' ? (
                     <NumberField value={Number(r[f.key] ?? 0)} step={f.step} onChange={(v) => update(r, f.key, v)} />
@@ -762,7 +771,23 @@ function ListEditor({ table }: { table: ListTable }) {
             </div>
           )}
           <div className="mt-3 flex items-center justify-between gap-3">
+            {table === 'liabilities' && bulletNoMaturity(r as unknown as Liability, data.summary.age) ? (
+              // 만기 나이가 빈 만기일시 대출: 경고색 안내, 누르면 상환 종료 나이 입력칸으로 이동
+              <button
+                type="button"
+                className="text-left text-xs font-medium text-warn underline decoration-dotted underline-offset-2"
+                onClick={() => {
+                  const box = document.getElementById(`field-liabilities-${r.id}-endAge`);
+                  box?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                  box?.querySelector('input')?.focus({ preventScroll: true });
+                  box?.querySelector('input')?.select();
+                }}
+              >
+                {loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)} → 상환 종료 나이 입력
+              </button>
+            ) : (
             <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}{table === 'insurance' && insuranceNote(r as unknown as Insurance, data.profile, data.summary.age, data.profile.retireAge)}</span>
+            )}
             <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
               삭제
             </button>

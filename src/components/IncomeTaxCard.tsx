@@ -21,6 +21,8 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
   const addToDraw = p.incomeTax?.addToDraw ?? false;
   const propAuto = p.incomeTax?.hiPropAuto ?? false;
   const loanDed = propAuto && rows.some((r) => r.loanDed > 0);
+  // 대출 공제가 끝나는 해: 공제가 있다가 처음 0이 되는 해(상환 끝 또는 2주택)
+  const loanEnd = loanDed ? rows.find((r, i) => i > 0 && r.loanDed <= 0 && rows[i - 1].loanDed > 0) : undefined;
   const hasOther = rows.some((r) => r.other > 0);
   const hasSalary = rows.some((r) => r.salary > 0);
   const postBase = rows.find((r) => r.baseYear !== first.year);
@@ -110,7 +112,11 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
                 <td>{won(r.npSelf + r.npSpouse)}</td>
                 <td className="whitespace-nowrap">{won(r.taxSelf, false)}{hasSpouse && <> / {won(r.taxSpouse, false)}</>}</td>
                 <td>{won(r.due)}</td>
-                {loanDed && <td className="text-muted">{r.loanDed > 0 ? `−${won(r.loanDed)}` : '-'}</td>}
+                {loanDed && (
+                  <td className={r === loanEnd ? 'font-semibold text-warn' : 'text-muted'}>
+                    {r.loanDed > 0 ? `−${won(r.loanDed)}` : r === loanEnd ? '0 (공제 끝)' : '-'}
+                  </td>
+                )}
                 {propAuto && <td className="whitespace-nowrap text-muted">{won(r.propBase)} · {won(r.hiProp)}</td>}
                 <td>{won(r.hiMonth)}</td>
                 <td className="font-semibold">{won(r.total)}</td>
@@ -125,7 +131,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
         {hasSalary && <li>은퇴 전 급여 = 프로필의 ‘은퇴 전 세전 총급여’(부부 합계, 물가만큼 오름)입니다. 은퇴 전 해까지 월세 등과 합쳐 종합소득세를 계산하고, 회사에서 연말정산으로 낸 세금(급여만 있다고 본 결정세액)은 기납부로 빼서 5월 추가납부에는 월세 등 때문에 늘어난 세금만 들어갑니다. 건보료는 직장에서 낸다고 보고 지역 건보료에는 넣지 않습니다.</li>}
         {hasOther && <li>그 밖의 소득 = 데이터·설정 ‘그 밖의 은퇴 후 소득’ 중 근로·사업·공적연금·사적연금으로 고른 항목의 세전 수입입니다. 근로소득은 근로소득공제·근로소득세액공제·표준세액공제 13만을 하고, 연말정산으로 이미 낸 세금(근로소득만 있다고 본 결정세액)을 기납부로 빼서 5월 추가납부에는 다른 소득과 합쳐 늘어난 세금만 들어갑니다. 사업소득은 필요경비율을 빼고, 공무원·사학·군인연금은 국민연금과 합쳐 연금소득공제를 합니다. 사적연금은 종소세에서 빼고 ‘사적연금도 건보료에 반영’일 때만 건보료에 넣습니다.</li>}
         <li>사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 들어가지 않습니다(2026년 기준). 부부 한 세대 지역가입자로 계산하고, 세율·보험료율은 지금 기준으로 고정합니다.</li>
-        <li>건보료 소득분은 전년도 소득(임대·사업소득 + (공적연금·근로소득) × 반영률)으로, 재산분은 {propAuto ? '부동산 자산 시세로 구한 재산 과세표준(부부 합산, 매각 연도부터 제외)에서 기본공제 1억을 빼고 재산등급 점수 × 211.5원(2026년)으로 해마다 추정합니다' + (loanDed ? '. 대출 공제 = 실거주 주택 구입 대출의 그 해 잔액 × 60%(한도 5,000만, 1세대 1주택일 때만)를 재산 과표에서 뺀 금액입니다' : '') : '지금 고지서에서 역산합니다'}. 국민연금 몫 = 국민연금 때문에 늘어난 종소세(원천징수 뺌) + 건보료 소득분.</li>
+        <li>건보료 소득분은 전년도 소득(임대·사업소득 + (공적연금·근로소득) × 반영률)으로, 재산분은 {propAuto ? '부동산 자산 시세로 구한 재산 과세표준(부부 합산, 매각 연도부터 제외)에서 기본공제 1억을 빼고 재산등급 점수 × 211.5원(2026년)으로 해마다 추정합니다' + (loanDed ? '. 대출 공제 = 실거주 주택 구입 대출의 그 해 잔액 × 60%(한도 5,000만, 1세대 1주택일 때만)를 재산 과표에서 뺀 금액입니다' + (loanEnd ? `. ${loanEnd.year}년(${loanEnd.age}세)부터는 대출 상환이 끝나거나 주택이 2채 이상이 되어 공제가 없어지고 재산분이 그만큼 오릅니다` : '. 표의 마지막 해까지 공제가 이어집니다') : '') : '지금 고지서에서 역산합니다'}. 국민연금 몫 = 국민연금 때문에 늘어난 종소세(원천징수 뺌) + 건보료 소득분.</li>
         {postBase && <li>기준 해 대비 = 은퇴 전 급여가 있는 해는 {first.year}년과, 급여가 모두 끝난 {postBase.baseYear}년부터는 {postBase.baseYear}년(은퇴 후 첫해)과 비교한 금액입니다. 은퇴하면 급여 때문에 높던 세율이 내려가 세금이 줄어드는데, 이를 ‘감소’로 보이지 않게 은퇴 후는 따로 비교합니다.</li>}
         <li>{postBase ? '기준 해' : '첫해'} 부담은 이미 생활비에 들어 있다고 봅니다. 늘어나는 금액은 {addToDraw ? '국민연금 몫만큼 해마다 연금계좌에서 더 꺼내도록 노후 진단·인출에 반영했습니다.' : '생활비 안에서 쓰는 것으로 보고 인출에는 넣지 않았습니다(데이터·설정에서 바꿀 수 있음).'}</li>
       </ul>

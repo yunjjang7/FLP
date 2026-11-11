@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { sampleData } from '../db/sample';
 import type { Asset } from '../types';
-import { buildPlanInput, bulletRepayments, equalMonthlyDecline, loanSchedule, retirePremiums, equalPrincipal, loanBalanceAt, loanEndAge, planGoals } from './goals';
+import { buildPlanInput, bulletNoMaturity, bulletRepayments, equalMonthlyDecline, loanSchedule, retirePremiums, equalPrincipal, loanBalanceAt, loanEndAge, planGoals } from './goals';
+import { bulletChecks } from './risk';
 import { hiLoanDeduct, hiPropBase, hiPropScore, incomeTaxSchedule } from './incomeTax';
 import { debtAnnualAt, debtPaymentAt, incomeValue, inflowAt, savingsAt } from './montecarlo';
 import { summarize } from './portfolio';
@@ -223,6 +224,65 @@ describe('부동산', () => {
     const off = incomeTaxSchedule({ ...p, incomeTax: { on: true, hiPropAuto: true } as never }, Y, undefined, d.assets, [loan]);
     expect(off[0].loanDed).toBe(0);
     expect(off[0].propBase).toBeCloseTo(gross, 6);
+  });
+
+  it('주택 구입 대출 공제 연도별: 만기일시는 만기 전까지 원금 그대로, 만기 해부터 0', () => {
+    const d = sampleData(Y);
+    const age = Y - d.profile.birthYear;
+    const bullet = { name: '만기일시', balance: 6000, rate: 4, monthlyPayment: 20, endAge: age + 5, repay: 'bullet' as const, homeLoan: 'buy' as const };
+    const ded = (n: number, l = bullet) => hiLoanDeduct(d.assets, [l], Y, Y + n, age);
+    for (let n = 0; n < 5; n++) expect(ded(n)).toBeCloseTo(3600, 9);
+    expect(ded(5)).toBe(0);
+    expect(ded(8)).toBe(0);
+    // 원금이 커도 한도 5,000만, 만기 나이가 비어 있으면 원금이 줄지 않아 계속 공제
+    expect(ded(4, { ...bullet, balance: 30000 })).toBe(5000);
+    expect(ded(30, { ...bullet, endAge: 0 })).toBeCloseTo(3600, 9);
+  });
+
+  it('주택 구입 대출 공제 연도별: 원리금균등은 잔액 × 60%가 해마다 줄고, 한도 아래로 내려오면 그때부터 줄어듦', () => {
+    const d = sampleData(Y);
+    const age = Y - d.profile.birthYear;
+    const amort = { name: '원리금균등', balance: 10000, rate: 4, monthlyPayment: 150, endAge: 0, homeLoan: 'buy' as const };
+    const end = loanEndAge(amort, age).age;
+    const ded = (n: number) => hiLoanDeduct(d.assets, [amort], Y, Y + n, age);
+    let prev = Infinity;
+    for (let n = 0; age + n < end; n++) {
+      const v = ded(n);
+      expect(v).toBeCloseTo(Math.min(5000, loanBalanceAt(amort, age, n) * 0.6), 9);
+      expect(v).toBeLessThanOrEqual(prev);
+      prev = v;
+    }
+    expect(ded(0)).toBe(5000); // 1억 × 60% = 6,000 → 한도
+    const firstUnder = Array.from({ length: end - age }, (_, n) => n).find((n) => loanBalanceAt(amort, age, n) * 0.6 < 5000)!;
+    expect(firstUnder).toBeGreaterThan(0);
+    expect(ded(firstUnder - 1)).toBe(5000);
+    expect(ded(firstUnder)).toBeLessThan(5000);
+    expect(ded(end - age)).toBe(0); // 상환이 끝난 해
+  });
+
+  it('만기 나이 빈 만기일시 대출 판정', () => {
+    const b = { name: 'b', balance: 6000, rate: 4, monthlyPayment: 20, endAge: 0, repay: 'bullet' as const };
+    expect(bulletNoMaturity(b, 50)).toBe(true);
+    expect(bulletNoMaturity({ ...b, endAge: 50 }, 50)).toBe(true); // 만기가 지났거나 올해
+    expect(bulletNoMaturity({ ...b, endAge: 55 }, 50)).toBe(false);
+    expect(bulletNoMaturity({ ...b, balance: 0 }, 50)).toBe(false);
+    expect(bulletNoMaturity({ ...b, repay: undefined }, 50)).toBe(false);
+  });
+  it('만기 나이 빈 대출은 점검 목록에 위험으로 뜸(재무점수는 financialScore가 따로 계산)', () => {
+    const b = { id: 7, name: '사업자금', balance: 6000, rate: 4, monthlyPayment: 20, endAge: 0, repay: 'bullet' as const };
+    const c = bulletChecks([b, { ...b, id: 8, endAge: 60 }], 50);
+    expect(c).toHaveLength(1);
+    expect(c[0]).toMatchObject({ key: 'bullet-7', label: '사업자금 만기 나이 입력 필요', level: 'danger' });
+  });
+
+
+  it('주택 구입 대출 공제: 2주택인 동안은 0, 한 채를 판 해부터 다시 공제', () => {
+    const d = sampleData(Y);
+    const age = Y - d.profile.birthYear;
+    const loan = { name: '주담대', balance: 6000, rate: 0, monthlyPayment: 0, endAge: 0, repay: 'bullet' as const, homeLoan: 'buy' as const };
+    const assets = [...d.assets, rental({ lockYear: Y + 3 })];
+    expect(hiLoanDeduct(assets, [loan], Y, Y + 2, age)).toBe(0);
+    expect(hiLoanDeduct(assets, [loan], Y, Y + 3, age)).toBeCloseTo(3600, 9);
   });
 });
 

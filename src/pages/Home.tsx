@@ -15,6 +15,7 @@ export default function Home() {
   if (!d.hasData) return <><PageHeader title="내 자산 한눈에" /><EmptyState /></>;
   const s = d.summary;
   const scoreLevel: Level = d.score.total >= 75 ? 'good' : d.score.total >= 50 ? 'caution' : 'danger';
+  // 위험 먼저(정렬이 안정적이라 맨 앞의 ‘만기 나이 입력 필요’는 그대로 맨 앞)
   const alerts = d.checks.filter((c) => c.level !== 'good').sort((a, b) => (a.level === 'danger' ? -1 : 0) - (b.level === 'danger' ? -1 : 0)).slice(0, 3);
   // 이미 은퇴했으면 노후 진단과 같은 방식(생활비 − 연금·소득 + 대출 = 금융자산 인출, 첫해 실질 월액)
   const retiredFlow = d.start.retired

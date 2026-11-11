@@ -5,7 +5,7 @@ import { buildPlanInput, planGoals, type GoalPlan } from '../engine/goals';
 import { insuranceGap, type InsuranceGap } from '../engine/insurance';
 import { retirementNeed, simulate, withdrawStart, type PlanInput, type SimResult } from '../engine/montecarlo';
 import { summarize, type Summary } from '../engine/portfolio';
-import { financialScore, riskChecks, type RiskCheck } from '../engine/risk';
+import { bulletChecks, financialScore, riskChecks, type RiskCheck } from '../engine/risk';
 import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd } from '../types';
 
 export interface FlpData {
@@ -65,7 +65,7 @@ export function FlpProvider({ children }: { children: ReactNode }) {
       start,
       goalPlans: planGoals(goals, assets, summary.age),
       ins,
-      checks: riskChecks(profile, assets, summary, start),
+      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, summary, start)],
       score: financialScore(profile, assets, summary, sim.successRate, ins, start),
     };
   }, [raw]);
