@@ -87,7 +87,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
         <table className="w-full text-sm num-table" style={{ minWidth: (loanDed ? 1100 : propAuto ? 1000 : 860) + (hasOther ? 100 : 0) + (hasSalary ? 100 : 0) }}>
           <thead className="sticky top-0 bg-surface">
             <tr className="border-b border-line text-right text-xs text-muted">
-              <th className="sticky left-0 z-10 bg-surface py-2 pr-2 text-left font-medium shadow-[1px_0_0_var(--c-line)]">연도</th>
+              <th className="sticky left-0 z-10 w-[4.5rem] bg-surface py-2 pr-2 text-left font-medium shadow-[1px_0_0_var(--c-line)]">연도</th>
               {hasSalary && <th className="font-medium">은퇴 전 급여</th>}
               <th className="font-medium">임대수입</th>
               {hasOther && <th className="font-medium">그 밖의 소득</th>}
@@ -108,7 +108,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
                 {/* 첫 열은 가로 스크롤해도 고정, 나이·기준 표시는 연도 아래 줄로 내려 폭을 줄임 */}
                 <td className="sticky left-0 bg-surface py-1.5 pr-2 text-left font-medium leading-tight shadow-[1px_0_0_var(--c-line)]">
                   {r.year}
-                  <span className="block whitespace-nowrap text-[11px] font-normal text-muted">
+                  <span className="block text-[11px] font-normal text-muted">
                     {r.age}세
                     {splitBase && r.year === r.baseYear && <span className="ml-1 rounded bg-sunken px-1 text-[10px]">{r.year === first.year ? '은퇴 전 기준' : '은퇴 후 기준'}</span>}
                   </span>
