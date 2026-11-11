@@ -165,7 +165,9 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
       out.push({
         area: '노후', level: 'caution',
         title: `은퇴 시점 ${input.retireAge}세 → ${Math.round(needAge)}세 조정 시 목표 달성`,
-        detail: '다른 조건을 유지할 때 은퇴를 늦추면 적립 기간이 늘고 인출 기간이 줄어듭니다.',
+        detail: s.savings < 0
+          ? `다른 조건을 유지할 때 은퇴를 늦추면 인출 기간이 줄어듭니다. 다만 지금은 매달 ${fmt(-s.savings)}원이 모자라 은퇴 전에도 자산이 줄고 있으므로, 은퇴를 늦추는 것만으로는 부족하고 지출을 줄이는 것이 먼저입니다.`
+          : '다른 조건을 유지할 때 은퇴를 늦추면 적립 기간이 늘고 인출 기간이 줄어듭니다.',
       });
     }
     const fixedExpense = solveFor(input, (i, v) => ({ ...i, retireExpenseAnnual: v * 12 }), 50, profile.retireMonthlyExpense, c.successTarget, false);

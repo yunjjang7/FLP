@@ -129,7 +129,7 @@ export default function Retire() {
           </div>
           {preChanges.length > 0 && (
             <div className="mt-3 space-y-1.5 border-t border-line pt-2.5 text-sm">
-              <div className="text-xs font-semibold text-muted">은퇴 전 저축 변화 (월, 그 나이부터)</div>
+              <div className="text-xs font-semibold text-muted">은퇴 전 저축 변화 (월, 그 나이부터){inp.annualSavings < 0 && ` · 지금 월 ${won(-inp.annualSavings / 12)} 부족에서 +는 부족분 감소`}</div>
               {preChanges.map((x) => (
                 <Line key={`${x.label}-${x.age}`} label={x.label} value={`${x.monthly >= 0 ? '+' : '−'}${won(Math.abs(x.monthly))}`} muted />
               ))}

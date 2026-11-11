@@ -126,6 +126,8 @@ describe('샘플 데이터 통합', () => {
     const rx = prescriptions(d.profile, short, inp, rate, planGoals(d.goals, d.assets, s.age), insuranceGap(d.profile, short, d.insurance, d.goals));
     const sv = rx.find((x) => x.area === '저축' && x.detail.includes('꺼내 쓰는'));
     expect(sv?.title).toMatch(/부족/);
+    // 은퇴 나이 처방이 나오면 ‘적립 기간이 늘어난다’ 대신 부족분부터 줄이라고 안내
+    for (const x of rx.filter((r) => r.title.startsWith('은퇴 시점'))) expect(x.detail).toContain('지출을 줄이는 것이 먼저');
   });
   it('비상금: 저축 여력이 마이너스면 부족분으로 몇 개월 뒤 바닥나는지 보여 주고 점수를 낮춤', () => {
     const fund = 3300;
