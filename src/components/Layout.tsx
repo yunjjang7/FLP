@@ -32,17 +32,14 @@ export function Layout() {
           </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
-          {NAV.map((n) => (
+          {/* 데이터·설정은 노후 인출 바로 아래 */}
+          {[...NAV, { to: '/data', label: '데이터·설정', icon: SettingsIcon }].map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${isActive ? 'bg-brand-soft text-brand' : 'text-muted hover:bg-sunken hover:text-ink'}`}>
               {n.icon}
               {n.label}
             </NavLink>
           ))}
         </nav>
-        <NavLink to="/data" className={({ isActive }) => `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${isActive ? 'bg-brand-soft text-brand' : 'text-muted hover:bg-sunken hover:text-ink'}`}>
-          {SettingsIcon}
-          데이터·설정
-        </NavLink>
       </aside>
 
       <div className="min-w-0 flex-1">

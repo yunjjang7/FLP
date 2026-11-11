@@ -3,13 +3,13 @@ import { sampleData } from '../db/sample';
 import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, realRate, scale } from './finance';
 import { buildPlanInput, expenseSteps, goalItemsFrom, loanEndAge, lockedInflow, planGoals, retireIncomes } from './goals';
 import { CRITICAL_BASE, insuranceGap } from './insurance';
-import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
+import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, GUARD_CUTS, GUARD_DROPS, guardrailSim, incomeValue, weakestGuardrail, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
-import { bucketMap, emergencyPrescription, goalPrescription, prescriptions, savingsPrescription } from './prescribe';
+import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, prescriptions, savingsPrescription } from './prescribe';
 import { emergencyCap, emergencyRunway, financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
 import type { Goal, PlanBase } from '../types';
@@ -77,6 +77,41 @@ describe('몬테카를로', () => {
     expect(off.p50).toEqual(now.p50);
     // 변동성 0이면 하락장이 없어 결과가 같음
     expect(simulate({ ...base, volatility: 0, guardrail: { drop: 20, cut: 10 } }, 20).p50).toEqual(simulate({ ...base, volatility: 0 }, 20).p50);
+  });
+  it('가드레일 결과 재사용: 같은 입력·설정이면 같은 객체, 지금 방식과 같은 시장 경로', () => {
+    const a = guardrailSim(base, { drop: 20, cut: 10 });
+    expect(guardrailSim(base, { drop: 20, cut: 10 })).toBe(a);
+    expect(guardrailSim(base, { drop: 15, cut: 10 })).not.toBe(a);
+    expect(a.successRate).toBe(simulate({ ...base, guardrail: { drop: 20, cut: 10 } }, 1000).successRate);
+    // 감축이 클수록 성공확률이 줄지 않음
+    expect(guardrailSim(base, { drop: 20, cut: 20 }).successRate).toBeGreaterThanOrEqual(guardrailSim(base, { drop: 20, cut: 5 }).successRate);
+  });
+  it('감축 해 나이 구간 분포: 은퇴 나이부터 5세 단위, 합계는 평균 감축 연수', () => {
+    const g = guardrailSim(base, { drop: 15, cut: 10 });
+    const start = Math.max(base.currentAge, base.retireAge);
+    expect(g.cutHistogram[0].age).toBe(start);
+    g.cutHistogram.forEach((x, i) => expect(x.age).toBe(start + i * 5));
+    expect(g.cutHistogram.reduce((a, x) => a + x.years, 0)).toBeCloseTo(g.cutYearsAvg, 6);
+    expect(simulate(base, 100).cutHistogram).toEqual([]);
+  });
+  it('가드레일 처방: 목표를 넘는 조합 가운데 감축 부담이 가장 작은 설정', () => {
+    const now = simulate(base).successRate;
+    const target = Math.min(99, now + 3);
+    const { pick, best } = weakestGuardrail(base, target);
+    const rx = guardrailPrescription(base, now, target, base.retireAge, base.lifeExpectancy);
+    if (pick) {
+      expect(pick.sim.successRate).toBeGreaterThanOrEqual(target);
+      for (const d of GUARD_DROPS) for (const c of GUARD_CUTS) {
+        const s = guardrailSim(base, { drop: d, cut: c });
+        if (s.successRate >= target) expect(s.cutYearsAvg * c).toBeGreaterThanOrEqual(pick.sim.cutYearsAvg * pick.cut - 1e-9);
+      }
+      expect(rx?.title).toContain(`−${pick.drop}%`);
+    } else {
+      expect(best.sim.successRate).toBeLessThan(target);
+    }
+    // 이미 아주 높은 목표면 가장 강한 설정으로도 못 넘어 미달 안내
+    const hard = guardrailPrescription(base, now, 100.1, base.retireAge, base.lifeExpectancy);
+    if (hard) expect(hard.title).toContain('미달');
   });
   it('가드레일 감축은 생활비(고정액)에만 적용, 대출 상환은 그대로', () => {
     const debts = [{ name: '대출', endAge: 90, annual: 500 }];

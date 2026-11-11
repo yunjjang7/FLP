@@ -2,7 +2,7 @@ import { won } from '../lib/format';
 import type { Level, Profile } from '../types';
 import type { GoalPlan } from './goals';
 import type { InsuranceGap } from './insurance';
-import { debtAnnualAt, deterministicPath, solveFor, withdrawStart, type PlanInput } from './montecarlo';
+import { debtAnnualAt, deterministicPath, expenseAt, nominalFactor, solveFor, weakestGuardrail, withdrawStart, type PlanInput } from './montecarlo';
 import { RISK_PROFILES, type Summary } from './portfolio';
 import { emergencyMonths, emergencyRunway, withdrawLevel } from './risk';
 
@@ -130,6 +130,31 @@ export function emergencyPrescription(s: Summary, target: number): Prescription 
   return null;
 }
 
+/**
+ * 하락장 가드레일 처방: 강도별 조합(하락장 기준 × 생활비 감축) 가운데 목표 확률을 넘는 가장 약한 설정.
+ * 평생 줄이는 생활비 부담(평균 감축 연수 × 감축 비율)이 가장 작은 조합을 고르고, 없으면 가장 강한 조합으로도 모자란다고 알림
+ */
+export function guardrailPrescription(input: PlanInput, successRate: number, target: number, startAge: number, lifeExpectancy: number): Prescription | null {
+  const { pick, best } = weakestGuardrail(input, target);
+  const living = input.fixedDraw !== undefined ? input.fixedDraw * nominalFactor(0, input.inflation, startAge - Math.max(input.currentAge, input.retireAge)) : expenseAt(input, startAge);
+  if (pick) {
+    const s = pick.sim;
+    return {
+      area: '노후', level: 'caution',
+      title: `하락장 가드레일(최고점 −${pick.drop}% 이하인 해 생활비 −${pick.cut}%) 적용 시 목표 달성`,
+      detail:
+        `시장이 최고점보다 ${pick.drop}% 이상 떨어진 해에만 은퇴 후 생활비를 ${pick.cut}%(${startAge}세 기준 월 약 ${fmt((living * pick.cut) / 100 / 12)}원) 줄이면 성공확률이 ${successRate.toFixed(0)}% → ${s.successRate.toFixed(0)}%가 됩니다. ` +
+        `${lifeExpectancy}세까지 줄이는 해는 평균 ${s.cutYearsAvg.toFixed(1)}년이고, 목표를 넘는 조합 가운데 줄이는 부담이 가장 작은 설정입니다. ‘데이터·설정 → 점검 기준’의 하락장 기준·생활비 감축을 이 값으로 바꾸면 노후 진단에서 비교해 볼 수 있습니다.`,
+    };
+  }
+  if (best.sim.successRate <= successRate + 0.5) return null;
+  return {
+    area: '노후', level: 'caution',
+    title: `하락장 가드레일만으로는 목표 ${target}% 미달(가장 효과 큰 설정 ${best.sim.successRate.toFixed(0)}%)`,
+    detail: `최고점 −${best.drop}% 이하인 해에 생활비를 ${best.cut}% 줄여도 성공확률은 ${successRate.toFixed(0)}% → ${best.sim.successRate.toFixed(0)}%입니다. 하락장 대응과 함께 위의 저축·생활비·은퇴 시점 조정이 필요합니다.`,
+  };
+}
+
 export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap): Prescription[] {
   const c = profile.criteria;
   const out: Prescription[] = [];
@@ -178,6 +203,8 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
         detail: '현재 계획만으로 목표 확률을 맞추려면 은퇴 생활비 눈높이를 조정해야 합니다.',
       });
     }
+    const gRx = guardrailPrescription(input, successRate, c.successTarget, st.age, profile.lifeExpectancy);
+    if (gRx) out.push(gRx);
   } else {
     out.push({ area: '노후', level: 'good', title: `노후 성공확률 ${successRate.toFixed(0)}% — 목표 달성`, detail: '현재 계획을 유지하면서 정기적으로 점검하세요.' });
   }

@@ -78,6 +78,8 @@ export interface SimResult {
   medianDepletionAge: number | null;
   /** 가드레일로 생활비를 줄인 해 수(시나리오 평균) */
   cutYearsAvg: number;
+  /** 가드레일로 생활비를 줄인 해의 나이 구간(5세, 은퇴 나이부터)별 시나리오 평균 연수 */
+  cutHistogram: { age: number; years: number }[];
   balanceAtRetire: { p10: number; p50: number; p90: number };
 }
 
@@ -170,7 +172,7 @@ export function runPath(input: PlanInput, z: () => number) {
   const g = input.guardrail;
   let index = 1;
   let peak = 1;
-  let cutYears = 0;
+  const cuts: number[] = [];
   for (let i = 0; i < years; i++) {
     const age = input.currentAge + i;
     const { mean, vol } = returnAt(input, age);
@@ -180,7 +182,7 @@ export function runPath(input: PlanInput, z: () => number) {
     index *= 1 + nominal;
     peak = Math.max(peak, index);
     const bear = g !== undefined && g.cut > 0 && age >= input.retireAge && index < peak * (1 - g.drop / 100);
-    if (bear && depletedAt === null) cutYears++;
+    if (bear && depletedAt === null) cuts.push(age);
     if (age < input.retireAge) bal += savingsAt(input, age);
     bal -= outflowAt(input, age, bear ? g!.cut / 100 : 0);
     if (bal < 0) {
@@ -189,7 +191,7 @@ export function runPath(input: PlanInput, z: () => number) {
     }
     balances[i + 1] = bal;
   }
-  return { balances, depletedAt, cutYears };
+  return { balances, depletedAt, cuts };
 }
 
 export function deterministicPath(input: PlanInput) {
@@ -203,11 +205,18 @@ export function simulate(input: PlanInput, runs = 1000, seed = 42): SimResult {
   const columns: number[][] = ages.map(() => new Array<number>(runs));
   const depletionAges: (number | null)[] = [];
   let cutYears = 0;
+  // 생활비를 줄인 해: 은퇴(또는 지금) 나이부터 5세 단위 구간별 합계
+  const cutFrom = Math.max(input.currentAge, input.retireAge);
+  const cutHist = new Map<number, number>();
   for (let r = 0; r < runs; r++) {
     const run = runPath(input, gen);
     for (let i = 0; i <= years; i++) columns[i][r] = run.balances[i];
     depletionAges.push(run.depletedAt);
-    cutYears += run.cutYears;
+    cutYears += run.cuts.length;
+    for (const a of run.cuts) {
+      const b = cutFrom + Math.floor((a - cutFrom) / 5) * 5;
+      cutHist.set(b, (cutHist.get(b) ?? 0) + 1);
+    }
   }
   const p10: number[] = [];
   const p50: number[] = [];
@@ -237,8 +246,41 @@ export function simulate(input: PlanInput, runs = 1000, seed = 42): SimResult {
     // 미고갈 시나리오를 무한대로 보고 전체 중앙값을 취함 → 과반이 고갈될 때만 값이 있음
     medianDepletionAge: failed.length > runs / 2 ? failed[Math.floor(runs / 2)] : null,
     cutYearsAvg: runs > 0 ? cutYears / runs : 0,
+    // 구간별 시나리오 평균 감축 연수(합하면 cutYearsAvg). 감축이 없던 구간도 0으로 채움
+    cutHistogram:
+      cutYears > 0
+        ? Array.from({ length: Math.ceil(Math.max(0, input.lifeExpectancy - cutFrom) / 5) }, (_, k) => cutFrom + k * 5).map((age) => ({ age, years: (cutHist.get(age) ?? 0) / runs }))
+        : [],
     balanceAtRetire: { p10: p10[ri] ?? 0, p50: p50[ri] ?? 0, p90: p90[ri] ?? 0 },
   };
+}
+
+/** 강도별 비교 조합: 하락장 기준(%) × 생활비 감축(%) */
+export const GUARD_DROPS = [10, 15, 20, 30];
+export const GUARD_CUTS = [5, 10, 20];
+
+/**
+ * 성공확률 target(%)을 넘는 조합 가운데 가장 약한 가드레일: 평균 감축 연수 × 감축 비율(평생 줄이는 생활비 부담)이 가장 작은 것.
+ * 없으면 best 에 가장 높은 확률의 조합
+ */
+export function weakestGuardrail(input: PlanInput, target: number) {
+  const all = GUARD_DROPS.flatMap((drop) => GUARD_CUTS.map((cut) => ({ drop, cut, sim: guardrailSim(input, { drop, cut }) })));
+  const ok = all.filter((x) => x.sim.successRate >= target).sort((a, b) => a.sim.cutYearsAvg * a.cut - b.sim.cutYearsAvg * b.cut || b.drop - a.drop || a.cut - b.cut);
+  const best = all.reduce((a, x) => (x.sim.successRate > a.sim.successRate ? x : a), all[0]);
+  return { pick: ok[0] ?? null, best };
+}
+
+const guardCache = new WeakMap<PlanInput, Map<string, SimResult>>();
+/**
+ * 하락장 가드레일 시뮬레이션(지금 방식과 같은 시드·횟수라 같은 시장 경로). 같은 입력·설정은 한 번만 계산해 노후 진단의 카드·곡선·표가 함께 씀
+ */
+export function guardrailSim(input: PlanInput, g: Guardrail, runs = 1000): SimResult {
+  let m = guardCache.get(input);
+  if (!m) guardCache.set(input, (m = new Map()));
+  const key = `${g.drop}/${g.cut}/${runs}`;
+  let r = m.get(key);
+  if (!r) m.set(key, (r = simulate({ ...input, guardrail: g }, runs)));
+  return r;
 }
 
 /** 성공확률이 target(%) 이 되는 변수값을 이분 탐색 (공통 난수 사용으로 단조성 확보) */

@@ -1,9 +1,10 @@
+import { useMemo } from 'react';
 import { Bar as RBar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { ExpenseCompare } from '../components/ExpenseCompare';
 import { GuardrailCompare } from '../components/GuardrailCompare';
 import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
-import { debtAnnualAt, expenseAt, expenseRatioAt, GOAL_KIND_LABEL, goalBreakdownAt, goalKind, incomeValue, nominalFactor } from '../engine/montecarlo';
+import { debtAnnualAt, expenseAt, expenseRatioAt, GOAL_KIND_LABEL, goalBreakdownAt, goalKind, guardrailSim, incomeValue, nominalFactor } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
 import { goalItemsFrom, loanEndAge, loanSchedule } from '../engine/goals';
 import { hpEstate, housePension, RE_USE, reUseOf, usesHp, willSell } from '../engine/realestate';
@@ -16,6 +17,9 @@ import { payEndSelfAge } from '../engine/portfolio';
 
 export default function Retire() {
   const d = useFlp();
+  // 하락장 가드레일 중앙값(비교 카드와 같은 결과를 함께 씀)
+  const { guardrailDrop: gDrop, guardrailCut: gCut } = d.profile.criteria;
+  const gsim = useMemo(() => (d.hasData && gDrop > 0 && gCut > 0 ? guardrailSim(d.planInput, { drop: gDrop, cut: gCut }) : null), [d.hasData, d.planInput, gDrop, gCut]);
   if (!d.hasData) return <><PageHeader title="노후 진단" /><EmptyState /></>;
   const { sim, need, planInput: inp, profile: p, start } = d;
   const retired = start.retired;
@@ -111,7 +115,7 @@ export default function Retire() {
       </div>
 
       <Card title="생애 자산 잔액 곡선" className="mt-4" action={<span className="text-xs text-muted">{inp.currentAge}세 → {p.lifeExpectancy}세</span>}>
-        <LifeChart sim={sim} retireAge={inp.retireAge} />
+        <LifeChart sim={sim} retireAge={inp.retireAge} compare={gsim ? { name: `하락장 가드레일 중앙값(−${gDrop}%·생활비 −${gCut}%)`, p50: gsim.p50 } : undefined} />
         {!retired && inp.annualSavings < 0 && (
           <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
             지금은 지출이 소득보다 많아 매달 {won(-inp.annualSavings / 12)}을 금융자산에서 꺼내 쓰는 것으로 계산했습니다. 은퇴({inp.retireAge}세) 전 {inp.retireAge - inp.currentAge}년 동안 약 {won((-inp.annualSavings * (inp.retireAge - inp.currentAge)))}(오늘 물가, 수익 제외)이 빠져 곡선이 은퇴 전부터 내려갑니다{(inp.savingsChanges ?? []).length > 0 || (inp.debts ?? []).some((x) => x.endAge < inp.retireAge) ? '(대출 상환 완료·보험 납입 완료로 줄어드는 부족분은 따로 반영)' : ''}. 이미 은퇴했다면 ‘데이터·설정 → 노후 계획’의 은퇴 희망 나이를 지금 나이 이하로 바꾸세요.
