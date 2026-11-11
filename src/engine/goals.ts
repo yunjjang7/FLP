@@ -7,16 +7,20 @@ import { hpStreams, rentStreams, saleInflows } from './realestate';
 
 export interface GoalPlan {
   goal: Goal;
-  years: number;
-  futureValue: number; // 목표 시점 명목 필요액
+  years: number; // 지금부터 목표(반복 지출은 시작) 나이까지 햇수
+  futureValue: number; // 목표 시점 명목 필요액(반복 지출은 시작 나이에 있어야 할 금액)
   allocated: number; // 현재 중기 자산 중 배정액
   monthlyNeeded: number; // 필요 월 적립액(명목)
   fundedRatio: number; // 배정액의 미래가치 / 필요액 %
+  /** 매년 반복 지출: 지출 구간(지난 해는 빼고)과 첫해 지출액(명목) */
+  recurring?: { fromAge: number; toAge: number; count: number; firstPayment: number };
 }
 
 /**
  * 재무목표 현가화: 현재가치 금액 × (1+상승률)^년수 = 미래 필요액.
- * 중기·목적자금 자산을 목표 시기가 빠른 순으로 배정한 뒤, 부족분을 월 적립액(PMT)으로 산출.
+ * 매년 반복 지출은 시작 나이(이미 시작했으면 지금)에 남은 해마다의 지출을 중기 자산 기대수익률로 할인해 한 번에 있어야 할 금액으로 봄.
+ * 중기·목적자금 자산을 일시 목표에 시기가 빠른 순으로 먼저 배정하고, 남은 자산을 반복 지출에 배정한 뒤 부족분을 월 적립액(PMT)으로 산출.
+ * 반복 지출은 끝 나이가 지나지 않았으면 행으로 넣음(일시 목표는 목표 나이가 지나면 뺌).
  */
 export function planGoals(goals: Goal[], assets: Asset[], currentAge: number): GoalPlan[] {
   const mid = assets.filter((a) => isFinancial(a) && a.purpose === 'mid');
@@ -24,21 +28,51 @@ export function planGoals(goals: Goal[], assets: Asset[], currentAge: number): G
   const midReturn = midTotal > 0 ? mid.reduce((s, a) => s + (a.amount / midTotal) * a.expectedReturn, 0) : 3;
   const r = monthlyRate(midReturn);
   let pool = midTotal;
-  return goals
-    .filter((g) => g.category !== 'retirement' && !isRecurring(g) && g.targetAge >= currentAge)
-    .slice()
-    .sort((a, b) => a.targetAge - b.targetAge)
-    .map((goal) => {
-      const years = Math.max(0, goal.targetAge - currentAge);
-      const futureValue = fvLump(goal.amountPV, goal.growthRate / 100, years);
-      const n = years * 12;
-      const needNow = futureValue / Math.pow(1 + r, n); // 지금 이만큼 있으면 충분
-      const allocated = Math.min(pool, needNow);
-      pool -= allocated;
-      const monthlyNeeded = pmtForTarget(futureValue, allocated, r, n);
-      const fundedRatio = futureValue > 0 ? (fvLump(allocated, r, n) / futureValue) * 100 : 100;
-      return { goal, years, futureValue, allocated, monthlyNeeded, fundedRatio };
-    });
+  const startAge = (g: Goal) => Math.max(g.targetAge, currentAge);
+  const plan = (goal: Goal): GoalPlan => {
+    const from = startAge(goal);
+    const years = from - currentAge;
+    let futureValue = fvLump(goal.amountPV, goal.growthRate / 100, years);
+    let recurring: GoalPlan['recurring'];
+    if (isRecurring(goal)) {
+      // 해마다 그해 초에 내고, 남은 돈은 계속 중기 자산 수익률로 굴린다고 봄
+      futureValue = 0;
+      for (let age = from; age <= goal.endAge!; age++) futureValue += fvLump(goal.amountPV, goal.growthRate / 100, age - currentAge) / Math.pow(1 + midReturn / 100, age - from);
+      recurring = { fromAge: from, toAge: goal.endAge!, count: goal.endAge! - from + 1, firstPayment: fvLump(goal.amountPV, goal.growthRate / 100, years) };
+    }
+    const n = years * 12;
+    const needNow = futureValue / Math.pow(1 + r, n); // 지금 이만큼 있으면 충분
+    const allocated = Math.min(pool, needNow);
+    pool -= allocated;
+    const monthlyNeeded = pmtForTarget(futureValue, allocated, r, n);
+    const fundedRatio = futureValue > 0 ? (fvLump(allocated, r, n) / futureValue) * 100 : 100;
+    return { goal, years, futureValue, allocated, monthlyNeeded, fundedRatio, ...(recurring ? { recurring } : {}) };
+  };
+  const byAge = (a: Goal, b: Goal) => startAge(a) - startAge(b);
+  const usable = goals.filter((g) => g.category !== 'retirement');
+  const once = usable.filter((g) => !isRecurring(g) && g.targetAge >= currentAge).sort(byAge).map(plan);
+  const rec = usable.filter((g) => isRecurring(g) && g.endAge! >= currentAge).sort(byAge).map(plan);
+  return [...once, ...rec].sort((a, b) => a.years - b.years);
+}
+
+/** 일시 목표만(반복 지출 제외): 처방의 목적자금 적립 합계·목적자금 바구니에 씀 */
+export const onceGoalPlans = (plans: GoalPlan[]) => plans.filter((g) => !g.recurring);
+
+/**
+ * 필요 적립액 계산(planGoals)에서 빠지는 목표와 이유: 목표 나이가 지났거나 0, 반복 기간이 끝남, ‘은퇴’ 분류
+ */
+export function goalPlanSkips(goals: Goal[], currentAge: number) {
+  return goals.flatMap((g) => {
+    const reason =
+      g.category === 'retirement'
+        ? '‘은퇴’ 분류 — 노후 진단에서 따로 계산'
+        : isRecurring(g)
+          ? g.endAge! < currentAge ? `반복 기간 ${g.targetAge}~${g.endAge}세가 지남` : null
+          : g.targetAge < currentAge
+            ? g.targetAge > 0 ? `목표 나이 ${g.targetAge}세가 지남` : '목표 나이가 비어 있음(0)'
+            : null;
+    return reason ? [{ goal: g, reason }] : [];
+  });
 }
 
 /** 매년 반복되는 지출인지 */

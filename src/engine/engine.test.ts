@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { sampleData } from '../db/sample';
 import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, realRate, scale } from './finance';
-import { buildPlanInput, expenseSteps, goalItemsFrom, loanEndAge, lockedInflow, planGoals, retireIncomes } from './goals';
+import { buildPlanInput, expenseSteps, goalItemsFrom, goalPlanSkips, loanEndAge, onceGoalPlans, lockedInflow, planGoals, retireIncomes } from './goals';
 import { CRITICAL_BASE, insuranceGap } from './insurance';
 import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, GUARD_CUTS, GUARD_DROPS, guardrailSim, incomeValue, weakestGuardrail, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
@@ -252,7 +252,7 @@ describe('샘플 데이터 통합', () => {
   });
   it('목표·위험·보장·처방이 계산됨', () => {
     const gp = planGoals(d.goals, d.assets, s.age);
-    expect(gp).toHaveLength(4);
+    expect(gp).toHaveLength(5); // 일시 목표 4건 + 반복 지출(은퇴 후 여행) 1건
     expect(gp[0].futureValue).toBeCloseTo(4000 * 1.04 ** 4, 4);
     const input = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
     const sim = simulate(input);
@@ -353,6 +353,38 @@ describe('엑셀 반영: 인출 중 은퇴자·소득·가드레일·반복 지�
     const rows = buildPlanInput(d.profile, d.assets, d.liabilities, goals, s).goals.filter((x) => goalKind(x) === 'goal');
     expect(rows.length).toBeGreaterThan(goalItemsFrom(goals, s.age).length); // 반복 지출은 해마다 행이 생김
   });
+  it('필요 적립액 표에서 빠지는 목표와 이유: 끝난 반복 지출·지난 목표·나이 0·은퇴 분류', () => {
+    const g = (name: string, targetAge: number, endAge?: number, category = 'other') => ({ name, category, targetAge, amountPV: 100, growthRate: 0, endAge }) as Goal;
+    const goals = [g('등록금', 59, 60), g('옛 학원비', 40, 50), g('여행', 55), g('대출상환', 0), g('차량', 70), g('은퇴', 58, undefined, 'retirement')];
+    const sk = goalPlanSkips(goals, 58);
+    expect(sk.map((x) => x.goal.name)).toEqual(['옛 학원비', '여행', '대출상환', '은퇴']);
+    expect(sk[0].reason).toContain('반복 기간');
+    expect(sk[1].reason).toContain('지남');
+    expect(sk[2].reason).toContain('비어 있음');
+    // 빠지지 않은 것만 필요 적립액 표에 나옴(반복 지출도 행으로)
+    expect(planGoals(goals, [], 58).map((x) => x.goal.name)).toEqual(['등록금', '차량']);
+  });
+  it('반복 지출 행: 시작 나이에 있어야 할 금액과 월 적립액', () => {
+    const g = (name: string, targetAge: number, endAge: number | undefined, amountPV: number) => ({ name, category: 'other', targetAge, amountPV, growthRate: 0, endAge }) as Goal;
+    // 중기 자산이 없으면 기대수익률 3%: 59세에 100 + 60세 몫 100/1.03
+    const [tuition] = planGoals([g('등록금', 59, 60, 100)], [], 58);
+    expect(tuition.recurring).toEqual({ fromAge: 59, toAge: 60, count: 2, firstPayment: 100 });
+    expect(tuition.years).toBe(1);
+    expect(tuition.futureValue).toBeCloseTo(100 + 100 / 1.03, 6);
+    expect(tuition.monthlyNeeded).toBeCloseTo(pmtForTarget(tuition.futureValue, 0, Math.pow(1.03, 1 / 12) - 1, 12), 6);
+    // 이미 시작한 반복 지출은 지금부터 남은 해만
+    const [tax] = planGoals([g('보유세', 55, 100, 10)], [], 58);
+    expect(tax.recurring).toMatchObject({ fromAge: 58, count: 43 });
+    expect(tax.years).toBe(0);
+    // 중기 자산은 일시 목표에 먼저 배정(반복 지출이 더 빨라도)
+    const d = sampleData();
+    const mid = [{ ...d.assets.find((x) => x.type !== 'realestate')!, purpose: 'mid' as const, amount: 1000, expectedReturn: 0, lockYear: undefined }];
+    const plans = planGoals([g('등록금', 59, 60, 100), g('차량', 70, undefined, 1000)], mid, 58);
+    expect(plans.map((x) => [x.goal.name, x.allocated])).toEqual([['등록금', 0], ['차량', 1000]]);
+    // 처방의 목적자금 적립 합계·바구니에는 반복 지출을 넣지 않음
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+    expect(bucketMap(d.profile, s, plans)).toEqual(bucketMap(d.profile, s, plans.filter((x) => !x.recurring)));
+  });
   it('소득 흐름: 시작·종료 나이와 인상 주기', () => {
     const rent = { startAge: 60, endAge: 70, annual: 1200, growth: 5, step: 2, baseAge: 58 };
     expect(incomeValue(rent, 59, 0)).toBe(0);
@@ -381,7 +413,9 @@ describe('엑셀 반영: 인출 중 은퇴자·소득·가드레일·반복 지�
     const inp = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
     const travel = inp.goals.filter((g) => g.age >= 61 && g.age <= 75 && Math.abs(g.amount - 500) < 1e-6);
     expect(travel).toHaveLength(15);
-    expect(planGoals(d.goals, d.assets, 45).some((g) => g.goal.name === '은퇴 후 여행')).toBe(false);
+    const trip = planGoals(d.goals, d.assets, 45).find((g) => g.goal.name === '은퇴 후 여행');
+    expect(trip?.recurring).toMatchObject({ fromAge: 61, toAge: 75, count: 15 }); // 표에는 반복 지출 행으로 나옴
+    expect(onceGoalPlans(planGoals(d.goals, d.assets, 45)).some((g) => g.goal.name === '은퇴 후 여행')).toBe(false);
   });
   it('가드레일 배율: 하단선 아래 감액, 상단선 위 되돌림(감액만)', () => {
     const g = DEFAULT_GUARDRAIL;

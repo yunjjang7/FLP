@@ -4,7 +4,7 @@ import { LifeChart } from '../components/LifeChart';
 import { Badge, Bar, Button, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { db } from '../db/db';
 import { GOAL_CATEGORY } from '../db/schema';
-import { buildPlanInput, type PlanOverrides } from '../engine/goals';
+import { buildPlanInput, goalPlanSkips, type PlanOverrides } from '../engine/goals';
 import { simulate } from '../engine/montecarlo';
 import { bucketMap, prescriptions } from '../engine/prescribe';
 import { pct, won } from '../lib/format';
@@ -24,6 +24,8 @@ function PrescribeInner() {
   const { profile: p, summary: s } = d;
   const rx = useMemo(() => prescriptions(p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins), [p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins]);
   const buckets = useMemo(() => bucketMap(p, s, d.goalPlans), [p, s, d.goalPlans]);
+  // 필요 적립액 표에서 빠지는 목표(반복 지출·지난 목표·은퇴 분류)와 이유
+  const skips = goalPlanSkips(d.goals, s.age);
 
   // 저축 여력이 마이너스면(매달 금융자산에서 꺼내 씀) 그 값에서 시작해야 ‘현재 계획’과 같은 계산이 됨
   const initial = { monthlySavings: Math.round(s.savings), meanReturn: +s.portfolioReturn.toFixed(1), retireAge: p.retireAge, retireMonthlyExpense: p.retireMonthlyExpense };
@@ -83,7 +85,9 @@ function PrescribeInner() {
 
       <Card title="재무목표별 필요 적립액" className="mt-4">
         {d.goalPlans.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted">등록된 재무목표가 없습니다. ‘데이터·설정 → 재무목표’에서 추가하세요.</p>
+          <p className="py-4 text-center text-sm text-muted">
+            {skips.length === 0 ? '등록된 재무목표가 없습니다. ‘데이터·설정 → 재무목표’에서 추가하세요.' : '적립액을 계산할 목표(앞으로 쓸 목적자금·반복 지출)가 없습니다. 아래 목표는 이 표에서 빠집니다.'}
+          </p>
         ) : (
           <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
             <table className="w-full min-w-[640px] text-sm num-table">
@@ -101,9 +105,21 @@ function PrescribeInner() {
               <tbody>
                 {d.goalPlans.map((g) => (
                   <tr key={g.goal.id} className="border-b border-line last:border-0">
-                    <td className="py-2.5"><div className="font-medium">{g.goal.name}</div><div className="text-xs text-muted">{GOAL_CATEGORY[g.goal.category]} · 상승률 {g.goal.growthRate}%</div></td>
-                    <td>{g.goal.targetAge}세 <span className="text-xs text-muted">({g.years}년 후)</span></td>
-                    <td className="text-right">{won(g.goal.amountPV)}</td>
+                    <td className="py-2.5">
+                      <div className="font-medium">{g.goal.name}</div>
+                      <div className="text-xs text-muted">{g.recurring && <span className="mr-1 whitespace-nowrap rounded bg-brand-soft px-1.5 font-medium text-brand">매년 반복</span>}{GOAL_CATEGORY[g.goal.category]} · 상승률 {g.goal.growthRate}%</div>
+                    </td>
+                    <td>
+                      {g.recurring ? (
+                        <>
+                          {g.recurring.fromAge}~{g.recurring.toAge}세 <span className="text-xs text-muted">({g.years > 0 ? `${g.years}년 후 시작` : '이미 시작'})</span>
+                          <div className="text-xs text-muted">{g.recurring.count}년간 · 첫해 {won(g.recurring.firstPayment)}</div>
+                        </>
+                      ) : (
+                        <>{g.goal.targetAge}세 <span className="text-xs text-muted">({g.years}년 후)</span></>
+                      )}
+                    </td>
+                    <td className="text-right">{won(g.goal.amountPV)}{g.recurring && <span className="text-xs text-muted">/년</span>}</td>
                     <td className="text-right font-medium">{won(g.futureValue)}</td>
                     <td className="text-right">{won(g.allocated)}</td>
                     <td className="text-right font-semibold">{won(g.monthlyNeeded)}</td>
@@ -113,6 +129,22 @@ function PrescribeInner() {
               </tbody>
             </table>
             <p className="mt-2 text-xs text-muted">‘중기·목적자금’ 용도 자산을 시기가 빠른 목표부터 배정하고, 부족분을 해당 자산의 기대수익률로 월 적립액을 계산했습니다.</p>
+            {d.goalPlans.some((g) => g.recurring) && (
+              <p className="mt-1 text-xs text-muted">
+                ‘매년 반복’ 지출의 미래 필요액은 시작 나이(이미 시작했으면 지금)에 남은 해의 지출을 모두 낼 수 있도록 한 번에 갖고 있어야 할 금액입니다. 그 돈을 같은 기대수익률로 굴리며 해마다 초에 꺼내 쓴다고 가정했습니다. 중기 자산은 일시 목표에 먼저 배정하고, 남는 금액을 반복 지출에 배정합니다. 반복 지출은 노후 진단에서도 해마다 지출로 빠지므로 처방의 목적자금 적립 합계와 목적자금 바구니에는 넣지 않았습니다.
+              </p>
+            )}
+          </div>
+        )}
+        {skips.length > 0 && (
+          <div className="mt-2 rounded-lg bg-sunken px-3 py-2 text-xs">
+            <div className="mb-1 font-semibold text-muted">이 표에서 빠진 목표 {skips.length}건</div>
+            <ul className="space-y-0.5">
+              {skips.map(({ goal, reason }, i) => (
+                <li key={goal.id ?? i}><b className="font-medium">{goal.name}</b> <span className="text-muted">· {reason}</span></li>
+              ))}
+            </ul>
+            {skips.some((x) => x.goal.category !== 'retirement' && !(x.goal.targetAge >= s.age) && !((x.goal.endAge ?? 0) > x.goal.targetAge)) && <div className="mt-1 text-muted">지난 목표·나이가 빈 목표는 노후 계산에도 들어가지 않습니다. 아직 쓸 돈이면 ‘데이터·설정 → 재무목표’에서 목표 나이를 넣어 주세요.</div>}
           </div>
         )}
       </Card>

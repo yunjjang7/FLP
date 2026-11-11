@@ -1,6 +1,6 @@
 import { won } from '../lib/format';
 import type { Level, Profile } from '../types';
-import type { GoalPlan } from './goals';
+import { onceGoalPlans, type GoalPlan } from './goals';
 import type { InsuranceGap } from './insurance';
 import { debtAnnualAt, deterministicPath, expenseAt, nominalFactor, solveFor, weakestGuardrail, withdrawStart, type PlanInput } from './montecarlo';
 import { RISK_PROFILES, type Summary } from './portfolio';
@@ -272,7 +272,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
     });
   }
 
-  const goalMonthly = goalPlans.reduce((a, g) => a + g.monthlyNeeded, 0);
+  const goalMonthly = onceGoalPlans(goalPlans).reduce((a, g) => a + g.monthlyNeeded, 0);
   if (goalMonthly > 0) out.push(goalPrescription(s.savings, goalMonthly));
 
   for (const l of ins.lines) {
@@ -290,7 +290,7 @@ export interface BucketRow { key: 'short' | 'mid' | 'long'; label: string; curre
 export function bucketMap(profile: Profile, s: Summary, goalPlans: GoalPlan[]): BucketRow[] {
   const cur = (k: string) => s.byPurpose.find((p) => p.key === k)?.value ?? 0;
   const shortTarget = s.expense * profile.criteria.emergencyMonths;
-  const midTarget = goalPlans.filter((g) => g.years <= 10).reduce((a, g) => a + g.futureValue / Math.pow(1.03, g.years), 0);
+  const midTarget = onceGoalPlans(goalPlans).filter((g) => g.years <= 10).reduce((a, g) => a + g.futureValue / Math.pow(1.03, g.years), 0);
   const total = s.financialAssets; // 부동산은 바구니에 넣지 않음
   return [
     { key: 'short', label: '비상금 바구니', current: cur('short'), target: Math.min(total, shortTarget) },
