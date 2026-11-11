@@ -636,6 +636,13 @@ function ListEditor({ table }: { table: ListTable }) {
   const tbl = db[table] as unknown as { add: (r: unknown) => Promise<unknown>; update: (id: number, p: unknown) => Promise<unknown>; delete: (id: number) => Promise<void> };
   const amountKey = fields.find((f) => f.unit === '만원')?.key;
   const total = amountKey ? rows.reduce((a, r) => a + Number(r[amountKey] ?? 0), 0) : 0;
+  // 실거주 주택 구입 대출 표시가 계산에 쓰이려면 프로필의 세 설정이 모두 켜져 있어야 함: 꺼진 것을 안내
+  const it = { ...DEFAULT_INCOME_TAX, ...(data.profile.incomeTax ?? {}) };
+  const loanDeductOff = [
+    !it.on && '‘추정하기’로 바꾸기',
+    !it.hiPropAuto && '건보료 재산분을 ‘부동산 자산으로 추정’으로 바꾸기',
+    !it.hiLoanDeduct && '‘주택 구입 대출 공제’를 ‘예’로 바꾸기',
+  ].filter(Boolean).join(' · ');
 
   const update = (row: { id?: number }, key: string, v: unknown) => {
     let patch: Record<string, unknown> = { [key]: v };
@@ -740,10 +747,18 @@ function ListEditor({ table }: { table: ListTable }) {
                   <option value="bullet">만기일시 상환(이자만 냄)</option>
                 </select>
               </label>
-              <label className="flex items-center gap-2">
-                <input type="checkbox" checked={r.homeLoan === 'buy'} onChange={(e) => tbl.update(r.id!, { homeLoan: e.target.checked ? 'buy' : undefined })} />
-                실거주 주택 구입 대출(건보료 재산분을 부동산 자산으로 추정할 때 대출 공제 대상)
-              </label>
+              <div>
+                <label className="flex items-center gap-2">
+                  <input type="checkbox" checked={r.homeLoan === 'buy'} onChange={(e) => tbl.update(r.id!, { homeLoan: e.target.checked ? 'buy' : undefined })} />
+                  실거주 주택 구입 대출(건보료 재산분을 부동산 자산으로 추정할 때 대출 공제 대상)
+                </label>
+                <p className="mt-1 pl-6 text-xs text-muted">1세대 1주택으로 지금 사는 집을 사려고 받은 대출(주택담보대출·보금자리론 등)일 때만 체크하세요. 전세자금대출·신용대출·투자용 주택 대출은 해당하지 않습니다.</p>
+                {r.homeLoan === 'buy' && loanDeductOff && (
+                  <p role="alert" className="mt-1 ml-6 rounded-lg bg-warn-soft px-2 py-1 text-xs text-warn">
+                    지금은 계산에 반영되지 않습니다. 프로필 → 종합소득세·건강보험료에서 할 일: {loanDeductOff}
+                  </p>
+                )}
+              </div>
             </div>
           )}
           <div className="mt-3 flex items-center justify-between gap-3">
