@@ -1,4 +1,4 @@
-import type { AccountBalance, Asset, Draw } from '../types';
+import type { AccountBalance, Asset, CarryBefore, Draw } from '../types';
 import { isLocked } from './goals';
 import { isFinancial } from './portfolio';
 import { pensionLimit, type TaxRow } from './tax';
@@ -159,6 +159,49 @@ export function carryOverPlan(assets: Asset[], balances: AccountBalance[], recor
 /** 이어받기로 바뀌는 자산 필드(바뀐 것만) */
 export function carryPatch(r: CarryRow): Partial<Asset> {
   return { amount: r.next, ...(r.pension && (r.free > 0 || r.freeNext > 0) ? { taxFree: r.freeNext } : {}), ...(r.pension && (r.retire > 0 || r.retireNext > 0) ? { retirePart: r.retireNext } : {}) };
+}
+
+/**
+ * 이어받기 적용 직전 값(되돌리기용): 이번에 바뀌는 계좌의 지금 금액·과세제외·퇴직금 재원.
+ * 이미 저장된 직전 값(prev)이 있는 계좌는 그 값을 지켜, 여러 번 적용해도 ‘처음 적용하기 전’으로 돌아가게 함.
+ */
+export function carryBefore(rows: CarryRow[], prev: CarryBefore[] = []): CarryBefore[] {
+  const out = [...prev];
+  for (const r of rows) {
+    if (!r.changed || r.id === undefined || out.some((b) => b.id === r.id)) continue;
+    out.push({ id: r.id, name: r.name, amount: r.amount, taxFree: r.free, retirePart: r.retire });
+  }
+  return out;
+}
+
+export interface UndoRow {
+  id: number;
+  name: string;
+  amount: number; // 지금 자산 탭 금액
+  back: number; // 되돌릴 금액(적용 직전)
+  free: number;
+  freeBack: number;
+  retire: number;
+  retireBack: number;
+  changed: boolean;
+}
+
+/** 이어받기 되돌리기: 저장해 둔 적용 직전 값과 지금 자산을 비교. 그 뒤 지운 계좌는 건너뜀 */
+export function undoCarryPlan(assets: Asset[], before: CarryBefore[]): UndoRow[] {
+  const out: UndoRow[] = [];
+  for (const b of before) {
+    const a = assets.find((x) => x.id === b.id);
+    if (!a) continue;
+    const free = Math.max(0, a.taxFree ?? 0);
+    const retire = Math.max(0, a.retirePart ?? 0);
+    out.push({ id: b.id, name: a.name, amount: a.amount, back: b.amount, free, freeBack: b.taxFree, retire, retireBack: b.retirePart, changed: Math.abs(a.amount - b.amount) > 0.05 || Math.abs(free - b.taxFree) > 0.05 || Math.abs(retire - b.retirePart) > 0.05 });
+  }
+  return out;
+}
+
+/** 되돌리기로 바뀌는 자산 필드(바뀐 것만) */
+export function undoPatch(r: UndoRow): Partial<Asset> {
+  return { amount: r.back, ...(Math.abs(r.free - r.freeBack) > 0.05 ? { taxFree: r.freeBack } : {}), ...(Math.abs(r.retire - r.retireBack) > 0.05 ? { retirePart: r.retireBack } : {}) };
 }
 
 /** 기록이 있는 연도(오름차순) */

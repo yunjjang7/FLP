@@ -5,7 +5,7 @@ import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, re
 import { buildPlanInput, expenseSteps, goalItemsFrom, goalPlanSkips, loanEndAge, onceGoalPlans, lockedInflow, planGoals, retireIncomes } from './goals';
 import { CRITICAL_BASE, insuranceGap } from './insurance';
 import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, GUARD_CUTS, GUARD_DROPS, guardrailSim, incomeValue, weakestGuardrail, outflowAt, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, yearShareAt, type PlanInput } from './montecarlo';
-import { contribSchedule, creditInflows, hiDependent, hiPropMonthly, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
+import { contribSchedule, creditInflows, hiDependent, hiPropMonthly, hiPropShare, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
@@ -16,7 +16,7 @@ import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescripti
 import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
 import type { Draw, Goal, PlanBase } from '../types';
-import { carryOverPlan, carryPatch, drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws, yearEndAccounts } from './drawLog';
+import { carryBefore, carryOverPlan, carryPatch, undoCarryPlan, undoPatch, drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws, yearEndAccounts } from './drawLog';
 import { balanceAt, checkAges, lumpGrid, lumpTotal, returnScenarios, runScenario, scaleLiving, scaleLumps } from './scenarios';
 import { sensitivityExpenses } from '../components/Sensitivity';
 
@@ -969,6 +969,29 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     const bill = incomeTaxSchedule({ ...p, incomeTax: { ...DEFAULT_TAX_ON, hiNow: 30 } }, 2026, undefined, [shop('spouse')]);
     expect(bill[0].hiMonth).toBeCloseTo(30, 6);
     expect(bill[0].hiProp).toBeCloseTo(30 - (2400 / 12) * k, 6);
+    // 공동명의 배우자 40%: 고지서 재산분은 배우자 몫 → 세대 재산분 = 고지서 재산분 ÷ 0.4, 은퇴 후(세대 지역)에는 전체
+    const jointShop = { ...shop('self'), owner: 'joint' as const, ownerShare: 60 };
+    expect(hiPropShare([jointShop], 2026, 2026, 1)).toBeCloseTo(0.4, 9);
+    expect(hiPropShare([], 2026, 2026, 1)).toBeNull();
+    const billJoint = incomeTaxSchedule({ ...p, incomeTax: { ...DEFAULT_TAX_ON, hiNow: 30 } }, 2026, undefined, [jointShop]);
+    const herQ = ((2400 * 0.4) / 12) * 0.0719;
+    expect(billJoint[0].hiMode).toBe('workRegion');
+    expect(billJoint[0].hiMonth).toBeCloseTo(30, 6);
+    expect(billJoint[0].hiProp).toBeCloseTo(30 - herQ * 1.1314, 6);
+    const after = billJoint.find((r) => r.year === 2030)!;
+    expect(after.hiMode).toBe('region');
+    expect(after.hiProp).toBeCloseTo((30 - herQ * 1.1314) / 0.4, 6);
+    // 사업자등록 없음: 임대 외 사업소득 500만 이하면 피부양자, 임대소득은 있으면 탈락
+    expect(hiDependent(500, 500, null, { rent: 0 })).toBe(true);
+    expect(hiDependent(501, 501, null, { rent: 0 })).toBe(false);
+    expect(hiDependent(300, 300, null, { rent: 100 })).toBe(false);
+    expect(hiDependent(300, 2100, null, { rent: 0 })).toBe(false);
+    const side = { name: '부업', monthly: 50, startAge: 50, endAge: 0, growth: 0, step: 0, kind: 'business' as const, owner: 'spouse' as const, expense: 40 };
+    const strict = incomeTaxSchedule({ ...p, incomes: [side] }, 2026, undefined, [])[0];
+    expect(strict.hiMode).toBe('workRegion');
+    const loose = incomeTaxSchedule({ ...p, incomes: [side], incomeTax: { ...p.incomeTax, hiDepNoReg: true } }, 2026, undefined, [])[0];
+    expect(loose.hiMode).toBe('workDep'); // 사업소득금액 600 × 60% = 360만
+    expect(loose.hiMonth).toBe(0);
     // 국민연금 몫: 직장가입자는 2,000만 문턱 때문에 국민연금이 문턱을 넘긴 만큼만 건보료가 늘어남
     const np = incomeTaxSchedule({ ...p, nationalPension: 200, nationalPensionAge: 58 }, 2026, undefined, [shop('self')])[1];
     expect(np.hiMonth).toBeCloseTo(((2400 + 1200 - 2000) / 12) * k, 6);
@@ -1430,6 +1453,24 @@ describe('연말결산 계좌별 이어받기', () => {
     expect(keep).toMatchObject({ next: 9400, freeNext: 300, retireNext: 2000 });
     const rows = carryOverPlan(assets, [{ id: 3, name: '예전 이름', balance: 3500 }, { id: 99, name: '없는 계좌', balance: 1 }, { name: 'IRP', balance: 5000 }], draws, 2026);
     expect(rows.map((r) => [r.name, r.next])).toEqual([['ISA', 3500], ['IRP', 5000]]);
+  });
+  it('되돌리기: 적용 직전 값을 저장해 두고 그 값으로 복구, 여러 번 적용해도 처음 적용 전으로', () => {
+    const rows = carryOverPlan(assets, [{ id: 1, name: '연금저축', balance: 9400 }, { id: 2, name: 'IRP', balance: 5100 }, { id: 3, name: 'ISA', balance: 3000 }], draws, 2026);
+    const before = carryBefore(rows);
+    // 바뀌지 않은 ISA 는 저장하지 않음
+    expect(before).toEqual([{ id: 1, name: '연금저축', amount: 10000, taxFree: 300, retirePart: 2000 }, { id: 2, name: 'IRP', amount: 5000, taxFree: 0, retirePart: 5000 }]);
+    const applied = assets.map((a) => { const r = rows.find((x) => x.id === a.id); return r ? { ...a, ...carryPatch(r) } : a; });
+    // 두 번째 적용(평가액을 고쳐 다시): 이미 저장된 계좌는 처음 값을 지키고 새로 바뀐 계좌만 더함
+    const again = carryOverPlan(applied, [{ id: 1, name: '연금저축', balance: 9000 }, { id: 3, name: 'ISA', balance: 3300 }], draws, 2026, false);
+    const before2 = carryBefore(again, before);
+    expect(before2.map((b) => [b.id, b.amount])).toEqual([[1, 10000], [2, 5000], [3, 3000]]);
+    const applied2 = applied.map((a) => { const r = again.find((x) => x.id === a.id); return r ? { ...a, ...carryPatch(r) } : a; });
+    const undo = undoCarryPlan(applied2.filter((a) => a.id !== 2), before2); // IRP 는 그 뒤 지움 → 건너뜀
+    expect(undo.map((r) => [r.name, r.amount, r.back, r.changed])).toEqual([['연금저축', 9000, 10000, true], ['ISA', 3300, 3000, true]]);
+    expect(undoPatch(undo[0])).toEqual({ amount: 10000, taxFree: 300, retirePart: 2000 });
+    expect(undoPatch(undo[1])).toEqual({ amount: 3000 });
+    // 이미 같은 값이면 바뀐 것 없음
+    expect(undoCarryPlan(assets, before).every((r) => !r.changed)).toBe(true);
   });
 });
 

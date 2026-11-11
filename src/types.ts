@@ -138,7 +138,16 @@ export interface YearEnd {
   withdrawn: number; // 그 해 자산에서 실제로 꺼낸 금액
   note?: string;
   accounts?: AccountBalance[]; // 계좌별 12월 말 평가액(계좌별로 입력했을 때): 합계 = balance
-  carried?: { at: string; funds: boolean }; // 다음 해 계획에 이어받은 날짜(YYYY-MM-DD)와 과세제외·퇴직금 재원까지 줄였는지
+  carried?: { at: string; funds: boolean; before?: CarryBefore[] }; // 다음 해 계획에 이어받은 날짜(YYYY-MM-DD)와 과세제외·퇴직금 재원까지 줄였는지, 적용 직전 값(되돌리기용)
+}
+
+/** 이어받기 적용 직전의 자산 값(되돌리기용) */
+export interface CarryBefore {
+  id: number;
+  name: string;
+  amount: number;
+  taxFree: number;
+  retirePart: number;
 }
 
 /** 연말결산의 계좌별 12월 말 평가액(자산 탭의 금융자산 한 줄) */
@@ -238,6 +247,7 @@ export interface IncomeTaxSettings {
   hiPubRatio?: number; // 시세 대비 공시가격 비율(%)
   hiFairRatio?: number; // 공정시장가액비율(%, 주택 60)
   hiLoanDeduct?: boolean; // 실거주 주택 구입 대출 잔액 × 60%를 재산 과세표준에서 공제(1세대 1주택, 한도 5,000만)
+  hiDepNoReg?: boolean; // 피부양자 판정: 사업자등록 없음(임대 외 사업소득 연 500만 이하면 인정). 아니면 사업소득이 있으면 탈락
   hiPrivate: boolean; // 사적연금(과세재원 인출)도 건보료에 반영
   addToDraw: boolean; // 국민연금 때문에 늘어나는 종소세·건보료를 인출에 더함
 }
