@@ -14,7 +14,8 @@ import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, spendAt, STRATEGI
 import { pct, won, yearRanges } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
-import { debtAnnualAt, incomeValue } from '../engine/montecarlo';
+import { debtAnnualAt, GOAL_KIND_LABEL, goalKind, incomeValue } from '../engine/montecarlo';
+import { goalItemsFrom } from '../engine/goals';
 
 type Basis = 'avg' | 'p50' | 'p10' | 'custom';
 const basisLabel = (b: Basis, retired: boolean) => (b === 'avg' ? (retired ? '현재 자산' : '평균수익') : b === 'p50' ? '중앙값' : b === 'p10' ? '비관' : '직접');
@@ -96,9 +97,12 @@ function WithdrawInner() {
   // 만기일시 대출 원금 상환은 재무목표 지출과 나눠 보여 줌
   const loanRepays = planInput.goals.filter((g) => g.loan && g.age >= startAge);
   const premiums = planInput.goals.filter((g) => g.premium && g.age >= startAge);
-  const extras = planInput.goals.filter((g) => !g.loan && !g.premium && g.age >= startAge);
+  const extras = planInput.goals.filter((g) => goalKind(g) === 'goal' && g.age >= startAge);
+  const npTaxes = planInput.goals.filter((g) => goalKind(g) === 'npTax' && g.age >= startAge);
   const loanAt = (age: number) => loanRepays.filter((g) => g.age === age);
   const premiumAt = (age: number) => premiums.filter((g) => g.age === age).reduce((a, g) => a + g.amount, 0);
+  const extraAt = (age: number) => extras.filter((g) => g.age === age).reduce((a, g) => a + g.amount, 0);
+  const npTaxAt = (age: number) => npTaxes.filter((g) => g.age === age).reduce((a, g) => a + g.amount, 0);
   // 보험별 은퇴 후 납입 기간
   const premiumNames = [...new Set(premiums.map((g) => g.premium!))].map((name) => {
     const ages = premiums.filter((g) => g.premium === name).map((g) => g.age);
@@ -156,13 +160,16 @@ function WithdrawInner() {
           </p>
         )}
         {extras.length > 0 && (
-          <p className="mt-1 text-xs text-muted">은퇴 후 목적자금·반복 지출 {extras.length}건(합계 {won(extras.reduce((a, e) => a + e.amount, 0))})을 해당 연도 인출액에 더했습니다.</p>
+          <p className="mt-1 text-xs text-muted">은퇴 후 {GOAL_KIND_LABEL.goal}(목적자금·반복 지출) {goalItemsFrom(d.goals, startAge).length}건(합계 {won(extras.reduce((a, e) => a + e.amount, 0))})을 해당 연도 인출액에 더했습니다(스케줄의 ‘{GOAL_KIND_LABEL.goal}’ 표시).</p>
         )}
         {loanRepays.length > 0 && (
-          <p className="mt-1 text-xs text-warn">만기일시 대출 원금 상환 {loanRepays.map((g) => `${g.loan} ${g.age}세 ${won(g.amount)}`).join(', ')}을 그 해 인출액에 더했습니다(스케줄의 ‘대출 원금 상환’ 표시).</p>
+          <p className="mt-1 text-xs text-warn">{GOAL_KIND_LABEL.loan} 상환 {loanRepays.map((g) => `${g.loan} ${g.age}세 ${won(g.amount)}`).join(', ')}을 그 해 인출액에 더했습니다(스케줄의 ‘{GOAL_KIND_LABEL.loan}’ 표시).</p>
         )}
         {premiums.length > 0 && (
-          <p className="mt-1 text-xs text-warn">은퇴 후에도 내는 보험료 {premiumNames.join(', ')}(합계 {won(premiums.reduce((a, g) => a + g.amount, 0))}, 명목 고정이라 실질로는 해마다 줄어듦)를 그 해 인출액에 더했습니다(스케줄의 ‘보험료’ 표시).</p>
+          <p className="mt-1 text-xs text-warn">{GOAL_KIND_LABEL.premium} {premiumNames.join(', ')}(합계 {won(premiums.reduce((a, g) => a + g.amount, 0))}, 명목 고정이라 실질로는 해마다 줄어듦)를 그 해 인출액에 더했습니다(스케줄의 ‘{GOAL_KIND_LABEL.premium}’ 표시).</p>
+        )}
+        {npTaxes.length > 0 && (
+          <p className="mt-1 text-xs text-muted">{GOAL_KIND_LABEL.npTax} {npTaxes[0].age}~{npTaxes[npTaxes.length - 1].age}세(합계 {won(npTaxes.reduce((a, g) => a + g.amount, 0))})를 그 해 인출액에 더했습니다(프로필 종합소득세의 ‘인출에 더하기’ 설정 · 스케줄의 ‘{GOAL_KIND_LABEL.npTax}’ 표시).</p>
         )}
         {lateDebts.length > 0 && (
           <p className="mt-1 text-xs text-warn">은퇴 후에도 남는 대출 상환 {lateDebts.map((x) => `${x.name} 월 ${won(debtAnnualAt(x, startAge) / 12)}${x.decline ? '부터 점점 줄어듦' : ''}(${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '상환 미종료'})`).join(', ')}을 인출액에 포함했습니다.</p>
@@ -284,9 +291,11 @@ function WithdrawInner() {
                   <td className="whitespace-nowrap text-muted">
                     − {won(r.need)}
                     {loanAt(r.age).map((g) => (
-                      <div key={g.loan} className="text-xs font-semibold text-warn">대출 원금 상환 {won(g.amount)}</div>
+                      <div key={g.loan} className="text-xs font-semibold text-warn">{GOAL_KIND_LABEL.loan} {won(g.amount)}</div>
                     ))}
-                    {premiumAt(r.age) > 0 && <div className="text-xs text-muted">보험료 {won(premiumAt(r.age))}</div>}
+                    {extraAt(r.age) > 0.5 && <div className="text-xs text-muted">{GOAL_KIND_LABEL.goal} {won(extraAt(r.age))}</div>}
+                    {premiumAt(r.age) > 0 && <div className="text-xs text-muted">{GOAL_KIND_LABEL.premium} {won(premiumAt(r.age))}</div>}
+                    {npTaxAt(r.age) > 0.5 && <div className="text-xs text-muted">{GOAL_KIND_LABEL.npTax} {won(npTaxAt(r.age))}</div>}
                   </td>
                   <td className="whitespace-nowrap">{r.pension - r.need < -0.5 ? `− ${won(r.need - r.pension)}` : won(r.pension - r.need)}</td>
                   <td className="font-semibold">{won(r.withdrawal)}</td>
@@ -309,7 +318,7 @@ function WithdrawInner() {
           </table>
         </div>
         <p className="mt-2 text-xs text-muted">
-          한 해씩 소득 − 필요 지출(생활비 + 남은 대출 상환 + 목적자금·반복 지출 + 만기일시 대출 원금 + 은퇴 후 보험료) = 수지이고, 모자라는 만큼 금융자산에서 인출합니다. 정률·가드레일 전략은 인출액이 부족분과 다를 수 있습니다. 일시금·매각·환급은 쓰지 않고 자산에 더합니다. 빨간 행은 쓸 수 있는 돈(소득 + 인출)이 필요 지출의 90%에 못 미치는 해입니다. ‘대출 원금 상환’은 필요 지출 가운데 만기에 한 번에 갚는 대출 원금, ‘보험료’는 은퇴 뒤까지 내는 보험료입니다.
+          한 해씩 소득 − 필요 지출(생활비 + 남은 대출 상환 + 목표 탭 지출 + 만기일시 대출 원금 + 은퇴 후 보험료 + 국민연금 몫 세금·건보료) = 수지이고, 모자라는 만큼 금융자산에서 인출합니다. 정률·가드레일 전략은 인출액이 부족분과 다를 수 있습니다. 일시금·매각·환급은 쓰지 않고 자산에 더합니다. 빨간 행은 쓸 수 있는 돈(소득 + 인출)이 필요 지출의 90%에 못 미치는 해입니다. 필요 지출 아래 작은 글씨는 그 가운데 목표 탭 지출, 만기에 한 번에 갚는 대출 원금, 은퇴 뒤까지 내는 보험료, 국민연금 때문에 늘어나는 세금·건보료입니다.
           {tax && ` 노란 행은 과세재원 인출이 1인 연 ${PENSION_SLOT.toLocaleString()}만원(세전, 명목)을 넘어 초과분에 ${OVER_RATE}% 분리과세가 붙거나, 계좌별 연금수령한도를 넘어 연금외수령이 생기는(‘수령한도↑’) 해입니다. 한도 열은 그 해 과세재원 인출액(만원, 명목)입니다. 세금·세전 인출은 오늘 물가 기준입니다.`}
         </p>
       </Card>

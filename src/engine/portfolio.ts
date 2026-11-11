@@ -85,6 +85,8 @@ export interface Summary {
   insuranceCount: number;
   /** 앞으로 납입이 끝나는 보험: 그 나이부터 월 보험료만큼 지출이 줄어듦 */
   insuranceEnds: { name: string; age: number; monthly: number }[];
+  /** 납입 종료 나이가 없는(0) 보험: 은퇴 후에도 기대수명까지 계속 냄 */
+  insuranceOngoing: { name: string; monthly: number }[];
   expense: number; // 월 총지출(고정+변동+대출상환+보험료)
   savings: number; // 월 저축여력
   savingsRate: number; // %
@@ -138,6 +140,7 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
   const paying = policies.filter((p) => isPaying(p, age, profile) && p.monthlyPremium > 0);
   const insuranceTotal = sum(paying.map((p) => p.monthlyPremium));
   const insuranceEnds = paying.filter((p) => payEndSelfAge(p, profile) > age).map((p) => ({ name: p.name, age: payEndSelfAge(p, profile), monthly: p.monthlyPremium }));
+  const insuranceOngoing = paying.filter((p) => !(payEndSelfAge(p, profile) > 0)).map((p) => ({ name: p.name, monthly: p.monthlyPremium }));
   const insuranceDup = cashflows.filter(isInsuranceCashflow).map((c) => c.name);
   const insurance = insuranceDup.length ? 0 : insuranceTotal;
   const expense = fixed + variable + debtPayment + insurance;
@@ -172,6 +175,7 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
     insuranceDup,
     insuranceCount: paying.length,
     insuranceEnds,
+    insuranceOngoing,
     expense,
     savings,
     savingsRate: income > 0 ? (savings / income) * 100 : 0,

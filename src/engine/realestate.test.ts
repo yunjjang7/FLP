@@ -348,15 +348,25 @@ describe('은퇴 후 보험료', () => {
     expect(p[0].premium).toBe(a.name);
     expect(p[0].amount).toBeCloseTo((a.monthlyPremium * 12) / Math.pow(1 + d.profile.inflation / 100, 15), 6);
     const plan = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
-    expect(plan.goals.filter((g) => g.premium)).toEqual(p);
+    // 납입 종료 나이가 없는(0) 나머지 보험은 기대수명까지 계속 냄
+    expect(plan.goals.filter((g) => g.premium === a.name)).toEqual(p);
+    expect(plan.goals.filter((g) => g.premium && g.premium !== a.name)).toEqual(retirePremiums(s, 60, d.profile.inflation, d.profile.lifeExpectancy).filter((g) => g.premium !== a.name));
     // 은퇴 전에 끝나거나(저축 증가로 처리) 0이면 은퇴 후 보험료 없음
     expect(retirePremiums(summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, [{ ...a, payEndAge: 55 }, ...rest]), 60, 2.5)).toEqual([]);
     expect(retirePremiums(summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance), 60, 2.5)).toEqual([]);
   });
+  it('납입 종료 나이가 0이면 은퇴~기대수명까지 매년 자산에서 뺌', () => {
+    const [b] = rest;
+    const p = retirePremiums(s, 60, d.profile.inflation, d.profile.lifeExpectancy).filter((g) => g.premium === b.name);
+    expect(p[0].age).toBe(60);
+    expect(p[p.length - 1].age).toBe(d.profile.lifeExpectancy);
+    expect(p[0].amount).toBeCloseTo((b.monthlyPremium * 12) / Math.pow(1 + d.profile.inflation / 100, 15), 6);
+    expect(s.insuranceOngoing.map((x) => x.name)).toEqual(rest.map((x) => x.name));
+  });
   it('은퇴 나이를 바꾸면 기간이 따라 바뀌고, 지출에 보험료 항목이 따로 있으면 넣지 않음', () => {
-    expect(buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s, { retireAge: 63 }).goals.filter((g) => g.premium).map((g) => g.age)).toEqual([63, 64]);
+    expect(buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s, { retireAge: 63 }).goals.filter((g) => g.premium === a.name).map((g) => g.age)).toEqual([63, 64]);
     const dup = summarize(d.profile, d.assets, d.liabilities, [...d.cashflows, { name: '보험료', kind: 'fixed' as const, category: '보험', monthly: 45 }], Y, ins);
-    expect(retirePremiums(dup, 60, 2.5)).toEqual([]);
+    expect(retirePremiums(dup, 60, 2.5, 90)).toEqual([]);
   });
 });
 

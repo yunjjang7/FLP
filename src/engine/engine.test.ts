@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { sampleData } from '../db/sample';
 import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, realRate, scale } from './finance';
-import { buildPlanInput, expenseSteps, loanEndAge, lockedInflow, planGoals, retireIncomes } from './goals';
+import { buildPlanInput, expenseSteps, goalItemsFrom, loanEndAge, lockedInflow, planGoals, retireIncomes } from './goals';
 import { CRITICAL_BASE, insuranceGap } from './insurance';
-import { deterministicPath, expenseAt, expenseRatioAt, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
+import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, incomeValue, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
@@ -12,7 +12,7 @@ import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, v
 import { bucketMap, emergencyPrescription, goalPrescription, prescriptions, savingsPrescription } from './prescribe';
 import { emergencyCap, emergencyRunway, financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
-import type { PlanBase } from '../types';
+import type { Goal, PlanBase } from '../types';
 import { sensitivityExpenses } from '../components/Sensitivity';
 
 const DEFAULT_TAX_ON = { on: true, rentSpouseShare: 0, rentExpense: 0, npTaxable: 100, npNet: 100, dedSelf: 150, dedSpouse: 150, hiNow: 50, hiRate: 7.19, hiLtc: 13.14, hiPublic: 50, hiPropGrowth: 0, hiPrivate: false, addToDraw: false };
@@ -275,12 +275,29 @@ describe('엑셀 반영: 인출 중 은퇴자·소득·가드레일·반복 지�
     expect(st.balance).toBe(50000);
     expect(st.outflow).toBeCloseTo(3000 - 1200, 6);
     expect(withdrawStart({ ...retired, goals: [{ age: 66, amount: 500 }] }).outflow).toBeCloseTo(2300, 6); // 그해 지출 포함
+    // 그해 지출을 종류별로 나눔: 합계는 인출액에 더해진 금액과 같음
+    const mixed = { ...retired, goals: [{ age: 66, amount: 100 }, { age: 66, amount: 228, premium: '종신보험' }, { age: 66, amount: 3000, loan: '전세대출' }, { age: 66, amount: 50, npTax: true }, { age: 67, amount: 999 }] };
+    const by = goalBreakdownAt(mixed, 66);
+    expect(by).toEqual({ goal: 100, premium: 228, loan: 3000, npTax: 50 });
+    expect(withdrawStart(mixed).outflow).toBeCloseTo(1800 + 100 + 228 + 3000 + 50, 6);
+    expect(mixed.goals.map(goalKind)).toEqual(['goal', 'premium', 'loan', 'npTax', 'goal']);
     expect(st.rate).toBeCloseTo(1800 / 50000 * 100, 6);
     const need = retirementNeed(retired);
     expect(need.startAge).toBe(66);
     expect(need.projected).toBe(50000);
     // 은퇴 전 사용자는 은퇴 나이부터
     expect(withdrawStart(base).age).toBe(60);
+  });
+
+  it('목표 탭 건수는 연도별 행이 아니라 항목 수로 셈', () => {
+    const g = (name: string, targetAge: number, endAge?: number, category = 'other') => ({ name, category, targetAge, amountPV: 100, growthRate: 0, endAge }) as Goal;
+    const goals = [g('등록금', 59, 60), g('보유세', 58, 100), g('여행', 55), g('차량', 70), g('은퇴', 58, undefined, 'retirement')];
+    expect(goalItemsFrom(goals, 58).map((x) => x.name)).toEqual(['등록금', '보유세', '차량']); // 지난 일회성·은퇴 분류 제외
+    expect(goalItemsFrom(goals, 61).map((x) => x.name)).toEqual(['보유세', '차량']);
+    const d = sampleData();
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+    const rows = buildPlanInput(d.profile, d.assets, d.liabilities, goals, s).goals.filter((x) => goalKind(x) === 'goal');
+    expect(rows.length).toBeGreaterThan(goalItemsFrom(goals, s.age).length); // 반복 지출은 해마다 행이 생김
   });
   it('소득 흐름: 시작·종료 나이와 인상 주기', () => {
     const rent = { startAge: 60, endAge: 70, annual: 1200, growth: 5, step: 2, baseAge: 58 };
@@ -545,6 +562,11 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     const at65 = (x: typeof d) => plan(x).goals.filter((g) => g.age === 65).reduce((a, g) => a + g.amount, 0);
     const off = { ...d, profile: { ...d.profile, incomeTax: { ...d.profile.incomeTax!, addToDraw: false } } };
     expect(at65(d) - at65(off)).toBeCloseTo(y33.npPart, 6);
+    // 국민연금 몫 지출은 npTax 로 표시되어 목표 탭 지출과 따로 나뉨
+    const by = goalBreakdownAt(plan(d), 65);
+    expect(by.npTax).toBeCloseTo(y33.npPart, 6);
+    expect(goalBreakdownAt(plan(off), 65).npTax).toBe(0);
+    expect(by.goal).toBeCloseTo(goalBreakdownAt(plan(off), 65).goal, 6);
   });
 
   it('그 밖의 은퇴 후 소득: 종류별로 종소세·건보료 반영', () => {
@@ -843,6 +865,7 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
 
   it('인출순서 조합 비교: ②는 지금 계획(납입 없음)과 같고, 납입 조합은 환급·납입이 생김', () => {
     const d = retiree();
+    d.insurance = []; // 인출 순서·세금 비교만 보도록 은퇴 후 보험료 없음
     const base = { type: 'pension' as const, expectedReturn: 4, volatility: 0, purpose: 'long' as const, nature: 'safe' as const, pensionYear1: 2018 };
     d.profile = { ...d.profile, spouseBirthYear: 1968, retireTaxRate: 10, retireTaxYear1: 2025, contrib: undefined, incomes: [{ name: '임대료', monthly: 400, startAge: 58, endAge: 0, growth: 0, step: 1, rent: true }],
       incomeTax: { on: true, rentSpouseShare: 100, rentExpense: 50, npTaxable: 80, npNet: 100, dedSelf: 150, dedSpouse: 150, hiNow: 0, hiRate: 7.19, hiLtc: 13.14, hiPublic: 50, hiPropGrowth: 0, hiPrivate: false, addToDraw: false } };

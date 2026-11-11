@@ -2,9 +2,9 @@ import { Bar as RBar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAx
 import { ExpenseCompare } from '../components/ExpenseCompare';
 import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
-import { debtAnnualAt, expenseAt, expenseRatioAt, incomeValue, nominalFactor } from '../engine/montecarlo';
+import { debtAnnualAt, expenseAt, expenseRatioAt, GOAL_KIND_LABEL, goalBreakdownAt, goalKind, incomeValue, nominalFactor } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
-import { loanEndAge, loanSchedule } from '../engine/goals';
+import { goalItemsFrom, loanEndAge, loanSchedule } from '../engine/goals';
 import { hpEstate, housePension, RE_USE, reUseOf, usesHp, willSell } from '../engine/realestate';
 import { Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
@@ -36,8 +36,9 @@ export default function Retire() {
   const livingMonthly = draw ? Math.max(drawMonthly, publicMonthly) : expenseAt(inp, fullAge) / 12;
   const balanceMonthly = incomeMonthly - livingMonthly - (draw ? otherIncomeMonthly : 0);
   const gapMonthly = Math.max(0, -balanceMonthly);
-  // 그 해 목적자금·반복 지출(대출 원금·보험료 제외)
-  const goalMonthly = inp.goals.filter((g) => g.age === fullAge && !g.loan && !g.premium).reduce((a, g) => a + g.amount, 0) / 12;
+  // 그 해 지출을 홈 카드와 같은 종류로 나눔(보험료는 아래에서 보험별로 따로 보여 줌)
+  const fullBy = goalBreakdownAt(inp, fullAge);
+  const extraRows = (['goal', 'loan', 'npTax'] as const).map((k) => ({ key: k, label: `− ${GOAL_KIND_LABEL[k]} (${fullAge}세 그 해, 월 환산)`, monthly: fullBy[k] / 12 })).filter((x) => x.monthly > 0.5);
   const expenseNote = draw ? `연금 생활비 명목 고정(월 ${won((inp.fixedDraw ?? 0) / 12)})` : inp.expenseGrowth !== undefined ? `생활비 명목 ${inp.expenseGrowth}% 증가` : '물가 연동';
   const wLevel = withdrawLevel(start.rate, p.criteria.withdrawRateMax);
   const lateDebts = (inp.debts ?? []).filter((x) => x.endAge > inp.retireAge);
@@ -47,7 +48,8 @@ export default function Retire() {
     const rows = premiumRows.filter((g) => g.premium === name);
     return { name, first: rows[0], last: rows[rows.length - 1].age, total: rows.reduce((a, g) => a + g.amount, 0) };
   });
-  const goalRows = inp.goals.filter((g) => !g.loan && !g.premium);
+  const goalRows = inp.goals.filter((g) => goalKind(g) === 'goal');
+  const npTaxRows = inp.goals.filter((g) => goalKind(g) === 'npTax');
   // 나이 구간별 생활비: 은퇴 이후에 시작하는 구간만 표시
   const steps = draw ? [] : (inp.expenseSteps ?? []).filter((x) => x.fromAge > inp.retireAge && x.fromAge <= p.lifeExpectancy);
   // 은퇴 전 저축 변화: 보험 납입 완료·배우자 은퇴(저축 증감)와 은퇴 전에 끝나는 대출 상환
@@ -140,15 +142,15 @@ export default function Retire() {
             ) : (
               <div className="rounded-lg bg-sunken px-3 py-2 text-xs text-muted">연금·소득으로 생활비가 충당되어 생활비 때문에 꺼낼 금액은 없습니다.</div>
             )}
-            {(premiums.length > 0 || lateDebts.length > 0 || (inp.inflows ?? []).length > 0 || goalMonthly > 0.5) && (
+            {(premiums.length > 0 || lateDebts.length > 0 || (inp.inflows ?? []).length > 0 || extraRows.length > 0) && (
               <div className="space-y-1.5 border-t border-line pt-2.5">
                 <div className="text-xs font-semibold text-muted">월 수지 밖에서 따로 오가는 돈 (금융자산에서 추가 인출·유입)</div>
-                {goalMonthly > 0.5 && <Line label={`− 목적자금·반복 지출 (${fullAge}세 그 해, 월 환산)`} value={won(goalMonthly)} muted />}
+                {extraRows.map((x) => <Line key={x.key} label={x.label} value={won(x.monthly)} muted />)}
                 {lateDebts.map((x) => (
                   <Line key={x.name} label={`− ${x.name} 상환 (${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '종료 없음'}${x.decline ? ', 해마다 줄어듦' : ''}, 월)`} value={won(debtAnnualAt(x, inp.retireAge) / 12)} muted />
                 ))}
                 {premiums.map((x) => (
-                  <Line key={`prem-${x.name}`} label={`− ${x.name} 보험료 (${x.last}세까지, 명목 고정, 월)`} value={won(x.first.amount / 12)} muted />
+                  <Line key={`prem-${x.name}`} label={`− ${GOAL_KIND_LABEL.premium} · ${x.name} (${x.last}세까지, 명목 고정, 월)`} value={won(x.first.amount / 12)} muted />
                 ))}
                 {(inp.inflows ?? []).map((x) => (
                   <Line key={`${x.name}-${x.age}`} label={x.kind === 'credit' ? `+ 세액공제 환급(${x.age}세, 일시금)` : x.kind === 'sale' ? `+ ${x.name} 매각(${x.age}세, 비용·보증금·새 집 뺀 금액)` : `+ ${x.name} 수령(${x.age}세, 세후 일시금)`} value={won(x.amount)} muted />
@@ -211,8 +213,9 @@ export default function Retire() {
           <Assume k="물가상승률" v={`${inp.inflation}%`} />
           <Assume k="은퇴 후 생활비" v={expenseNote + (steps.length ? ` · 나이 구간별(${[{ fromAge: inp.retireAge, ratio: expenseRatioAt(inp.expenseSteps, inp.retireAge) }, ...steps].map((x) => `${x.fromAge}세~ ${won((inp.retireExpenseAnnual * x.ratio) / 12)}`).join(' → ')})` : '')} />
           {(inp.inflows ?? []).some((x) => !x.kind) && <Assume k="수령 전 자산(시작 자산에서 제외)" v={(inp.inflows ?? []).filter((x) => !x.kind).map((x) => `${x.name} ${x.age}세`).join(' · ')} />}
-          <Assume k="목적자금·반복 지출" v={`${d.goals.filter((g) => g.category !== 'retirement').length}건 · 총 ${won(goalRows.reduce((a, g) => a + g.amount, 0))}`} />
-          {premiums.length > 0 && <Assume k="은퇴 후 보험료" v={premiums.map((x) => `${x.name} ${x.first.age}~${x.last}세 · 총 ${won(x.total)}`).join(' · ')} />}
+          <Assume k={GOAL_KIND_LABEL.goal} v={`${goalItemsFrom(d.goals, inp.currentAge).length}건 · 총 ${won(goalRows.reduce((a, g) => a + g.amount, 0))}`} />
+          {npTaxRows.length > 0 && <Assume k={GOAL_KIND_LABEL.npTax} v={`${npTaxRows[0].age}~${npTaxRows[npTaxRows.length - 1].age}세 · 총 ${won(npTaxRows.reduce((a, g) => a + g.amount, 0))}`} />}
+          {premiums.length > 0 && <Assume k={GOAL_KIND_LABEL.premium} v={premiums.map((x) => `${x.name} ${x.first.age}~${x.last}세 · 총 ${won(x.total)}`).join(' · ')} />}
           <Assume k="부동산" v={reNote} />
           {hpNote && <Assume k="주택연금 상속 시 남는 주택 가치" v={hpNote} />}
         </dl>

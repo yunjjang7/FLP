@@ -4,7 +4,7 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { Donut } from '../components/Donut';
 import { Badge, Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
-import { debtPaymentAt, pensionAt, retireOutflowAt } from '../engine/montecarlo';
+import { debtPaymentAt, GOAL_KIND_LABEL, GOAL_KINDS, goalBreakdownAt, pensionAt, retireOutflowAt } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
@@ -24,8 +24,13 @@ export default function Home() {
         const debt = debtPaymentAt(d.planInput, d.start.age);
         const pension = pensionAt(d.planInput, d.start.age);
         // 인출률과 같은 기준: 그해 목표 지출까지 더한 금액(withdrawStart.outflow)
-        const goals = Math.max(0, d.start.outflow - Math.max(0, draw));
-        return { living: Math.max(0, draw - debt + pension) / 12, debt: debt / 12, pension: pension / 12, goals: goals / 12, draw: d.start.outflow / 12 };
+        // 그해 지출은 목표 탭 지출·은퇴 후 보험료·만기일시 대출 원금·국민연금 몫 세금으로 나눠 보여 줌
+        const by = goalBreakdownAt(d.planInput, d.start.age);
+        const extras = GOAL_KINDS.map((k) => ({ key: k, label: `${GOAL_KIND_LABEL[k]} (월 환산)`, monthly: by[k] / 12 })).filter((x) => x.monthly > 0.5);
+        // 생활비 = 순인출 − 대출 + 소득(인출액 고정 방식이면 연금 생활비 + 월세 등). 월 수지 = 소득 − 생활비 − 대출 − 항목별 지출(흑자면 +)
+        const living = Math.max(0, draw - debt + pension);
+        const balance = pension - living - debt - GOAL_KINDS.reduce((a, k) => a + by[k], 0);
+        return { living: living / 12, debt: debt / 12, pension: pension / 12, extras, balance: balance / 12 };
       })()
     : null;
   const successLevel: Level =d.sim.successRate >= d.profile.criteria.successTarget ? 'good' : d.sim.successRate >= 60 ? 'caution' : 'danger';
@@ -88,15 +93,17 @@ export default function Home() {
               <Row label="소득 (국민·개인연금, 월세 등)" value={won(retiredFlow.pension)} />
               <Row label="은퇴 후 생활비" value={`− ${won(retiredFlow.living)}`} muted />
               {retiredFlow.debt > 0 && <Row label="대출 원리금" value={`− ${won(retiredFlow.debt)}`} muted />}
-              {retiredFlow.goals > 0.5 && <Row label="올해 목표 지출(월 환산)" value={`− ${won(retiredFlow.goals)}`} muted />}
+              {retiredFlow.extras.map((x) => <Row key={x.key} label={x.label} value={`− ${won(x.monthly)}`} muted />)}
               <div className="border-t border-line pt-2.5">
-                <Row label={retiredFlow.draw > 0.5 ? '월 수지 (소득 − 지출, 부족)' : '월 수지 (소득 − 지출)'} value={retiredFlow.draw > 0.5 ? `− ${won(retiredFlow.draw)}` : won(-retiredFlow.draw)} strong />
+                <Row label={retiredFlow.balance < -0.5 ? '월 수지 (소득 − 지출, 부족)' : retiredFlow.balance > 0.5 ? '월 수지 (소득 − 지출, 흑자)' : '월 수지 (소득 − 지출)'} value={retiredFlow.balance < -0.5 ? `− ${won(-retiredFlow.balance)}` : retiredFlow.balance > 0.5 ? `+ ${won(retiredFlow.balance)}` : won(0)} strong />
               </div>
-              {retiredFlow.draw > 0.5 && (
+              {retiredFlow.balance < -0.5 ? (
                 <div className="flex items-center justify-between rounded-lg bg-sunken px-3 py-2">
                   <span>→ 부족분은 금융자산에서 인출</span>
-                  <span className="text-base font-bold">{won(retiredFlow.draw)}</span>
+                  <span className="text-base font-bold">{won(-retiredFlow.balance)}</span>
                 </div>
+              ) : (
+                <div className="rounded-lg bg-sunken px-3 py-2 text-xs text-muted">소득으로 지출이 충당되어 올해 금융자산에서 꺼낼 금액은 없습니다.</div>
               )}
             </div>
             <div className="mt-4">

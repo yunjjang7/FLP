@@ -44,6 +44,11 @@ export function planGoals(goals: Goal[], assets: Asset[], currentAge: number): G
 /** 매년 반복되는 지출인지 */
 export const isRecurring = (g: Goal) => (g.endAge ?? 0) > g.targetAge;
 
+/** 노후 계산에 들어가는 목표 탭 항목(‘은퇴’ 분류 제외) 가운데 fromAge 이후에 한 번이라도 지출이 남은 것 — 연도별 행이 아니라 항목 수로 셈 */
+export function goalItemsFrom(goals: Goal[], fromAge: number) {
+  return goals.filter((g) => g.category !== 'retirement' && (isRecurring(g) ? g.endAge! : g.targetAge) >= fromAge);
+}
+
 /** 배우자 나이 → 본인 나이로 바꿀 때 더할 값(배우자가 어리면 +) */
 export const spouseGap = (p: Profile) => (p.spouseBirthYear > 0 ? p.spouseBirthYear - p.birthYear : 0);
 /** 배우자 나이를 본인 나이로 */
@@ -188,13 +193,17 @@ export function loanSchedule(l: Liability, currentAge: number, lastAge: number):
 
 /**
  * 은퇴 후에도 내는 보험료: 납입 종료 나이가 은퇴 나이보다 늦으면 은퇴(이미 은퇴했으면 지금)부터 종료 전 해까지 매년 자산에서 뺌.
+ * 납입 종료 나이가 없는(0) 보험은 기대수명까지 계속 냄(lifeExpectancy 를 넘긴 경우).
  * 보험료는 명목 고정이라 실질 금액 = 연 보험료 ÷ (1 + 물가)^(햇수). 보험 탭 보험료를 지출에 자동으로 더한 경우만.
  */
-export function retirePremiums(s: Summary, retireAge: number, inflation: number) {
+export function retirePremiums(s: Summary, retireAge: number, inflation: number, lifeExpectancy?: number) {
   const out: { age: number; amount: number; premium: string }[] = [];
   if (!(s.insurance > 0)) return out;
-  for (const x of s.insuranceEnds.filter((e) => e.age > retireAge))
-    for (let age = Math.max(retireAge, s.age); age < x.age; age++) out.push({ age, amount: (x.monthly * 12) / Math.pow(1 + inflation / 100, age - s.age), premium: x.name });
+  const push = (name: string, monthly: number, endExclusive: number) => {
+    for (let age = Math.max(retireAge, s.age); age < endExclusive; age++) out.push({ age, amount: (monthly * 12) / Math.pow(1 + inflation / 100, age - s.age), premium: name });
+  };
+  for (const x of s.insuranceEnds.filter((e) => e.age > retireAge)) push(x.name, x.monthly, x.age);
+  if (lifeExpectancy !== undefined) for (const x of s.insuranceOngoing ?? []) push(x.name, x.monthly, lifeExpectancy + 1);
   return out;
 }
 
@@ -290,7 +299,7 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
       // 만기일시 상환 대출은 만기 나이에 원금을 한 번에 갚음
       .concat(bulletRepayments(liabilities, s.age, inflation).map(({ name, age, amount }) => ({ age, amount, loan: name })))
       // 은퇴 뒤까지 내는 보험료는 그 해 자산에서 뺌
-      .concat(retirePremiums(s, o.retireAge ?? profile.retireAge, inflation))
+      .concat(retirePremiums(s, o.retireAge ?? profile.retireAge, inflation, profile.lifeExpectancy))
       .concat(npCost),
   };
 }
