@@ -2,7 +2,7 @@ import { Bar as RBar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAx
 import { ExpenseCompare } from '../components/ExpenseCompare';
 import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
-import { debtAnnualAt, expenseAt, expenseRatioAt, incomeValue, pensionAt, retireOutflowAt } from '../engine/montecarlo';
+import { debtAnnualAt, expenseAt, expenseRatioAt, incomeValue, nominalFactor } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
 import { loanEndAge, loanSchedule } from '../engine/goals';
 import { hpEstate, housePension, RE_USE, reUseOf, usesHp, willSell } from '../engine/realestate';
@@ -24,7 +24,20 @@ export default function Retire() {
   // 모든 소득이 개시된 나이 기준 자산 인출액
   const fullAge = Math.max(start.age, ...inp.pensions.map((x) => x.startAge));
   const draw = inp.fixedDraw !== undefined;
-  const gapMonthly = draw ? retireOutflowAt(inp, fullAge) / 12 : Math.max(0, expenseAt(inp, fullAge) / 12 - pensionAt(inp, fullAge) / 12);
+  // 소득 − 지출 = 월 수지(fullAge 기준, 현재가치). 인출액 고정이면 고정액에서 국민·개인연금만 빼고 나머지는 연금계좌 등 금융자산에서 인출
+  // 인출액 고정 방식은 노후 인출과 같이 생활비 = 국민·개인연금과 고정 인출액 중 큰 쪽 + 그 밖의 소득(월세 등, 받는 만큼 더 씀)
+  const incomeRows = inp.pensions
+    .map((x) => ({ x, monthly: incomeValue({ ...x, firstShare: undefined }, fullAge, inp.inflation) / 12 }))
+    .filter((r) => r.monthly > 0.5);
+  const incomeMonthly = incomeRows.reduce((a, r) => a + r.monthly, 0);
+  const publicMonthly = incomeRows.filter((r) => r.x.kind === 'pension').reduce((a, r) => a + r.monthly, 0);
+  const otherIncomeMonthly = incomeMonthly - publicMonthly;
+  const drawMonthly = ((inp.fixedDraw ?? 0) * nominalFactor(0, inp.inflation, fullAge - Math.max(inp.currentAge, inp.retireAge))) / 12;
+  const livingMonthly = draw ? Math.max(drawMonthly, publicMonthly) : expenseAt(inp, fullAge) / 12;
+  const balanceMonthly = incomeMonthly - livingMonthly - (draw ? otherIncomeMonthly : 0);
+  const gapMonthly = Math.max(0, -balanceMonthly);
+  // 그 해 목적자금·반복 지출(대출 원금·보험료 제외)
+  const goalMonthly = inp.goals.filter((g) => g.age === fullAge && !g.loan && !g.premium).reduce((a, g) => a + g.amount, 0) / 12;
   const expenseNote = draw ? `연금 생활비 명목 고정(월 ${won((inp.fixedDraw ?? 0) / 12)})` : inp.expenseGrowth !== undefined ? `생활비 명목 ${inp.expenseGrowth}% 증가` : '물가 연동';
   const wLevel = withdrawLevel(start.rate, p.criteria.withdrawRateMax);
   const lateDebts = (inp.debts ?? []).filter((x) => x.endAge > inp.retireAge);
@@ -102,30 +115,46 @@ export default function Retire() {
       </Card>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
-        <Card title="은퇴 후 월 현금흐름 (현재가치)">
+        <Card title="은퇴 후 월 현금흐름 (현재가치)" action={<span className="text-xs text-muted">{fullAge}세 기준 · 오늘 물가</span>}>
+          {/* 소득 − 지출 = 월 수지, 모자라는 만큼 금융자산에서 인출 */}
           <div className="space-y-2.5 text-sm">
-            {draw ? (
-              <Line label="연금계좌 + 국민·개인연금(명목 고정, 오늘 가치)" value={won((inp.fixedDraw ?? 0) / 12)} />
-            ) : (
-              <Line label={`목표 생활비${inp.expenseGrowth !== undefined || steps.length ? ` (${fullAge}세)` : ''}`} value={won(expenseAt(inp, fullAge) / 12)} />
-            )}
+            <div className="text-xs font-semibold text-muted">소득{draw ? ' (연금계좌 인출은 아래 ‘금융자산에서 인출’에 포함)' : ''}</div>
+            {incomeRows.length === 0 && <Line label="연금·소득 없음" value={won(0)} muted />}
+            {incomeRows.map(({ x, monthly }, i) => (
+              <Line key={i} label={`${x.name} (${x.startAge}세~${x.endAge ? `${x.endAge}세` : ''}${x.growth === 0 ? ', 명목 고정' : ''})`} value={won(monthly)} />
+            ))}
+            <div className="pt-1 text-xs font-semibold text-muted">지출</div>
+            <Line label={draw ? (drawMonthly >= publicMonthly ? '연금 생활비 (명목 고정, 물가 반영 후)' : '연금 생활비 (국민·개인연금이 고정액보다 많아 연금 전액)') : `은퇴 후 생활비${inp.expenseGrowth !== undefined || steps.length ? ` (${fullAge}세)` : ''}`} value={`− ${won(livingMonthly)}`} muted />
+            {draw && otherIncomeMonthly > 0.5 && <Line label="그 밖의 소득(월세 등)만큼 더 쓰는 생활비" value={`− ${won(otherIncomeMonthly)}`} muted />}
             {steps.map((x) => (
-              <Line key={`step-${x.fromAge}`} label={`· ${x.fromAge}세부터 생활비`} value={won(expenseAt(inp, x.fromAge) / 12)} muted />
+              <Line key={`step-${x.fromAge}`} label={`· ${x.fromAge}세부터 생활비`} value={`− ${won(expenseAt(inp, x.fromAge) / 12)}`} muted />
             ))}
-            {inp.pensions.map((x, i) => (
-              // 인상률 0(주택연금 등 명목 고정)은 받기 시작할 때의 현재가치로 표시
-              <Line key={i} label={`− ${x.name} (${x.startAge}세~${x.endAge ? `${x.endAge}세` : ''}${x.growth === 0 ? ', 명목 고정' : ''})`} value={won((x.growth === 0 ? incomeValue(x, x.startAge, inp.inflation) : x.annual) / 12)} muted />
-            ))}
-            <div className="border-t border-line pt-2.5"><Line label={draw ? `자산 인출액(${fullAge}세, 물가 반영 후)` : `자산에서 인출할 금액(${fullAge}세 기준)`} value={won(gapMonthly)} strong /></div>
-            {(inp.inflows ?? []).map((x) => (
-              <Line key={`${x.name}-${x.age}`} label={x.kind === 'credit' ? `+ 세액공제 환급(${x.age}세)` : x.kind === 'sale' ? `+ ${x.name} 매각(${x.age}세, 비용·보증금·새 집 뺀 금액)` : `+ ${x.name} 수령(${x.age}세, 세후 일시금)`} value={won(x.amount)} muted />
-            ))}
-            {premiums.map((x) => (
-              <Line key={`prem-${x.name}`} label={`+ ${x.name} 보험료 (${x.last}세까지, 명목 고정)`} value={won(x.first.amount / 12)} muted />
-            ))}
-            {lateDebts.map((x) => (
-              <Line key={x.name} label={`+ ${x.name} 상환 (${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '종료 없음'}${x.decline ? ', 해마다 줄어듦' : ''})`} value={won(debtAnnualAt(x, inp.retireAge) / 12)} muted />
-            ))}
+            <div className="border-t border-line pt-2.5">
+              <Line label={gapMonthly > 0.5 ? '월 수지 (소득 − 지출, 부족)' : '월 수지 (소득 − 지출)'} value={gapMonthly > 0.5 ? `− ${won(gapMonthly)}` : won(balanceMonthly)} strong />
+            </div>
+            {gapMonthly > 0.5 ? (
+              <div className="flex items-center justify-between rounded-lg bg-sunken px-3 py-2">
+                <span>→ 부족분은 금융자산에서 인출</span>
+                <span className="text-base font-bold">{won(gapMonthly)}</span>
+              </div>
+            ) : (
+              <div className="rounded-lg bg-sunken px-3 py-2 text-xs text-muted">연금·소득으로 생활비가 충당되어 생활비 때문에 꺼낼 금액은 없습니다.</div>
+            )}
+            {(premiums.length > 0 || lateDebts.length > 0 || (inp.inflows ?? []).length > 0 || goalMonthly > 0.5) && (
+              <div className="space-y-1.5 border-t border-line pt-2.5">
+                <div className="text-xs font-semibold text-muted">월 수지 밖에서 따로 오가는 돈 (금융자산에서 추가 인출·유입)</div>
+                {goalMonthly > 0.5 && <Line label={`− 목적자금·반복 지출 (${fullAge}세 그 해, 월 환산)`} value={won(goalMonthly)} muted />}
+                {lateDebts.map((x) => (
+                  <Line key={x.name} label={`− ${x.name} 상환 (${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '종료 없음'}${x.decline ? ', 해마다 줄어듦' : ''}, 월)`} value={won(debtAnnualAt(x, inp.retireAge) / 12)} muted />
+                ))}
+                {premiums.map((x) => (
+                  <Line key={`prem-${x.name}`} label={`− ${x.name} 보험료 (${x.last}세까지, 명목 고정, 월)`} value={won(x.first.amount / 12)} muted />
+                ))}
+                {(inp.inflows ?? []).map((x) => (
+                  <Line key={`${x.name}-${x.age}`} label={x.kind === 'credit' ? `+ 세액공제 환급(${x.age}세, 일시금)` : x.kind === 'sale' ? `+ ${x.name} 매각(${x.age}세, 비용·보증금·새 집 뺀 금액)` : `+ ${x.name} 수령(${x.age}세, 세후 일시금)`} value={won(x.amount)} muted />
+                ))}
+              </div>
+            )}
           </div>
           {preChanges.length > 0 && (
             <div className="mt-3 space-y-1.5 border-t border-line pt-2.5 text-sm">

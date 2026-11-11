@@ -28,7 +28,10 @@ export function Sensitivity() {
   const vol = inp.retireVolatility ?? inp.volatility;
 
   // 생활비: 300만원(또는 지금 −100) 근처부터 지금 +100까지 50만원 간격, 수익률: 지금 −2%p ~ +3%p
-  const expenses = sensitivityExpenses(p.retireMonthlyExpense);
+  // 연금 생활비 명목 고정 방식은 생활비 대신 월 고정 인출액을 바꿔 봄(생활비를 바꿔도 결과가 같으므로)
+  const drawMode = inp.fixedDraw !== undefined;
+  const baseExpense = drawMode ? Math.round((inp.fixedDraw ?? 0) / 12) : p.retireMonthlyExpense;
+  const expenses = sensitivityExpenses(baseExpense);
   const returns = [-2, -1, 0, 1, 2, 3].map((x) => +(baseReturn + x).toFixed(1)).filter((x) => x > 0);
 
   // 칸이 많아(최대 12×6, 시뮬레이션 72번) 한 번에 계산하면 화면이 멈추므로 한 줄씩 나눠 계산하고 다 될 때까지 빈칸으로 둠
@@ -40,7 +43,7 @@ export function Sensitivity() {
     setGrid([]);
     const step = (i: number) => {
       if (cancelled || i >= expenses.length) return;
-      rows.push(returns.map((r) => evaluate({ ...inp, retireExpenseAnnual: expenses[i] * 12, retireMeanReturn: r, retireVolatility: vol }, metric)));
+      rows.push(returns.map((r) => evaluate({ ...inp, ...(drawMode ? { fixedDraw: expenses[i] * 12 } : { retireExpenseAnnual: expenses[i] * 12 }), retireMeanReturn: r, retireVolatility: vol }, metric)));
       setGrid([...rows]);
       timer = setTimeout(() => step(i + 1), 0);
     };
@@ -50,7 +53,7 @@ export function Sensitivity() {
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inp, metric, p.retireMonthlyExpense, baseReturn, vol]);
+  }, [inp, metric, baseExpense, baseReturn, vol]);
 
   // 국민연금 개시 나이: 아직 받기 전일 때만 바꿔 볼 수 있음
   const nps = inp.pensions.find((x) => x.name === '국민연금');
@@ -79,7 +82,7 @@ export function Sensitivity() {
   return (
     <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
       <Card
-        title="민감도 — 생활비 × 은퇴 후 수익률"
+        title={`민감도 — ${drawMode ? '고정 인출액' : '생활비'} × 은퇴 후 수익률`}
         action={
           <div className="flex rounded-lg bg-sunken p-0.5 text-xs">
             {(['rate', 'age'] as const).map((m) => (
@@ -94,7 +97,7 @@ export function Sensitivity() {
           <table className="w-full min-w-[420px] text-sm">
             <thead>
               <tr className="text-xs text-muted">
-                <th className="py-1.5 text-left font-medium">월 생활비 \ 수익률</th>
+                <th className="py-1.5 text-left font-medium">{drawMode ? '월 고정 인출액' : '월 생활비'} \ 수익률</th>
                 {returns.map((r) => (
                   <th key={r} className={`font-medium ${r === baseReturn ? 'text-ink' : ''}`}>{r.toFixed(1)}%</th>
                 ))}
@@ -103,11 +106,11 @@ export function Sensitivity() {
             <tbody>
               {expenses.map((e, i) => (
                 <tr key={e}>
-                  <td className={`py-1 pr-2 ${e === p.retireMonthlyExpense ? 'font-semibold' : 'text-muted'}`}>{won(e)}</td>
+                  <td className={`py-1 pr-2 ${e === baseExpense ? 'font-semibold' : 'text-muted'}`}>{won(e)}</td>
                   {returns.map((_, j) => {
                     if (!grid[i]) return <td key={j} className="p-0.5"><div className="rounded-md bg-sunken py-1.5 text-center text-muted">…</div></td>;
                     const c = cell(grid[i][j]);
-                    const current = e === p.retireMonthlyExpense && returns[j] === baseReturn;
+                    const current = e === baseExpense && returns[j] === baseReturn;
                     return (
                       <td key={j} className="p-0.5">
                         <div className={`rounded-md py-1.5 text-center font-semibold ${c.cls} ${current ? 'ring-2 ring-ink' : ''}`}>{c.text}</div>

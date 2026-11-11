@@ -10,7 +10,7 @@ import { IncomeTaxCard } from '../components/IncomeTaxCard';
 import { OrderCompare } from '../components/OrderCompare';
 import type { CompareBase } from '../engine/orderCompare';
 import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
-import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
+import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
 import { pct, won, yearRanges } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
@@ -87,6 +87,9 @@ function WithdrawInner() {
   const saveProfile = (patch: Partial<typeof p>) => db.profile.put({ ...p, ...patch });
 
   const firstNeed = needAt(input, startAge);
+  // 첫해 소득 − 필요 지출(생활비 + 남은 대출 + 목적자금·보험료) = 수지, 모자라는 만큼 자산에서 인출
+  const firstIncome = input.pensions.reduce((a, x) => a + incomeValue(x, startAge, input.inflation), 0);
+  const firstSpend = spendAt(input, startAge);
   const wRate = startBalance > 0 ? (firstNeed / startBalance) * 100 : 0;
   const wLevel = withdrawLevel(wRate, p.criteria.withdrawRateMax);
   const others = planInput.pensions.filter((x) => x.name !== '국민연금' && x.name !== '개인·퇴직연금');
@@ -136,7 +139,10 @@ function WithdrawInner() {
         </div>
 
         <div className="mt-4 flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-xl bg-sunken px-3 py-2.5 text-sm">
-          <span>첫해 자산 인출 <b>{won(firstNeed / 12)}</b>/월</span>
+          <span>
+            {startAge}세 월 소득 <b>{won(firstIncome / 12)}</b> − 필요 지출 <b>{won(firstSpend / 12)}</b> = 수지 <b className={firstIncome - firstSpend < -0.5 ? 'text-bad' : 'text-good'}>{firstIncome - firstSpend < -0.5 ? `− ${won((firstSpend - firstIncome) / 12)}` : won((firstIncome - firstSpend) / 12)}</b>
+            {firstNeed > 0.5 && <> → 부족분은 금융자산에서 인출 <b>{won(firstNeed / 12)}</b>/월</>}
+          </span>
           <span>인출률 <b className={wLevel === 'good' ? 'text-good' : wLevel === 'caution' ? 'text-warn' : 'text-bad'}>{pct(wRate, 1)}</b> <span className="text-xs text-muted">(상한 {p.criteria.withdrawRateMax}% · {((p.criteria.withdrawRateMax * 2) / 3).toFixed(0)}% 이하 권장)</span></span>
           <span className="text-xs text-muted">{basis === 'avg' ? (retired ? '현재 금융자산 기준 · 노후 진단·투자 점검과 같은 값' : '평균수익 가정 은퇴 시점 자산 기준 · 노후 진단·투자 점검과 같은 값') : basis === 'custom' ? '직접 넣은 자산 기준' : `시뮬레이션 ${basis === 'p50' ? '중앙값' : '하위 10%'} 자산 기준 · 노후 진단의 인출률(평균수익 가정)과 다를 수 있음`}</span>
         </div>
@@ -249,15 +255,16 @@ function WithdrawInner() {
             <thead className="sticky top-0 bg-surface">
               <tr className="border-b border-line text-right text-xs text-muted">
                 <th className="py-2 text-left font-medium">나이</th>
-                <th className="font-medium">연금·소득</th>
-                {hasInflow && <th className="font-medium">일시금·매각·환급</th>}
-                <th className="font-medium">자산 인출{tax ? '(세후)' : ''}</th>
+                <th className="font-medium">소득<div className="font-normal">연금·월세 등</div></th>
+                <th className="font-medium">필요 지출<div className="font-normal">생활비·대출·목표</div></th>
+                <th className="font-medium">수지<div className="font-normal">소득 − 지출</div></th>
+                <th className="font-medium">→ 자산 인출{tax ? '(세후)' : ''}<div className="font-normal">금융자산에서</div></th>
                 {tax && <th className="font-medium">세금</th>}
                 {tax && <th className="font-medium">세전 인출</th>}
                 {hasIsa && <th className="font-medium">ISA 재투자<div className="font-normal">납입 · 연말 잔액</div></th>}
                 {tax && <th className="font-medium">1,500만 한도{hasSpouse ? ' 본인/배우자' : ''}<div className="font-normal">명목</div></th>}
-                <th className="font-medium">총 소득</th>
-                <th className="font-medium">필요 지출</th>
+                {hasInflow && <th className="font-medium">일시금·매각·환급<div className="font-normal">자산에 더함</div></th>}
+                <th className="font-medium">쓸 수 있는 돈<div className="font-normal">소득 + 인출</div></th>
                 <th className="font-medium">연말 잔액</th>
               </tr>
             </thead>
@@ -274,8 +281,15 @@ function WithdrawInner() {
                 <tr key={r.age} className={`border-b border-line text-right last:border-0 ${r.income < r.need * 0.9 ? 'text-bad' : over ? 'bg-warn-soft' : ''}`}>
                   <td className="py-1.5 text-left font-medium">{r.age}세{t && <span className="ml-1 text-xs font-normal text-muted">{t.year}</span>}</td>
                   <td>{won(r.pension)}</td>
-                  {hasInflow && <td>{r.inflow > 0 ? won(r.inflow) : ''}</td>}
-                  <td>{won(r.withdrawal)}</td>
+                  <td className="whitespace-nowrap text-muted">
+                    − {won(r.need)}
+                    {loanAt(r.age).map((g) => (
+                      <div key={g.loan} className="text-xs font-semibold text-warn">대출 원금 상환 {won(g.amount)}</div>
+                    ))}
+                    {premiumAt(r.age) > 0 && <div className="text-xs text-muted">보험료 {won(premiumAt(r.age))}</div>}
+                  </td>
+                  <td className="whitespace-nowrap">{r.pension - r.need < -0.5 ? `− ${won(r.need - r.pension)}` : won(r.pension - r.need)}</td>
+                  <td className="font-semibold">{won(r.withdrawal)}</td>
                   {t && <td className="text-muted">{won(t.tax)}</td>}
                   {t && <td>{won(t.gross)}{t.short > 0.5 && <span className="ml-1 text-xs text-bad">부족 {won(t.short)}</span>}</td>}
                   {hasIsa && t && (
@@ -285,14 +299,8 @@ function WithdrawInner() {
                     </td>
                   )}
                   {t && <td className="whitespace-nowrap">{slotCell('self')}{hasSpouse && <> / {slotCell('spouse')}</>}{slotOver && <span className="ml-1 text-xs font-semibold text-bad">초과</span>}{limitOver && <span className="ml-1 text-xs font-semibold text-bad">수령한도↑</span>}</td>}
-                  <td className="font-semibold">{won(r.income)}</td>
-                  <td className="whitespace-nowrap text-muted">
-                    {won(r.need)}
-                    {loanAt(r.age).map((g) => (
-                      <div key={g.loan} className="text-xs font-semibold text-warn">대출 원금 상환 {won(g.amount)}</div>
-                    ))}
-                    {premiumAt(r.age) > 0 && <div className="text-xs text-muted">보험료 {won(premiumAt(r.age))}</div>}
-                  </td>
+                  {hasInflow && <td>{r.inflow > 0 ? `+ ${won(r.inflow)}` : ''}</td>}
+                  <td>{won(r.income)}</td>
                   <td>{won(r.endBalance)}</td>
                 </tr>
                 );
@@ -301,7 +309,7 @@ function WithdrawInner() {
           </table>
         </div>
         <p className="mt-2 text-xs text-muted">
-          빨간 행은 소득이 필요 지출(생활비 + 남은 대출 상환 + 목적자금·반복 지출 + 만기일시 대출 원금 + 은퇴 후 보험료)의 90%에 못 미치는 해입니다. ‘대출 원금 상환’은 필요 지출 가운데 만기에 한 번에 갚는 대출 원금, ‘보험료’는 은퇴 뒤까지 내는 보험료입니다.
+          한 해씩 소득 − 필요 지출(생활비 + 남은 대출 상환 + 목적자금·반복 지출 + 만기일시 대출 원금 + 은퇴 후 보험료) = 수지이고, 모자라는 만큼 금융자산에서 인출합니다. 정률·가드레일 전략은 인출액이 부족분과 다를 수 있습니다. 일시금·매각·환급은 쓰지 않고 자산에 더합니다. 빨간 행은 쓸 수 있는 돈(소득 + 인출)이 필요 지출의 90%에 못 미치는 해입니다. ‘대출 원금 상환’은 필요 지출 가운데 만기에 한 번에 갚는 대출 원금, ‘보험료’는 은퇴 뒤까지 내는 보험료입니다.
           {tax && ` 노란 행은 과세재원 인출이 1인 연 ${PENSION_SLOT.toLocaleString()}만원(세전, 명목)을 넘어 초과분에 ${OVER_RATE}% 분리과세가 붙거나, 계좌별 연금수령한도를 넘어 연금외수령이 생기는(‘수령한도↑’) 해입니다. 한도 열은 그 해 과세재원 인출액(만원, 명목)입니다. 세금·세전 인출은 오늘 물가 기준입니다.`}
         </p>
       </Card>
