@@ -251,7 +251,7 @@ function WithdrawInner() {
 
       <Card title={`연도별 인출 스케줄 — ${STRATEGIES[selected].label}`} className="mt-4" action={<span className="text-xs text-muted">평균수익 가정 · 연 단위</span>}>
         <div className="-mx-4 max-h-[420px] overflow-auto px-4 sm:-mx-5 sm:px-5">
-          <table className={`w-full text-sm ${tax ? 'min-w-[900px]' : 'min-w-[560px]'}`}>
+          <table className={`w-full text-sm num-table ${tax ? 'min-w-[900px]' : 'min-w-[560px]'}`}>
             <thead className="sticky top-0 bg-surface">
               <tr className="border-b border-line text-right text-xs text-muted">
                 <th className="py-2 text-left font-medium">나이</th>
@@ -396,7 +396,7 @@ function AccountLimits({ row, hasSpouse }: { row: TaxResult['rows'][number]; has
     <div className="mt-3">
       <div className="mb-1 text-xs font-medium text-muted">{row.year}년 계좌별 연금수령한도 (명목)</div>
       <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-        <table className="w-full min-w-[480px] text-sm">
+        <table className="w-full min-w-[480px] text-sm num-table">
           <thead>
             <tr className="border-b border-line text-right text-xs text-muted">
               <th className="py-1.5 text-left font-medium">계좌</th>

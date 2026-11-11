@@ -99,3 +99,10 @@ select {
   border-radius: 10px;
   color: var(--c-ink);
 }
+
+/* 숫자 표: 좁은 화면(세로 모니터·모바일)에서 금액이 '만 / 원'처럼 끊기지 않게 첫 열(설명) 말고는 줄바꿈하지 않고 가로 스크롤 */
+.num-table td:not(:first-child),
+.num-table th:not(:first-child) {
+  white-space: nowrap;
+  padding-left: 1rem;
+}

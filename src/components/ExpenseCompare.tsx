@@ -86,10 +86,10 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
   return (
     <Card title="생활비 가정 비교" className={className} action={<span className="text-xs text-muted">시나리오 {RUNS}개 · 현재가치</span>}>
       <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-        <table className="w-full min-w-[620px] text-sm">
+        <table className="w-full min-w-[680px] text-sm num-table">
           <thead>
             <tr className="border-b border-line text-right text-xs text-muted">
-              <th className="py-1.5 text-left font-medium">생활비 가정</th>
+              <th className="min-w-[200px] py-1.5 text-left font-medium">생활비 가정</th>
               <th className="font-medium">성공확률</th>
               <th className="font-medium">고갈 나이</th>
               <th className="font-medium">첫해 자산 인출</th>

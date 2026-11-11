@@ -52,7 +52,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
 
       {contrib.length > 0 && (
         <div className="mt-3 -mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-          <table className="w-full min-w-[520px] text-sm">
+          <table className="w-full min-w-[520px] text-sm num-table">
             <thead>
               <tr className="border-b border-line text-right text-xs text-muted">
                 <th className="py-1.5 text-left font-medium">납입 연도</th>
@@ -78,7 +78,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
       )}
 
       <div className="mt-3 -mx-4 max-h-[360px] overflow-auto px-4 sm:-mx-5 sm:px-5">
-        <table className="w-full text-sm" style={{ minWidth: (loanDed ? 1100 : propAuto ? 1000 : 860) + (hasOther ? 100 : 0) + (hasSalary ? 100 : 0) }}>
+        <table className="w-full text-sm num-table" style={{ minWidth: (loanDed ? 1100 : propAuto ? 1000 : 860) + (hasOther ? 100 : 0) + (hasSalary ? 100 : 0) }}>
           <thead className="sticky top-0 bg-surface">
             <tr className="border-b border-line text-right text-xs text-muted">
               <th className="py-2 text-left font-medium">연도</th>

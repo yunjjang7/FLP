@@ -120,7 +120,7 @@ export default function Invest() {
 
       <Card title="보유 자산 상세" className="mt-4">
         <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-          <table className="w-full min-w-[560px] text-sm">
+          <table className="w-full min-w-[560px] text-sm num-table">
             <thead>
               <tr className="border-b border-line text-left text-xs text-muted">
                 <th className="py-2 font-medium">이름</th>

@@ -534,7 +534,7 @@ function InsuranceSummary() {
   return (
     <Card>
       <div className="overflow-x-auto">
-        <table className="w-full min-w-[480px] text-sm">
+        <table className="w-full min-w-[480px] text-sm num-table">
           <thead>
             <tr className="border-b border-line text-xs text-muted">
               <th className="py-1.5 text-left font-medium">피보험자</th>

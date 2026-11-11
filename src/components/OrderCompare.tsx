@@ -80,7 +80,7 @@ export function OrderCompare({ base, tax, setup }: { base: CompareBase; tax: Tax
         </Labeled>
       </div>
       <div className="mt-3 -mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-        <table className="w-full min-w-[1180px] text-sm">
+        <table className="w-full min-w-[1180px] text-sm num-table">
           <thead>
             <tr className="border-b border-line text-right text-xs text-muted">
               <th className="py-2 text-left font-medium">조합</th>

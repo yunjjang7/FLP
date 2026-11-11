@@ -26,7 +26,7 @@ export function GuardrailCompare({ fixed, guard, lifeExpectancy }: { fixed: Stra
   ];
   return (
     <div className="-mx-4 mt-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-      <table className="w-full min-w-[420px] text-sm">
+      <table className="w-full min-w-[420px] text-sm num-table">
         <thead>
           <tr className="border-b border-line text-right text-xs text-muted">
             <th className="py-1.5 text-left font-medium">정액 인출과 비교</th>
@@ -150,7 +150,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
             </ResponsiveContainer>
           </div>
           <div className="-mx-4 mt-3 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-            <table className="w-full min-w-[640px] text-sm">
+            <table className="w-full min-w-[640px] text-sm num-table">
               <thead>
                 <tr className="border-b border-line text-right text-xs text-muted">
                   <th className="py-1.5 text-left font-medium">연도</th>
