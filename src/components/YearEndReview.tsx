@@ -176,7 +176,8 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
         </div>
       )}
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      {/* 금융자산 칸은 안내 문구가 한 줄에 들어가게 넓히고, 저장 버튼은 메모 아래 오른쪽 */}
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-[7rem_minmax(16.5rem,1.6fr)_1fr_1fr]">
         <Labeled label="결산 연도"><NumberField value={year} unit="년" onChange={pickYear} /></Labeled>
         <Labeled label="12월 말 금융자산" hint={acct ? '아래 계좌별 평가액의 합계' : '평가액 합계(명목) · 수령 전 노란우산 등 제외'}>
           {acct ? <div className="py-1.5 text-lg font-bold">{won(acctSum)}</div> : <NumberField value={balance} unit="만원" onChange={setBalance} />}
@@ -193,7 +194,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
           )}
         </Labeled>
         <Labeled label="메모(선택)"><TextField value={note} onChange={setNote} /></Labeled>
-        <div className="self-end">
+        <div className="self-end lg:col-start-4 lg:justify-self-end">
           <Button onClick={saveRecord} disabled={total <= 0}>{existing ? '결산 고치기' : '결산 저장'}</Button>
         </div>
       </div>
