@@ -55,7 +55,7 @@ function PrescribeInner() {
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-[15px] font-semibold">{r.title}</span>
-                  <Badge level={r.level} />
+                  <Badge level={r.level}>{r.badge}</Badge>
                 </div>
                 <p className="mt-0.5 text-sm text-muted">{r.detail}</p>
               </div>
@@ -93,10 +93,10 @@ function PrescribeInner() {
           </p>
         ) : (
           <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-            <table className="w-full min-w-[640px] text-sm num-table">
+            <table className="w-full text-sm num-table" style={{ minWidth: 760 }}>
               <thead>
                 <tr className="border-b border-line text-left text-xs text-muted">
-                  <th className="py-2 font-medium">목표</th>
+                  <th className="py-2 font-medium" style={{ minWidth: 176 }}>목표</th>
                   <th className="font-medium">시기</th>
                   <th className="text-right font-medium">현재가치</th>
                   <th className="text-right font-medium">미래 필요액</th>
@@ -114,16 +114,16 @@ function PrescribeInner() {
                   <tr className={open ? '' : 'border-b border-line last:border-0'}>
                     <td className="py-2.5">
                       {g.recurring ? (
-                        <button type="button" onClick={() => toggleRow(k)} aria-expanded={open} className="flex items-center gap-1 text-left font-medium hover:text-brand">
+                        <button type="button" onClick={() => toggleRow(k)} aria-expanded={open} className="flex items-center gap-1 whitespace-nowrap text-left font-medium hover:text-brand">
                           <span className="inline-block w-3 text-xs text-muted">{open ? '▾' : '▸'}</span>
                           {g.goal.name}
                         </button>
                       ) : (
-                        <div className="font-medium">{g.goal.name}</div>
+                        <div className="whitespace-nowrap font-medium">{g.goal.name}</div>
                       )}
-                      <div className="text-xs text-muted">{g.recurring && <span className="mr-1 whitespace-nowrap rounded bg-brand-soft px-1.5 font-medium text-brand">매년 반복</span>}{GOAL_CATEGORY[g.goal.category]} · 상승률 {g.goal.growthRate}%</div>
+                      <div className="whitespace-nowrap text-xs text-muted">{g.recurring && <span className="mr-1 rounded bg-brand-soft px-1.5 font-medium text-brand">매년 반복</span>}{GOAL_CATEGORY[g.goal.category]} · 상승률 {g.goal.growthRate}%</div>
                     </td>
-                    <td>
+                    <td className="whitespace-nowrap">
                       {g.recurring ? (
                         <>
                           {g.recurring.fromAge}~{g.recurring.toAge}세 <span className="text-xs text-muted">({g.years > 0 ? `${g.years}년 후 시작` : '이미 시작'})</span>

@@ -11,6 +11,8 @@ export interface Prescription {
   detail: string;
   level: Level;
   area: '저축' | '투자' | '노후' | '비상금' | '부채' | '보장' | '목표';
+  /** 배지 문구를 바꿀 때(예: 참고 항목은 ‘참고’) */
+  badge?: string;
 }
 
 /** 만원 → "3,500만" / "1.25억" (뒤에 '원'은 문장에서 붙임) */
@@ -100,6 +102,22 @@ export function goalPrescription(savings: number, goalMonthly: number): Prescrip
   return goalMonthly > savings
     ? { area: '목표', level: 'danger', title, detail: `현재 저축여력(${fmt(savings)}원)보다 월 ${fmt(goalMonthly - savings)}원 많습니다. 목표 시기·금액 조정 또는 지출 절감이 필요합니다.` }
     : { area: '목표', level: 'good', title, detail: `현재 저축여력 ${fmt(savings)}원 안에서 감당 가능합니다.` };
+}
+
+/**
+ * 매년 반복 지출(예: 보유세 59~100세) 준비 참고: 시작 나이까지 모을 금액과 월 적립액.
+ * 반복 지출은 노후 진단에서 해마다 지출로 이미 빠지므로 목적자금 적립 합계·성공확률 처방에는 더하지 않는 참고값.
+ */
+export function recurringGoalPrescription(goalPlans: GoalPlan[]): Prescription | null {
+  const rec = goalPlans.filter((g) => g.recurring);
+  if (!rec.length) return null;
+  const monthly = rec.reduce((a, g) => a + g.monthlyNeeded, 0);
+  const items = rec.map((g) => `${g.goal.name}(${g.recurring!.fromAge}~${g.recurring!.toAge}세): ${g.recurring!.fromAge}세까지 ${fmt(g.futureValue)}원${g.monthlyNeeded > 0 ? `, 월 ${fmt(g.monthlyNeeded)}원` : ' 준비됨'}`);
+  return {
+    area: '목표', level: 'good', badge: '참고',
+    title: monthly > 0 ? `매년 반복 지출 따로 모으면 월 ${fmt(monthly)}원` : '매년 반복 지출 준비됨',
+    detail: `${items.join(' · ')}. 반복 지출은 노후 진단에서 해마다 지출로 이미 계산되므로, 이 금액은 목적자금 적립 합계와 성공확률 처방에 더하지 않았습니다(이중으로 세지 않음). 따로 떼어 모으면 노후자금 일부를 이 용도로 미리 나눠 두는 셈입니다.`,
+  };
 }
 
 /**
@@ -274,6 +292,8 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
 
   const goalMonthly = onceGoalPlans(goalPlans).reduce((a, g) => a + g.monthlyNeeded, 0);
   if (goalMonthly > 0) out.push(goalPrescription(s.savings, goalMonthly));
+  const recRx = recurringGoalPrescription(goalPlans);
+  if (recRx) out.push(recRx);
 
   for (const l of ins.lines) {
     if (l.level !== 'good') out.push({ area: '보장', level: l.level, title: `${ins.people.length > 1 ? `${l.person} ` : ''}${l.label} ${fmt(l.gap)}원 부족`, detail: `필요 ${fmt(l.need)}원 대비 현재 ${fmt(l.current)}원(${l.ratio.toFixed(0)}%).` });

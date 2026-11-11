@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { won } from '../lib/format';
 import { sampleData } from '../db/sample';
 import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, realRate, scale } from './finance';
 import { buildPlanInput, expenseSteps, goalItemsFrom, goalPlanSkips, loanEndAge, onceGoalPlans, lockedInflow, planGoals, retireIncomes } from './goals';
@@ -9,7 +10,7 @@ import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, s
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
-import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, prescriptions, savingsPrescription } from './prescribe';
+import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, prescriptions, recurringGoalPrescription, savingsPrescription } from './prescribe';
 import { emergencyCap, emergencyRunway, financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
 import type { Goal, PlanBase } from '../types';
@@ -391,6 +392,15 @@ describe('엑셀 반영: 인출 중 은퇴자·소득·가드레일·반복 지�
     // 처방의 목적자금 적립 합계·바구니에는 반복 지출을 넣지 않음
     const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
     expect(bucketMap(d.profile, s, plans)).toEqual(bucketMap(d.profile, s, plans.filter((x) => !x.recurring)));
+    // 처방: 반복 지출은 ‘참고’ 항목으로 따로, 목적자금 적립 합계에는 넣지 않음
+    const rec = recurringGoalPrescription(plans)!;
+    expect(rec.badge).toBe('참고');
+    expect(rec.title).toContain(`월 ${won(plans[0].monthlyNeeded, false)}원`);
+    expect(rec.detail).toContain('이중으로 세지 않음');
+    expect(recurringGoalPrescription(plans.filter((x) => !x.recurring))).toBeNull();
+    const rx = prescriptions(d.profile, s, buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s), 90, plans, insuranceGap(d.profile, s, d.insurance, d.goals));
+    expect(rx.filter((r) => r.badge === '참고')).toHaveLength(1);
+    expect(rx.some((r) => r.title.startsWith('목적자금 월 적립'))).toBe(false); // 일시 목표(차량)는 다 준비됐고 반복 지출은 합계에 안 넣음
   });
   it('소득 흐름: 시작·종료 나이와 인상 주기', () => {
     const rent = { startAge: 60, endAge: 70, annual: 1200, growth: 5, step: 2, baseAge: 58 };
