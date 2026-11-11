@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { downloadText, drawsFromCSV, drawsTemplateCSV, drawsToCSV } from '../db/csv';
 import { importDraws, saveDraw } from '../db/db';
 import { drawYears, monthKey, OTHER_ACCOUNT, reviewDraws } from '../engine/drawLog';
@@ -15,15 +15,42 @@ function Cell({ value, plan, label, onSave }: { value: number; plan: number; lab
   const show = (v: number) => (v > 0 ? groupDigits(String(round1(v))) : '');
   const [text, setText] = useState(show(value));
   useEffect(() => setText(show(value)), [value]);
+  const ref = useRef<HTMLInputElement>(null);
+  /** ↑·↓ 뒤 커서를 ‘뒤쪽 숫자 개수’가 같은 자리로 되돌림 */
+  const after = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (after.current == null || !el || document.activeElement !== el) return;
+    let seen = 0;
+    let pos = text.length;
+    while (pos > 0 && seen < after.current) {
+      if (text[pos - 1] !== ',') seen++;
+      pos--;
+    }
+    el.setSelectionRange(pos, pos);
+    after.current = null;
+  }, [text]);
   return (
     <input
+      ref={ref}
       className="w-full min-w-[68px] rounded-md border border-line bg-surface px-1.5 py-1 text-right text-sm outline-none placeholder:text-muted/60 focus:border-brand focus:ring-2 focus:ring-brand-soft"
       inputMode="decimal"
       aria-label={label}
       value={text}
       placeholder={plan > 0.05 ? groupDigits(String(round1(plan))) : ''}
       onChange={(e) => setText(e.target.value)}
-      onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') return e.currentTarget.blur();
+        if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+        // ↑/↓: 1만원씩 증감(빈칸이면 흐리게 보이는 계획 금액에서 시작), 0 아래로는 안 내려감. 저장은 포커스를 벗어날 때
+        e.preventDefault();
+        const el = e.currentTarget;
+        const cur = Number(text.replace(/[,\s]/g, ''));
+        const base = text.trim() === '' || !Number.isFinite(cur) ? round1(plan) : cur;
+        const n = Math.max(0, round1(base + (e.key === 'ArrowUp' ? 1 : -1)));
+        after.current = el.value.slice(el.selectionEnd ?? el.value.length).replace(/,/g, '').length;
+        setText(groupDigits(String(n)));
+      }}
       onBlur={() => {
         const n = Number(text.replace(/[,\s]/g, ''));
         const v = text.trim() === '' || !Number.isFinite(n) || n < 0 ? 0 : n;
