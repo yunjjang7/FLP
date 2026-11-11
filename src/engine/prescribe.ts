@@ -121,11 +121,42 @@ export function recurringGoalPrescription(goalPlans: GoalPlan[]): Prescription |
 }
 
 /**
+ * 이미 은퇴해 인출 중일 때의 목표 안내(참고): 따로 적립할 기간이 없으므로 월 적립액 대신
+ * 앞으로 쓸 목적자금·반복 지출이 인출 계획에 들어 있음을 알려 줌
+ */
+export function retiredGoalPrescription(goalPlans: GoalPlan[]): Prescription | null {
+  if (!goalPlans.length) return null;
+  const items = goalPlans.map((g) =>
+    g.recurring
+      ? `${g.goal.name}(${g.recurring.fromAge}~${g.recurring.toAge}세, 첫해 ${fmt(g.recurring.firstPayment)}원)`
+      : `${g.goal.name}(${g.goal.targetAge}세 ${fmt(g.futureValue)}원)`,
+  );
+  const short = goalPlans.filter((g) => g.fundedRatio < 99.5).length;
+  return {
+    area: '목표', level: 'good', badge: '참고',
+    title: `앞으로 쓸 목적자금·반복 지출 ${goalPlans.length}건 — 인출 계획에 포함됨`,
+    detail:
+      `${items.join(' · ')}. 이미 인출 중이라 따로 적립하는 대신 그 해에 금융자산에서 꺼내 쓰는 것으로 노후 진단·노후 인출에 반영했습니다(그 해 금액). ` +
+      (short > 0 ? `이 가운데 ${short}건은 ‘중기·목적자금’ 용도 자산으로 다 떼어 두지 못했습니다. 가까운 지출부터 현금성·채권으로 옮겨 두면 하락장에 주식을 팔지 않아도 됩니다. ` : '') +
+      '줄였을 때의 효과는 ‘노후 인출 → 목돈 지출 민감도’에서 볼 수 있습니다.',
+  };
+}
+
+/**
  * 비상금 처방: 월 지출 기준 부족분과, 저축 여력이 마이너스면 그 부족분으로 비상금이 몇 개월 뒤 바닥나는지.
  * 월 지출 기준으로는 충분해도 매달 줄고 있으면 주의로 알림
  */
-export function emergencyPrescription(s: Summary, target: number): Prescription | null {
+export function emergencyPrescription(s: Summary, target: number, retired = false): Prescription | null {
   const em = emergencyMonths(s);
+  // 이미 은퇴해 인출 중이면 소득보다 많은 지출은 계획된 자산 인출이라 ‘부족분으로 몇 개월 뒤 바닥’ 경고는 하지 않음
+  if (retired) {
+    if (em >= target) return null;
+    return {
+      area: '비상금', level: em < target / 2 ? 'danger' : 'caution',
+      title: `현금성 자산 ${(target - em).toFixed(1)}개월분(${fmt((target - em) * s.expense)}원) 부족`,
+      detail: `단기·비상금 용도의 예금·현금성 자산이 월 지출의 ${em.toFixed(1)}개월분입니다(목표 ${target}개월). 인출 중에는 앞으로 1~2년치 인출분을 현금성(MMF·예금)으로 두어야 하락장에 주식을 팔지 않아도 됩니다. 연금계좌 안의 현금성 상품으로 두고 있다면 ‘노후 인출 → 인출용 자산 배치 가이드’의 계좌별 바구니 목표와 비교해 보세요.`,
+    };
+  }
   const run = emergencyRunway(s);
   const drain = Number.isFinite(run)
     ? ` 지금은 매달 ${fmt(-s.savings)}원이 모자라 이를 비상금에서 메우면 약 ${run.toFixed(1)}개월 뒤 바닥납니다. 채워 넣기 전에 지출을 줄여 부족분부터 없애야 합니다.`
@@ -213,13 +244,26 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
           : '다른 조건을 유지할 때 은퇴를 늦추면 적립 기간이 늘고 인출 기간이 줄어듭니다.',
       });
     }
-    const fixedExpense = solveFor(input, (i, v) => ({ ...i, retireExpenseAnnual: v * 12 }), 50, profile.retireMonthlyExpense, c.successTarget, false);
-    if (fixedExpense !== null && fixedExpense < profile.retireMonthlyExpense - 1) {
-      out.push({
-        area: '노후', level: 'caution',
-        title: `은퇴 후 월 생활비 ${fmt(profile.retireMonthlyExpense)}원 → ${fmt(fixedExpense)}원`,
-        detail: '현재 계획만으로 목표 확률을 맞추려면 은퇴 생활비 눈높이를 조정해야 합니다.',
-      });
+    if (input.fixedDraw !== undefined) {
+      // 인출액 고정 방식은 생활비를 바꿔도 결과가 같으므로 월 고정 인출액을 역산
+      const drawNow = input.fixedDraw / 12;
+      const needDraw = solveFor(input, (i, v) => ({ ...i, fixedDraw: v * 12 }), Math.min(50, drawNow), drawNow, c.successTarget, false);
+      if (needDraw !== null && needDraw < drawNow - 1) {
+        out.push({
+          area: '노후', level: 'caution',
+          title: `월 고정 인출액 ${fmt(drawNow)}원 → ${fmt(needDraw)}원`,
+          detail: '현재 계획만으로 목표 확률을 맞추려면 연금으로 쓰는 월 고정 금액(국민·개인연금 + 자산 인출)을 이만큼 낮춰야 합니다. ‘데이터·설정 → 프로필’의 인출액 고정 금액에서 바꿉니다.',
+        });
+      }
+    } else {
+      const fixedExpense = solveFor(input, (i, v) => ({ ...i, retireExpenseAnnual: v * 12 }), 50, profile.retireMonthlyExpense, c.successTarget, false);
+      if (fixedExpense !== null && fixedExpense < profile.retireMonthlyExpense - 1) {
+        out.push({
+          area: '노후', level: 'caution',
+          title: `은퇴 후 월 생활비 ${fmt(profile.retireMonthlyExpense)}원 → ${fmt(fixedExpense)}원`,
+          detail: '현재 계획만으로 목표 확률을 맞추려면 은퇴 생활비 눈높이를 조정해야 합니다.',
+        });
+      }
     }
     const gRx = guardrailPrescription(input, successRate, c.successTarget, st.age, profile.lifeExpectancy);
     if (gRx) out.push(gRx);
@@ -240,7 +284,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
     });
   }
 
-  const emRx = emergencyPrescription(s, c.emergencyMonths);
+  const emRx = emergencyPrescription(s, c.emergencyMonths, retired);
   if (emRx) out.push(emRx);
 
   const debtRatio = s.totalAssets > 0 ? (s.totalDebt / s.totalAssets) * 100 : 0;
@@ -290,10 +334,16 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
     });
   }
 
-  const goalMonthly = onceGoalPlans(goalPlans).reduce((a, g) => a + g.monthlyNeeded, 0);
-  if (goalMonthly > 0) out.push(goalPrescription(s.savings, goalMonthly));
-  const recRx = recurringGoalPrescription(goalPlans);
-  if (recRx) out.push(recRx);
+  if (retired) {
+    // 인출 중에는 월 적립 처방 대신 인출 계획에 들어 있다는 안내만
+    const goalRx = retiredGoalPrescription(goalPlans);
+    if (goalRx) out.push(goalRx);
+  } else {
+    const goalMonthly = onceGoalPlans(goalPlans).reduce((a, g) => a + g.monthlyNeeded, 0);
+    if (goalMonthly > 0) out.push(goalPrescription(s.savings, goalMonthly));
+    const recRx = recurringGoalPrescription(goalPlans);
+    if (recRx) out.push(recRx);
+  }
 
   for (const l of ins.lines) {
     if (l.level !== 'good') out.push({ area: '보장', level: l.level, title: `${ins.people.length > 1 ? `${l.person} ` : ''}${l.label} ${fmt(l.gap)}원 부족`, detail: `필요 ${fmt(l.need)}원 대비 현재 ${fmt(l.current)}원(${l.ratio.toFixed(0)}%).` });

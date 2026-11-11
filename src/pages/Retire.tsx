@@ -207,6 +207,7 @@ export default function Retire() {
       <Card title="시뮬레이션 가정" className="mt-4">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm md:grid-cols-4">
           <Assume k="시작 금융자산" v={won(inp.startBalance)} />
+          {inp.firstYearShare !== undefined && <Assume k={`올해(${inp.currentAge}세) 계산 기간`} v={`남은 ${Math.max(1, Math.round(inp.firstYearShare * 12))}개월 · 내년부터 1년 단위`} />}
           <Assume k="연 저축액(은퇴 전)" v={inp.annualSavings < 0 ? `연 ${won(-inp.annualSavings)} 부족 · 금융자산에서 인출` : won(inp.annualSavings)} />
           <Assume k={inp.retireMeanReturn === undefined ? '기대수익률 / 변동성' : '은퇴 전 수익률 / 변동성'} v={`${inp.meanReturn.toFixed(1)}% / ${inp.volatility.toFixed(1)}%`} />
           {inp.retireMeanReturn !== undefined && <Assume k="은퇴 후 수익률 / 변동성" v={`${inp.retireMeanReturn.toFixed(1)}% / ${(inp.retireVolatility ?? inp.volatility).toFixed(1)}%`} />}

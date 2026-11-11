@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fromCSV, templateCSV, toCSV } from './csv';
+import { drawsFromCSV, drawsTemplateCSV, drawsToCSV, fromCSV, templateCSV, toCSV } from './csv';
 import { sampleData } from './sample';
 
 describe('CSV 입출력', () => {
@@ -98,5 +98,34 @@ describe('CSV 입출력', () => {
     const { rows, errors } = fromCSV('assets', '이름,유형,금액\n삼성전자,주식,500');
     expect(errors).toEqual([]);
     expect(rows[0]).toMatchObject({ type: 'stock', purpose: 'long', nature: 'invest', expectedReturn: 8, volatility: 22 });
+  });
+});
+
+describe('월별 실제 인출 기록 CSV', () => {
+  it('내보내기 → 가져오기 왕복(월·계좌 순 정렬)', () => {
+    const rows = [
+      { month: '2026-12', account: '교보', amount: 450 },
+      { month: '2026-11', account: '퇴직 IRP', amount: 6, note: '최소 인출' },
+      { month: '2026-11', account: '교보', amount: 450.5 },
+    ];
+    const csv = drawsToCSV(rows);
+    const lines = csv.split(/\r?\n/);
+    expect(lines[0]).toBe('월,계좌,세전 인출액,메모');
+    expect(lines[1]).toBe('2026-11,교보,450.5,');
+    const back = drawsFromCSV('﻿' + csv);
+    expect(back.errors).toEqual([]);
+    expect(back.rows).toEqual([rows[2], rows[1], rows[0]]);
+  });
+  it('달 형식 정리·같은 달 계좌 합산·잘못된 줄은 건너뜀', () => {
+    const text = ['월,계좌,금액,메모', '2026/11,교보,"1,000",', '2026.11.25,교보,200,추가', '2026-11,ISA·일반,0,', '11월,교보,100,', '2026-12,,50,', '2026-12,교보,-5,'].join('\n');
+    const { rows, errors } = drawsFromCSV(text);
+    expect(rows).toEqual([{ month: '2026-11', account: '교보', amount: 1200, note: '추가' }]);
+    expect(errors).toHaveLength(3);
+    expect(errors[0]).toContain('5행');
+  });
+  it('양식: 지금 계획의 계좌 이름으로 한 달', () => {
+    const { rows } = drawsFromCSV(drawsTemplateCSV('2026-11', ['교보', '퇴직 IRP', 'ISA·일반']));
+    expect(drawsTemplateCSV('2026-11', ['교보', '퇴직 IRP']).split(/\r?\n/)).toHaveLength(3);
+    expect(rows).toEqual([{ month: '2026-11', account: '교보', amount: 100, note: '예시: 지우고 쓰세요' }]);
   });
 });

@@ -31,15 +31,27 @@ function PrescribeInner() {
   const toggleRow = (k: string) => setOpenRows((o) => (o.includes(k) ? o.filter((x) => x !== k) : [...o, k]));
 
   // 저축 여력이 마이너스면(매달 금융자산에서 꺼내 씀) 그 값에서 시작해야 ‘현재 계획’과 같은 계산이 됨
-  const initial = { monthlySavings: Math.round(s.savings), meanReturn: +s.portfolioReturn.toFixed(1), retireAge: p.retireAge, retireMonthlyExpense: p.retireMonthlyExpense };
+  // 이미 은퇴해 인출 중이면 저축액은 의미가 없고, 수익률은 은퇴 후 수익률을, 인출액 고정 방식이면 생활비 대신 월 고정 인출액을 바꿔 봄
+  const retired = d.start.retired;
+  const drawMode = d.planInput.fixedDraw !== undefined;
+  const baseReturn = retired ? d.planInput.retireMeanReturn ?? d.planInput.meanReturn : d.planInput.meanReturn;
+  const baseVol = retired ? d.planInput.retireVolatility ?? d.planInput.volatility : d.planInput.volatility;
+  const baseLiving = drawMode ? Math.round((d.planInput.fixedDraw ?? 0) / 12) : p.retireMonthlyExpense;
+  const initial = { monthlySavings: Math.round(s.savings), meanReturn: +baseReturn.toFixed(1), retireAge: p.retireAge, retireMonthlyExpense: baseLiving };
   const [o, setO] = useState<Required<Omit<PlanOverrides, 'volatility'>>>(initial);
   const changed = JSON.stringify(o) !== JSON.stringify(initial);
   const whatIf = useMemo(() => {
     if (!changed) return d.sim;
     // 수익률을 올리면 변동성도 비례해 커진다고 가정
-    const volatility = s.portfolioReturn > 0 ? s.portfolioVol * (o.meanReturn / s.portfolioReturn) : s.portfolioVol;
-    return simulate(buildPlanInput(p, d.assets, d.liabilities, d.goals, s, { ...o, volatility }), 1000);
-  }, [changed, d.sim, o, p, d.assets, d.liabilities, d.goals, s]);
+    const volatility = baseReturn > 0 ? baseVol * (o.meanReturn / baseReturn) : baseVol;
+    const { meanReturn, retireMonthlyExpense, ...rest } = o;
+    const plan = buildPlanInput(p, d.assets, d.liabilities, d.goals, s, {
+      ...rest,
+      ...(retired ? {} : { meanReturn, volatility }),
+      ...(drawMode ? {} : { retireMonthlyExpense }),
+    });
+    return simulate({ ...plan, ...(retired ? { retireMeanReturn: meanReturn, retireVolatility: volatility } : {}), ...(drawMode ? { fixedDraw: retireMonthlyExpense * 12 } : {}) }, 1000);
+  }, [changed, d.sim, o, p, d.assets, d.liabilities, d.goals, s, retired, drawMode, baseReturn, baseVol]);
   const delta = whatIf.successRate - d.sim.successRate;
   const lvl = (v: number): Level => (v >= p.criteria.successTarget ? 'good' : v >= 60 ? 'caution' : 'danger');
 
@@ -67,20 +79,25 @@ function PrescribeInner() {
       <Card title="계획 바꿔보기 (What-if)" className="mt-4" action={changed && <button className="text-xs font-medium text-brand" onClick={() => setO(initial)}>원래대로</button>}>
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)]">
           <div className="space-y-5">
-            <Slider label="월 저축액" value={o.monthlySavings} min={s.savings < 0 ? Math.floor((s.savings - 100) / 10) * 10 : 0} max={Math.max(500, Math.round(s.income), -Math.round(s.savings))} step={10} display={o.monthlySavings < 0 ? `월 ${won(-o.monthlySavings)} 부족 (금융자산에서 꺼냄)` : `${won(o.monthlySavings)} (저축률 ${s.income > 0 ? pct((o.monthlySavings / s.income) * 100) : '-'})`} onChange={(v) => setO({ ...o, monthlySavings: v })} />
-            <Slider label={p.retireSeparate ? '기대수익률(은퇴 전)' : '기대수익률'} value={o.meanReturn} min={1} max={10} step={0.1} display={`${o.meanReturn.toFixed(1)}%`} onChange={(v) => setO({ ...o, meanReturn: v })} />
+            {!retired && <Slider label="월 저축액" value={o.monthlySavings} min={s.savings < 0 ? Math.floor((s.savings - 100) / 10) * 10 : 0} max={Math.max(500, Math.round(s.income), -Math.round(s.savings))} step={10} display={o.monthlySavings < 0 ? `월 ${won(-o.monthlySavings)} 부족 (금융자산에서 꺼냄)` : `${won(o.monthlySavings)} (저축률 ${s.income > 0 ? pct((o.monthlySavings / s.income) * 100) : '-'})`} onChange={(v) => setO({ ...o, monthlySavings: v })} />}
+            <Slider label={retired ? '기대수익률(은퇴 후 운용)' : p.retireSeparate ? '기대수익률(은퇴 전)' : '기대수익률'} value={o.meanReturn} min={1} max={10} step={0.1} display={`${o.meanReturn.toFixed(1)}%`} onChange={(v) => setO({ ...o, meanReturn: v })} />
             {!d.start.retired && <Slider label="은퇴 나이" value={o.retireAge} min={Math.max(s.age, 45)} max={75} step={1} display={`${o.retireAge}세`} onChange={(v) => setO({ ...o, retireAge: v })} />}
-            <Slider label="은퇴 후 월 생활비" value={o.retireMonthlyExpense} min={100} max={Math.max(800, p.retireMonthlyExpense + 200)} step={10} display={won(o.retireMonthlyExpense)} onChange={(v) => setO({ ...o, retireMonthlyExpense: v })} />
+            <Slider label={drawMode ? '월 고정 인출액(연금으로 쓰는 금액)' : '은퇴 후 월 생활비'} value={o.retireMonthlyExpense} min={Math.min(100, Math.floor(baseLiving / 10) * 10)} max={Math.max(800, baseLiving + 200)} step={10} display={won(o.retireMonthlyExpense)} onChange={(v) => setO({ ...o, retireMonthlyExpense: v })} />
             <div className="grid grid-cols-2 gap-3 rounded-xl bg-sunken p-3">
               <Stat label="현재 계획" value={pct(d.sim.successRate)} tone={lvl(d.sim.successRate)} />
               <Stat label="바꾼 계획" value={pct(whatIf.successRate)} tone={lvl(whatIf.successRate)} sub={changed ? `${delta >= 0 ? '+' : ''}${delta.toFixed(0)}%p` : '슬라이더를 움직여 보세요'} />
             </div>
-            {changed && (o.retireAge !== p.retireAge || o.retireMonthlyExpense !== p.retireMonthlyExpense) && (
-              <Button variant="ghost" className="w-full" onClick={() => db.profile.put({ ...p, retireAge: o.retireAge, retireMonthlyExpense: o.retireMonthlyExpense })}>
-                은퇴 나이·생활비를 내 계획에 반영
+            {changed && (o.retireAge !== p.retireAge || o.retireMonthlyExpense !== baseLiving) && (
+              <Button variant="ghost" className="w-full" onClick={() => db.profile.put({ ...p, retireAge: o.retireAge, ...(drawMode ? { fixedDraw: o.retireMonthlyExpense } : { retireMonthlyExpense: o.retireMonthlyExpense }) })}>
+                {retired ? '' : '은퇴 나이·'}{drawMode ? '고정 인출액을' : '생활비를'} 내 계획에 반영
               </Button>
             )}
-            <p className="text-xs text-muted">저축액·수익률은 실제 지출과 자산 구성을 바꿔야 반영됩니다. 월 저축액이 마이너스면 은퇴 전에도 그만큼을 매달 금융자산에서 꺼내 쓰는 것으로 계산합니다. 수익률을 올리면 변동성도 같은 비율로 커진다고 가정합니다.{p.retireSeparate && ' 은퇴 후 수익률은 프로필 설정값을 그대로 씁니다.'}{d.liabilities.length > 0 && ' 대출 상환이 끝나면 그 상환액만큼 저축이 늘어납니다.'}</p>
+            <p className="text-xs text-muted">
+              {retired
+                ? '이미 인출 중이라 저축액·은퇴 나이는 뺐습니다. 수익률은 은퇴 후 운용 수익률을 바꿔 보는 값이고, 실제로는 자산 구성(또는 프로필의 은퇴 후 수익률)을 바꿔야 반영됩니다.'
+                : '저축액·수익률은 실제 지출과 자산 구성을 바꿔야 반영됩니다. 월 저축액이 마이너스면 은퇴 전에도 그만큼을 매달 금융자산에서 꺼내 쓰는 것으로 계산합니다.'}
+              {' '}수익률을 올리면 변동성도 같은 비율로 커진다고 가정합니다.{!retired && p.retireSeparate && ' 은퇴 후 수익률은 프로필 설정값을 그대로 씁니다.'}{!retired && d.liabilities.length > 0 && ' 대출 상환이 끝나면 그 상환액만큼 저축이 늘어납니다.'}{drawMode && ' 인출액 고정 방식이라 생활비 대신 연금으로 쓰는 월 고정 금액을 바꿔 봅니다.'}
+            </p>
           </div>
           <LifeChart sim={whatIf} retireAge={o.retireAge} height={320} />
         </div>
@@ -176,7 +193,7 @@ function PrescribeInner() {
                 })}
               </tbody>
             </table>
-            <p className="mt-2 text-xs text-muted">‘중기·목적자금’ 용도 자산을 시기가 빠른 목표부터 배정하고, 부족분을 해당 자산의 기대수익률로 월 적립액을 계산했습니다.</p>
+            <p className="mt-2 text-xs text-muted">‘중기·목적자금’ 용도 자산을 시기가 빠른 목표부터 배정하고, 부족분을 해당 자산의 기대수익률로 월 적립액을 계산했습니다.{retired && ' 이미 인출 중이면 따로 적립하기보다 그 해에 금융자산에서 꺼내 쓰는 것으로 노후 계산에 들어가므로, 월 적립액은 ‘미리 떼어 둔다면’의 참고값입니다.'}</p>
             {d.goalPlans.some((g) => g.recurring) && (
               <p className="mt-1 text-xs text-muted">
                 ‘매년 반복’ 행은 눌러서 연도별 지출과 남은 잔액을 펼쳐 볼 수 있습니다. 미래 필요액은 시작 나이(이미 시작했으면 지금)에 남은 해의 지출을 모두 낼 수 있도록 한 번에 갖고 있어야 할 금액입니다. 그 돈을 같은 기대수익률로 굴리며 해마다 초에 꺼내 쓴다고 가정했습니다. 중기 자산은 일시 목표에 먼저 배정하고, 남는 금액을 반복 지출에 배정합니다. 반복 지출은 노후 진단에서도 해마다 지출로 빠지므로 처방의 목적자금 적립 합계와 목적자금 바구니에는 넣지 않았습니다.
@@ -213,7 +230,8 @@ function PrescribeInner() {
               );
             })}
           </div>
-          {s.savings < 0 && (
+          {retired && <p className="mt-3 rounded-lg bg-sunken px-3 py-2 text-xs text-muted">이미 인출 중입니다. 계좌마다 현금성(앞 2년 인출분)·채권(3~5년차)·성장자산을 얼마씩 둘지는 ‘노후 인출 → 인출용 자산 배치 가이드’에서 볼 수 있습니다.</p>}
+          {!retired && s.savings < 0 && (
             <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
               매달 {won(-s.savings)}이 모자라 금융자산에서 빠져나갑니다.{' '}
               {buckets[0].current > 0 ? `비상금 바구니(${won(buckets[0].current)})에서 먼저 꺼내 쓰면 약 ${(buckets[0].current / -s.savings).toFixed(1)}개월이면 바닥나고, 그 뒤로는 목적자금·노후자금이 줄어듭니다.` : '비상금 바구니가 비어 있어 목적자금·노후자금이 바로 줄어듭니다.'}{' '}

@@ -139,6 +139,15 @@ export interface YearEnd {
   note?: string;
 }
 
+/** 월별 실제 인출 기록: 그 달 그 계좌에서 실제로 꺼낸 세전 금액(명목, 만원) */
+export interface Draw {
+  id?: number;
+  month: string; // YYYY-MM
+  account: string; // 연금계좌 이름(자산 이름) 또는 ‘ISA·일반’
+  amount: number;
+  note?: string;
+}
+
 /** 가드레일 기준선: 고정한 시점의 계획 경로(실질, 고정 연도 물가 기준) */
 export interface PlanBase {
   savedAt: string; // YYYY-MM-DD
@@ -147,6 +156,7 @@ export interface PlanBase {
   inflation: number; // 명목 환산용 물가상승률
   balances: number[]; // 연초 잔액: [0] = 고정 시점 자산, [i] = i년 뒤
   withdrawals: number[]; // [i] = i번째 해 계획 인출액
+  share?: number; // 첫해를 남은 달만큼만 계산한 기준선이면 그 비율(balances[1] = 고정한 해 12월 말). 없으면 1년 단위
 }
 
 export interface Profile {
@@ -187,7 +197,8 @@ export interface Profile {
   expenseSteps?: ExpenseBand[]; // 나이 구간별 은퇴 후 생활비(인출액 고정 방식에서는 쓰지 않음)
   fixedDraw?: number; // expenseMode='draw': 자산에서 꺼내는 월 금액(세후, 명목 고정, 만원)
   retireTaxRate?: number; // 퇴직소득세 실효세율(감면 전, %): 연금계좌 퇴직금 재원 인출 세금
-  retireTaxYear1?: number; // 퇴직금 연금 실수령 1년차 연도(11년차부터 감면 30%→40%)
+  retireTaxYear1?: number; // 퇴직금 연금 실수령 1년차 연도(11년차부터 감면 30%→40%, 실제로 꺼낸 해만 연차로 셈)
+  retireMinDraw?: number; // 퇴직금 재원이 있는 계좌에서 쓸 일이 없는 해에도 꺼내는 최소 금액(연, 세전 명목 만원): 실수령연차가 끊기지 않게
   slotFill?: boolean; // 1,500만 한도 매년 꽉 채우기: 과세재원을 1인 1,500만까지 꺼내고 남는 돈은 ISA·일반계좌로 재투자
   slotFillFrom?: number; // 꽉 채우기 시작 연도(0이면 올해)
   incomeTax?: IncomeTaxSettings; // 종합소득세·건강보험료 추정

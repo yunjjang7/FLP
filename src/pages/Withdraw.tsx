@@ -5,12 +5,16 @@ import { Badge, Card, Disclaimer, EmptyState, PageHeader } from '../components/u
 import { GuardrailCompare, YearEndReview } from '../components/YearEndReview';
 import { db } from '../db/db';
 import { withdrawLevel } from '../engine/risk';
+import { BucketGuide } from '../components/BucketGuide';
+import { DrawLog } from '../components/DrawLog';
+import { ScenarioTable } from '../components/ScenarioTable';
 import { ExpenseCompare } from '../components/ExpenseCompare';
+import { Milestones } from '../components/Milestones';
 import { IncomeTaxCard } from '../components/IncomeTaxCard';
 import { OrderCompare } from '../components/OrderCompare';
 import type { CompareBase } from '../engine/orderCompare';
 import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
-import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
+import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
 import { pct, won, yearRanges } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
@@ -58,6 +62,8 @@ function WithdrawInner() {
       expenseSteps: planInput.expenseSteps,
       fixedDraw: planInput.fixedDraw,
       inflows: planInput.inflows?.filter((x) => x.age >= startAge),
+      // 이미 인출 중이면 올해는 남은 달만큼만(은퇴 전이면 인출 첫해는 1년 전체)
+      firstYearShare: retired ? planInput.firstYearShare : undefined,
       pensions: planInput.pensions,
       meanReturn: retMean,
       volatility: retVol,
@@ -68,14 +74,14 @@ function WithdrawInner() {
       guardrail: { ...DEFAULT_GUARDRAIL, band: band / 100, cut: cut / 100, raise: cut / 100, cutOnly },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [p, startAge, startBalance, planInput, rate, retMean, retVol, band, cut, cutOnly],
+    [p, startAge, startBalance, planInput, rate, retMean, retVol, band, cut, cutOnly, retired],
   );
   const results = useMemo(() => KEYS.map((k) => compareStrategy(k, input, 1000)), [input]);
   const chart = results[0].ages.map((age, i) => ({ age, ...Object.fromEntries(results.map((r) => [r.key, r.p50[i]])) }));
   const incomeChart = results[0].ages.map((age, i) => ({ age, need: livingOf(input, age) / 12, ...Object.fromEntries(results.map((r) => [r.key, r.medianIncome[i] / 12])) }));
   const sel = results.find((r) => r.key === selected)!;
   const nowYear = p.birthYear + d.summary.age;
-  const setup = useMemo(() => taxSetup(p, d.assets, nowYear, startBalance, retMean), [p, d.assets, nowYear, startBalance, retMean]);
+  const setup = useMemo(() => taxSetup(p, d.assets, nowYear, startBalance, retMean, p.birthYear + startAge), [p, d.assets, nowYear, startBalance, retMean, startAge]);
   const tax = useMemo(() => (setup ? pensionTaxSchedule(sel.schedule, setup) : null), [setup, sel]);
   const compareBase: CompareBase = useMemo(
     () => ({ profile: p, assets: d.assets, liabilities: d.liabilities, goals: d.goals, summary: d.summary, input, strategy: selected, meanReturn: retMean }),
@@ -93,16 +99,21 @@ function WithdrawInner() {
   const firstSpend = spendAt(input, startAge);
   const wRate = startBalance > 0 ? (firstNeed / startBalance) * 100 : 0;
   const wLevel = withdrawLevel(wRate, p.criteria.withdrawRateMax);
-  const others = planInput.pensions.filter((x) => x.name !== '국민연금' && x.name !== '개인·퇴직연금');
+  // 국민·개인연금(부부)은 위 입력칸·프로필에 있으므로 임대료·근로소득 등 그 밖의 소득만
+  const others = planInput.pensions.filter((x) => !['국민연금', '배우자 국민연금', '개인·퇴직연금', '배우자 개인·퇴직연금'].includes(x.name ?? ''));
   // 만기일시 대출 원금 상환은 재무목표 지출과 나눠 보여 줌
   const loanRepays = planInput.goals.filter((g) => g.loan && g.age >= startAge);
   const premiums = planInput.goals.filter((g) => g.premium && g.age >= startAge);
   const extras = planInput.goals.filter((g) => goalKind(g) === 'goal' && g.age >= startAge);
   const npTaxes = planInput.goals.filter((g) => goalKind(g) === 'npTax' && g.age >= startAge);
+  // 첫해가 1년이 안 되면 해마다 나가는 지출(flow)은 남은 달만큼만
+  const firstShare = shareAt(input, startAge);
+  const firstMonths = Math.max(1, Math.round(firstShare * 12));
+  const part = (g: { age: number; amount: number; flow?: boolean }) => g.amount * (g.flow ? shareAt(input, g.age) : 1);
   const loanAt = (age: number) => loanRepays.filter((g) => g.age === age);
-  const premiumAt = (age: number) => premiums.filter((g) => g.age === age).reduce((a, g) => a + g.amount, 0);
-  const extraAt = (age: number) => extras.filter((g) => g.age === age).reduce((a, g) => a + g.amount, 0);
-  const npTaxAt = (age: number) => npTaxes.filter((g) => g.age === age).reduce((a, g) => a + g.amount, 0);
+  const premiumAt = (age: number) => premiums.filter((g) => g.age === age).reduce((a, g) => a + part(g), 0);
+  const extraAt = (age: number) => extras.filter((g) => g.age === age).reduce((a, g) => a + part(g), 0);
+  const npTaxAt = (age: number) => npTaxes.filter((g) => g.age === age).reduce((a, g) => a + part(g), 0);
   // 보험별 은퇴 후 납입 기간
   const premiumNames = [...new Set(premiums.map((g) => g.premium!))].map((name) => {
     const ages = premiums.filter((g) => g.premium === name).map((g) => g.age);
@@ -152,7 +163,7 @@ function WithdrawInner() {
         </div>
 
         <p className="mt-3 text-xs text-muted">
-          {retired ? `이미 은퇴 나이(${p.retireAge}세)가 지나 현재 ${startAge}세부터 인출합니다` : `은퇴 ${p.retireAge}세부터 인출`} · 월 생활비 {won(p.retireMonthlyExpense)}{planInput.expenseSteps?.length ? '(나이 구간별로 바뀜)' : ''} · 은퇴 후 기대수익률 {retMean.toFixed(1)}% / 변동성 {retVol.toFixed(1)}%{planInput.retireMeanReturn === undefined && ' (은퇴 전과 같음)'} (‘데이터·설정 → 프로필’에서 변경)
+          {retired ? `이미 은퇴 나이(${p.retireAge}세)가 지나 현재 ${startAge}세부터 인출합니다${firstShare < 1 ? `(올해는 남은 ${firstMonths}개월만 계산)` : ''}` : `은퇴 ${p.retireAge}세부터 인출`} · 월 생활비 {won(p.retireMonthlyExpense)}{planInput.expenseSteps?.length ? '(나이 구간별로 바뀜)' : ''} · 은퇴 후 기대수익률 {retMean.toFixed(1)}% / 변동성 {retVol.toFixed(1)}%{planInput.retireMeanReturn === undefined && ' (은퇴 전과 같음)'} (‘데이터·설정 → 프로필’에서 변경)
         </p>
         {others.length > 0 && (
           <p className="mt-1 text-xs text-muted">
@@ -189,7 +200,7 @@ function WithdrawInner() {
             <div className="mt-3 text-3xl font-extrabold tracking-tight">{pct(r.successRate)}</div>
             <div className="text-xs text-muted">생활비 90% 이상 매년 충족 확률</div>
             <div className="mt-2 text-xs">자산 유지 확률 <b>{pct(100 - r.depletionRate)}</b> · 고갈 나이 중앙값 <b>{r.medianDepletionAge === null ? `${p.lifeExpectancy}세까지 유지` : `${r.medianDepletionAge}세`}</b></div>
-            <div className="text-xs">첫해 인출 <b>{won(r.schedule[0]?.withdrawal ?? 0)}</b>{r.depletedMedianAge !== null && <> · 고갈 경로 중앙 <b>{r.depletedMedianAge}세</b></>}</div>
+            <div className="text-xs">첫해{firstShare < 1 ? `(${firstMonths}개월)` : ''} 인출 <b>{won(r.schedule[0]?.withdrawal ?? 0)}</b>{r.depletedMedianAge !== null && <> · 고갈 경로 중앙 <b>{r.depletedMedianAge}세</b></>}</div>
             {r.key === 'guardrail' && (
               <div className="mt-1 text-xs">감액 발생 <b>{pct(r.adjustRate)}</b> · 나쁜 10% 경로 최저 <b>{Math.round(r.minMultiplier * 100)}%</b>까지 감액</div>
             )}
@@ -250,9 +261,13 @@ function WithdrawInner() {
 
       <YearEndReview input={{ ...input, startBalance: start.balance }} startAge={startAge} band={band / 100} cut={cut / 100} cutOnly={cutOnly} />
 
-      <BucketGuide firstNeed={firstNeed} balance={startBalance} />
+      <BucketGuide firstNeed={firstNeed} balance={startBalance} tax={tax} hasSpouse={hasSpouse} partialFirst={firstShare < 1} />
 
-      {tax && setup && <TaxSummary tax={tax} scheduleDepleted={sel.schedule.find((r) => r.endBalance <= 0 && r.withdrawal > 0)?.age ?? null} hasSpouse={hasSpouse} retireBase={setup.retireBase} />}
+      <Milestones />
+
+      {tax && setup && <TaxSummary tax={tax} scheduleDepleted={sel.schedule.find((r) => r.endBalance <= 0 && r.withdrawal > 0)?.age ?? null} hasSpouse={hasSpouse} retireBase={setup.retireBase} minDraw={setup.retireMinDraw} months={firstMonths} />}
+      {tax && (retired || d.draws.length > 0) && <DrawLog tax={tax} firstMonths={firstMonths} hasSpouse={hasSpouse} />}
+      <ScenarioTable base={compareBase} />
       {tax && setup && <OrderCompare base={compareBase} tax={tax} setup={setup} />}
       {p.incomeTax?.on && <IncomeTaxCard tax={tax} />}
 
@@ -286,7 +301,7 @@ function WithdrawInner() {
                 );
                 return (
                 <tr key={r.age} className={`border-b border-line text-right last:border-0 ${r.income < r.need * 0.9 ? 'text-bad' : over ? 'bg-warn-soft' : ''}`}>
-                  <td className="py-1.5 text-left font-medium">{r.age}세{t && <span className="ml-1 text-xs font-normal text-muted">{t.year}</span>}</td>
+                  <td className="whitespace-nowrap py-1.5 text-left font-medium">{r.age}세{t && <span className="ml-1 text-xs font-normal text-muted">{t.year}</span>}{r.share !== undefined && <span className="ml-1 text-xs font-normal text-muted">{Math.max(1, Math.round(r.share * 12))}개월</span>}</td>
                   <td>{won(r.pension)}</td>
                   <td className="whitespace-nowrap text-muted">
                     − {won(r.need)}
@@ -318,7 +333,7 @@ function WithdrawInner() {
           </table>
         </div>
         <p className="mt-2 text-xs text-muted">
-          한 해씩 소득 − 필요 지출(생활비 + 남은 대출 상환 + 목표 탭 지출 + 만기일시 대출 원금 + 은퇴 후 보험료 + 국민연금 몫 세금·건보료) = 수지이고, 모자라는 만큼 금융자산에서 인출합니다. 정률·가드레일 전략은 인출액이 부족분과 다를 수 있습니다. 일시금·매각·환급은 쓰지 않고 자산에 더합니다. 빨간 행은 쓸 수 있는 돈(소득 + 인출)이 필요 지출의 90%에 못 미치는 해입니다. 필요 지출 아래 작은 글씨는 그 가운데 목표 탭 지출, 만기에 한 번에 갚는 대출 원금, 은퇴 뒤까지 내는 보험료, 국민연금 때문에 늘어나는 세금·건보료입니다.
+          한 해씩 소득 − 필요 지출(생활비 + 남은 대출 상환 + 목표 탭 지출 + 만기일시 대출 원금 + 은퇴 후 보험료 + 국민연금 몫 세금·건보료) = 수지이고, 모자라는 만큼 금융자산에서 인출합니다.{firstShare < 1 ? ` 첫 행(올해)은 남은 ${firstMonths}개월분만 계산한 금액입니다(지난 달의 지출은 이미 지금 자산에 반영돼 있으므로).` : ''} 정률·가드레일 전략은 인출액이 부족분과 다를 수 있습니다. 일시금·매각·환급은 쓰지 않고 자산에 더합니다. 빨간 행은 쓸 수 있는 돈(소득 + 인출)이 필요 지출의 90%에 못 미치는 해입니다. 필요 지출 아래 작은 글씨는 그 가운데 목표 탭 지출, 만기에 한 번에 갚는 대출 원금, 은퇴 뒤까지 내는 보험료, 국민연금 때문에 늘어나는 세금·건보료입니다.
           {tax && ` 노란 행은 과세재원 인출이 1인 연 ${PENSION_SLOT.toLocaleString()}만원(세전, 명목)을 넘어 초과분에 ${OVER_RATE}% 분리과세가 붙거나, 계좌별 연금수령한도를 넘어 연금외수령이 생기는(‘수령한도↑’) 해입니다. 한도 열은 그 해 과세재원 인출액(만원, 명목)입니다. 세금·세전 인출은 오늘 물가 기준입니다.`}
         </p>
       </Card>
@@ -328,8 +343,11 @@ function WithdrawInner() {
 }
 
 /** 연금 세금 점검: 세전 인출액·세금·1,500만 한도 초과 연도 */
-function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase }: { tax: TaxResult; scheduleDepleted: number | null; hasSpouse: boolean; retireBase: number }) {
+function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase, minDraw, months }: { tax: TaxResult; scheduleDepleted: number | null; hasSpouse: boolean; retireBase: number; minDraw: number; months: number }) {
   const first = tax.rows[0];
+  // 퇴직소득세 감면이 40%로 커지는 첫해(실수령 11년차)
+  const retire40 = retireBase > 0 && tax.rows.some((r) => r.accounts.some((a) => a.retireLeft > 0.5)) ? tax.rows.find((r) => r.retireNo > 10) : undefined;
+  const hasRetire = !!first && first.accounts.some((a) => a.retireLeft > 0.5);
   const eff = first && first.gross > 0 ? (first.tax / first.gross) * 100 : 0;
   const overRows = tax.rows.filter((r) => r.over.self + r.over.spouse > 0.5);
   const ranges = yearRanges(tax.overYears);
@@ -347,7 +365,7 @@ function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase }: { tax: Tax
     >
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <div className="rounded-xl bg-sunken p-3">
-          <div className="text-xs text-muted">첫해 세전 인출 · 세금</div>
+          <div className="text-xs text-muted">첫해{months < 12 ? `(${months}개월)` : ''} 세전 인출 · 세금</div>
           <div className="mt-0.5 text-lg font-bold">{won(first?.gross ?? 0)}</div>
           <div className="text-xs text-muted">세금 {won(first?.tax ?? 0)} · 실효 {eff.toFixed(1)}%</div>
         </div>
@@ -377,19 +395,30 @@ function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase }: { tax: Tax
               </li>
             ))}
           </ul>
-          <p className="mt-1 text-xs text-muted">넘는 금액은 연금외수령이라 과세재원은 {OVER_RATE}%, 퇴직금 재원은 퇴직소득세 {retireBase}% 전액이 붙습니다. 한도에 여유가 있는 다른 계좌에서 먼저 꺼내거나, 인출을 다음 해로 나누면 피할 수 있습니다.</p>
+          <p className="mt-1 text-xs text-muted">
+            넘는 금액은 연금외수령이라 과세재원은 {OVER_RATE}%, 퇴직금 재원은 퇴직소득세 {retireBase}% 전액(감면 없음)이 붙습니다.
+            {retireBase <= OVER_RATE ? ` 1,500만 한도·연금수령한도 안에서 꺼낼 돈과 ISA·일반계좌를 다 쓴 뒤에는, 과세재원을 ${OVER_RATE}%로 더 꺼내는 것보다 퇴직금 재원을 한도 넘겨 꺼내는 쪽(${retireBase}%)이 세금이 적어 그 순서로 계산했습니다.` : ''}
+            {' '}인출을 다음 해로 나누거나 그 해 목돈 지출을 줄이면 피할 수 있습니다.
+          </p>
         </div>
       )}
-      {first && first.accounts.length > 0 && <AccountLimits row={first} hasSpouse={hasSpouse} />}
+      {first && first.accounts.length > 0 && <AccountLimits row={first} hasSpouse={hasSpouse} months={months} />}
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">
         <li>
-          꺼내는 순서(계좌별 연금수령한도 안에서): 과세제외 원금 → 과세재원(1인 연 {PENSION_SLOT.toLocaleString()}만원까지 연금소득세 5.5%·70대 4.4%·80세 이상 3.3%) → 퇴직금 재원(퇴직소득세 {retireBase}%의 70%, 11년차부터 60%) → 연금계좌 밖 자산 → 과세재원 1,500만 초과분({OVER_RATE}%) → 그래도 모자라면 연금수령한도를 넘겨 꺼냄(연금외수령). 같은 사람 계좌는 ‘꺼내는 순서’대로, ‘인출 시작 연도’ 전 계좌는 꺼내지 않습니다.
+          꺼내는 순서(계좌별 연금수령한도 안에서): 과세제외 원금 → 과세재원(1인 연 {PENSION_SLOT.toLocaleString()}만원까지 연금소득세 5.5%·70대 4.4%·80세 이상 3.3%) → 퇴직금 재원(퇴직소득세 {retireBase}%의 70%, 실수령 11년차부터 60%) → 연금계좌 밖 자산 → 그래도 모자라면 세율이 낮은 쪽부터: 퇴직금 재원 연금수령한도 초과분(퇴직소득세 {retireBase}% 전액)·과세재원 1,500만 초과분({OVER_RATE}%). 같은 사람 계좌는 ‘꺼내는 순서’대로, ‘인출 시작 연도’ 전 계좌는 꺼내지 않습니다.
           {hasSpouse && ' 배우자 연금계좌는 배우자가 55세가 된 해부터 꺼냅니다.'}
         </li>
+        <li>한 계좌 안에서는 법으로 정해진 순서(과세제외 → 퇴직금 재원 → 과세재원)로만 빠집니다. 그래서 퇴직금이 들어 있는 계좌의 과세재원(운용수익 포함)은 퇴직금 재원을 다 쓴 뒤에야 꺼낼 수 있습니다. 운용수익은 모두 과세재원으로 쌓이고, 과세제외·퇴직금 재원은 처음 금액 그대로입니다.</li>
+        {hasRetire && (
+          <li>
+            퇴직소득세 감면은 퇴직금 계좌에서 실제로 꺼낸 해만 연차로 셉니다(올해 {first!.retireNo}년차{retire40 ? `, ${retire40.year}년부터 40% 감면` : ''}).
+            {minDraw > 0 ? ` 쓸 일이 없는 해에도 연 ${won(minDraw)}은 꺼내 연차를 잇고, 그 돈은 ISA·일반계좌로 옮기는 것으로 계산했습니다.` : ' 꺼내지 않는 해가 있으면 40% 감면이 그만큼 늦어지니, ‘데이터·설정 → 프로필 → 연금 세금’의 ‘퇴직금 계좌 매년 최소 인출’에 작은 금액(예: 12만원)을 넣어 두세요.'}
+          </li>
+        )}
         <li>자산 인출(세후)이 생활비로 쓰는 돈이고, 세금만큼 더 꺼내야 합니다. 성공확률·전략 비교는 세금을 빼고 계산한 값이니 이 카드의 ‘세금 반영 시 자산 고갈’과 함께 보세요.</li>
         {(reinvest > 0.5 || contrib > 0.5) && (
           <li>
-            {reinvest > 0.5 && `1,500만 한도를 채우려고 더 꺼내 ISA·일반계좌로 옮긴 세후 금액은 계획 기간 합계 ${won(reinvest)}입니다(오늘 물가). `}
+            {reinvest > 0.5 && `1,500만 한도 채우기·퇴직금 최소 인출로 생활비보다 더 꺼내 ISA·일반계좌로 옮긴 세후 금액은 계획 기간 합계 ${won(reinvest)}입니다(오늘 물가). `}
             {contrib > 0.5 && `연금계좌 추가 납입은 합계 ${won(contrib)}이고, 세액공제 환급은 다음 해 ‘일시금·환급’으로 들어옵니다.`}
           </li>
         )}
@@ -399,71 +428,62 @@ function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase }: { tax: Tax
   );
 }
 
-/** 첫해 계좌별 연금수령연차·한도·인출액(명목) */
-function AccountLimits({ row, hasSpouse }: { row: TaxResult['rows'][number]; hasSpouse: boolean }) {
+/**
+ * 첫해 계좌별 인출 지시(엑셀 대시보드 ‘이번 달 인출 지시’): 연금수령연차·한도와 함께
+ * 증권사 정기지급(연금 지급신청) 금액으로 넣을 월 세전 금액·세금·세후 수령액(명목)
+ */
+function AccountLimits({ row, hasSpouse, months }: { row: TaxResult['rows'][number]; hasSpouse: boolean; months: number }) {
+  const sum = (f: (a: TaxResult['rows'][number]['accounts'][number]) => number) => row.accounts.reduce((s, a) => s + f(a), 0);
   return (
     <div className="mt-3">
-      <div className="mb-1 text-xs font-medium text-muted">{row.year}년 계좌별 연금수령한도 (명목)</div>
+      <div className="mb-1 text-xs font-medium text-muted">{row.year}년 계좌별 인출 지시 — 증권사 정기지급(연금 지급신청) 금액으로 설정 (그 해 금액)</div>
       <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-        <table className="w-full min-w-[480px] text-sm num-table">
+        <table className="w-full min-w-[760px] text-sm num-table">
           <thead>
             <tr className="border-b border-line text-right text-xs text-muted">
               <th className="py-1.5 text-left font-medium">계좌</th>
               <th className="font-medium">연차</th>
-              <th className="font-medium">수령한도</th>
-              <th className="font-medium">세전 인출</th>
-              <th className="font-medium">여유</th>
+              <th className="font-medium">월 정기지급<div className="font-normal">세전</div></th>
+              <th className="font-medium">예상 세금<div className="font-normal">월</div></th>
+              <th className="font-medium">세후 수령<div className="font-normal">월</div></th>
+              <th className="font-medium">올해 계획<div className="font-normal">세전{months < 12 ? ` · ${months}개월` : ''}</div></th>
+              <th className="font-medium">연금수령한도</th>
+              <th className="font-medium">한도 사용</th>
             </tr>
           </thead>
           <tbody>
             {row.accounts.map((a) => {
               const closed = a.yearNo < 1 || (a.limit === 0 && a.drawn === 0);
               return (
-                <tr key={a.name} className={`border-b border-line text-right last:border-0 ${a.over > 0.5 ? 'text-bad' : ''}`}>
+                <tr key={a.name} className={`border-b border-line text-right ${a.over > 0.5 ? 'text-bad' : a.drawn <= 0.5 ? 'text-muted' : ''}`}>
                   <td className="py-1.5 text-left">{a.name}{hasSpouse && <span className="ml-1 text-xs text-muted">{a.owner === 'spouse' ? '배우자' : '본인'}</span>}</td>
                   <td>{a.yearNo >= 1 ? `${a.yearNo}년차` : '수령 전'}</td>
-                  <td>{closed ? '-' : a.limit === Infinity ? '한도 없음' : won(a.limit)}</td>
+                  <td className="font-semibold">{a.drawn > 0.5 ? won(a.drawn / months) : '-'}</td>
+                  <td>{a.drawn > 0.5 ? won(a.tax / months) : '-'}</td>
+                  <td>{a.drawn > 0.5 ? won((a.drawn - a.tax) / months) : '-'}</td>
                   <td>{won(a.drawn)}</td>
-                  <td>{closed ? '-' : a.limit === Infinity ? '-' : a.over > 0.5 ? `초과 ${won(a.over)}` : won(a.limit - a.drawn)}</td>
+                  <td>{closed ? '-' : a.limit === Infinity ? '한도 없음' : won(a.limit)}</td>
+                  <td>{closed || a.limit === Infinity ? '-' : a.over > 0.5 ? `초과 ${won(a.over)}` : a.limit > 0 ? pct((a.drawn / a.limit) * 100) : '-'}</td>
                 </tr>
               );
             })}
+            <tr className="text-right font-semibold">
+              <td className="py-1.5 text-left">합계</td>
+              <td />
+              <td>{won(sum((a) => a.drawn) / months)}</td>
+              <td>{won(sum((a) => a.tax) / months)}</td>
+              <td>{won(sum((a) => a.drawn - a.tax) / months)}</td>
+              <td>{won(sum((a) => a.drawn))}</td>
+              <td />
+              <td />
+            </tr>
           </tbody>
         </table>
       </div>
+      <p className="mt-1 text-xs text-muted">
+        올해 계획(세전)을 {months < 12 ? `남은 ${months}개월` : '12'}로 나눈 금액입니다. 목돈 지출이 있는 해는 그만큼 커지니, 생활비 몫만 정기지급으로 걸고 목돈은 필요한 달에 따로 꺼내도 됩니다. ISA·일반계좌에서 꺼내는 돈과 재투자로 옮기는 돈은 아래 스케줄 표에서 확인하세요.
+        {row.idle.self + row.idle.spouse > 0.5 && ` 올해 1,500만 한도 가운데 ${won(row.idle.self + row.idle.spouse)}은 인출 시작 연도 전인 계좌에 과세재원이 묶여 쓰지 못합니다.`}
+      </p>
     </div>
-  );
-}
-
-/** [2031, 2032, 2033, 2040] → "2031~2033, 2040년" */
-/** 인출용 자산 배치 가이드: 현금성 2년 · 채권·배당 3~5년차 · 대체 10% · 나머지 성장 */
-function BucketGuide({ firstNeed, balance }: { firstNeed: number; balance: number }) {
-  const cash = Math.min(balance, firstNeed * 2);
-  const bond = Math.min(balance - cash, firstNeed * 3);
-  const alt = Math.max(0, Math.min(balance - cash - bond, balance * 0.1));
-  const growth = Math.max(0, balance - cash - bond - alt);
-  const rows = [
-    { label: '현금성(MMF·예금)', amount: cash, note: '1~2년차 인출분. 매달 여기서 꺼내 씀' },
-    { label: '채권·배당', amount: bond, note: '3~5년차 인출분. 현금이 줄면 여기서 채움' },
-    { label: '대체자산(금·리츠 등)', amount: alt, note: '전체의 약 10%. 주식과 다르게 움직이는 완충재' },
-    { label: '성장자산(주식형)', amount: growth, note: '6년차 이후 몫. 오른 해에 일부 팔아 앞 바구니를 채움' },
-  ];
-  return (
-    <Card title="인출용 자산 배치 가이드" className="mt-4" action={<span className="text-xs text-muted">첫해 인출 {won(firstNeed)} 기준</span>}>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {rows.map((r) => (
-          <div key={r.label} className="rounded-xl bg-sunken p-3">
-            <div className="text-xs text-muted">{r.label}</div>
-            <div className="mt-0.5 text-lg font-bold">{won(r.amount)}</div>
-            <div className="text-xs text-muted">{balance > 0 ? pct((r.amount / balance) * 100) : '-'} · {r.note}</div>
-          </div>
-        ))}
-      </div>
-      <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">
-        <li>주식이 고점보다 15% 넘게 떨어진 해에는 주식을 팔지 말고 현금성·채권에서만 꺼내 씁니다.</li>
-        <li>퇴직연금(DC·IRP)은 위험자산을 70%까지만 담을 수 있으니, 성장자산은 연금저축·일반 계좌에 나눠 둡니다.</li>
-        <li>1년에 한 번(예: 1월) 바구니 비율을 점검하고, 가드레일을 쓴다면 같은 날 인출액도 함께 조정합니다.</li>
-      </ul>
-    </Card>
   );
 }

@@ -245,10 +245,10 @@ export function loanSchedule(l: Liability, currentAge: number, lastAge: number):
  * 보험료는 명목 고정이라 실질 금액 = 연 보험료 ÷ (1 + 물가)^(햇수). 보험 탭 보험료를 지출에 자동으로 더한 경우만.
  */
 export function retirePremiums(s: Summary, retireAge: number, inflation: number, lifeExpectancy?: number) {
-  const out: { age: number; amount: number; premium: string }[] = [];
+  const out: { age: number; amount: number; premium: string; flow: true }[] = [];
   if (!(s.insurance > 0)) return out;
   const push = (name: string, monthly: number, endExclusive: number) => {
-    for (let age = Math.max(retireAge, s.age); age < endExclusive; age++) out.push({ age, amount: (monthly * 12) / Math.pow(1 + inflation / 100, age - s.age), premium: name });
+    for (let age = Math.max(retireAge, s.age); age < endExclusive; age++) out.push({ age, amount: (monthly * 12) / Math.pow(1 + inflation / 100, age - s.age), premium: name, flow: true });
   };
   for (const x of s.insuranceEnds.filter((e) => e.age > retireAge)) push(x.name, x.monthly, x.age);
   if (lifeExpectancy !== undefined) for (const x of s.insuranceOngoing ?? []) push(x.name, x.monthly, lifeExpectancy + 1);
@@ -321,6 +321,8 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
       .map((l) => loanDebt(l, s.age)),
     savingsChanges: savingsChanges(profile, s, o.retireAge ?? profile.retireAge),
     currentAge: s.age,
+    // 올해는 남은 달만큼만 계산(1월이면 1년 전체)
+    ...(s.yearShare !== undefined && s.yearShare < 1 ? { firstYearShare: s.yearShare } : {}),
     retireAge: o.retireAge ?? profile.retireAge,
     lifeExpectancy: profile.lifeExpectancy,
     startBalance,
@@ -340,8 +342,9 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
         // 비용 상승률 중 물가 초과분만 실질 증가로 반영. 반복 지출은 시작~종료 나이까지 매년
         const extra = realRate(g.growthRate, inflation);
         const last = isRecurring(g) ? g.endAge! : g.targetAge;
-        const out: { age: number; amount: number }[] = [];
-        for (let age = Math.max(g.targetAge, s.age); age <= last; age++) out.push({ age, amount: g.amountPV * Math.pow(1 + extra, age - s.age) });
+        const out: { age: number; amount: number; flow?: boolean }[] = [];
+        // 매년 반복 지출은 해마다 나가는 흐름(flow): 첫해는 올해 남은 달만큼만 셈
+        for (let age = Math.max(g.targetAge, s.age); age <= last; age++) out.push({ age, amount: g.amountPV * Math.pow(1 + extra, age - s.age), ...(isRecurring(g) ? { flow: true } : {}) });
         return out;
       })
       // 만기일시 상환 대출은 만기 나이에 원금을 한 번에 갚음

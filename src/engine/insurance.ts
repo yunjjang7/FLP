@@ -1,5 +1,5 @@
 import type { Goal, Insurance, InsuredWho, Level, Profile } from '../types';
-import type { Summary } from './portfolio';
+import { isPaying, type Summary } from './portfolio';
 
 export interface CoverageLine {
   key: 'death' | 'critical' | 'care';
@@ -63,6 +63,8 @@ export function insuranceGap(profile: Profile, s: Summary, policies: Insurance[]
   };
   const childNeed = { death: 0, critical: CRITICAL_BASE, care: 0 };
 
+  // 보험료는 아직 납입 중인 보험만(납입이 끝난 보험은 보장만 남고 보험료는 나가지 않음)
+  const paying = (p: Insurance) => isPaying(p, s.age, profile);
   // 사람별로 묶기: 자녀는 출생연도마다 따로(출생연도가 없으면 '자녀' 하나로)
   const groups: { who: InsuredWho; person: string; list: Insurance[] }[] = [{ who: 'self', person: '본인', list: [] }];
   if (hasSpouse) groups.push({ who: 'spouse', person: '배우자', list: [] });
@@ -84,10 +86,10 @@ export function insuranceGap(profile: Profile, s: Summary, policies: Insurance[]
       })
       // 본인은 세 줄 모두, 나머지는 필요액이나 가입액이 있는 줄만
       .filter((l) => who === 'self' || l.need > 0 || l.current > 0);
-    return { who, person, count: list.length, premium: list.reduce((a, p) => a + p.monthlyPremium, 0), lines };
+    return { who, person, count: list.length, premium: list.filter(paying).reduce((a, p) => a + p.monthlyPremium, 0), lines };
   });
 
-  const premium = policies.reduce((a, p) => a + p.monthlyPremium, 0);
+  const premium = policies.filter(paying).reduce((a, p) => a + p.monthlyPremium, 0);
   const premiumRatio = s.income > 0 ? (premium / s.income) * 100 : 0;
   const premiumLevel: Level = premiumRatio <= 10 ? 'good' : premiumRatio <= 15 ? 'caution' : 'danger';
 

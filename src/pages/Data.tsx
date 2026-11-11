@@ -195,7 +195,8 @@ function ProfileForm() {
       <Card title="연금 세금" action={<span className="text-xs text-muted">노후 인출 스케줄의 세금 계산에 사용</span>}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {n('retireTaxRate', '퇴직소득세 실효세율', '%', '감면 전 세율(퇴직소득 원천징수영수증)', 0.01)}
-          {n('retireTaxYear1', '퇴직금 연금 실수령 1년차', '년', '11년차부터 감면 30%→40%')}
+          {n('retireTaxYear1', '퇴직금 연금 실수령 1년차', '년', '11년차부터 감면 30%→40% · 실제로 꺼낸 해만 연차로 셈')}
+          {n('retireMinDraw', '퇴직금 계좌 매년 최소 인출', '만원', '연 금액(예: 12) · 쓸 일이 없는 해에도 꺼내 실수령연차 유지 · 0이면 안 함')}
           <Labeled label="1,500만 한도 매년 꽉 채우기" hint="남는 돈은 ISA·일반계좌로 재투자">
             <SelectField value={p.slotFill ? 'on' : 'off'} onChange={(v) => save({ slotFill: v === 'on' })} options={{ off: '아니오(필요한 만큼만)', on: '예' }} />
           </Labeled>
@@ -204,6 +205,7 @@ function ProfileForm() {
         <p className="mt-3 text-xs text-muted">
           연금계좌별 과세제외 금액·퇴직금 재원·명의·인출 시작 연도·꺼내는 순서는 ‘자산’ 탭의 각 연금 자산에서 입력합니다. 과세재원 인출은 1인 연 1,500만원까지 연금소득세(70세 미만 5.5%·70대 4.4%·80세 이상 3.3%)를 내고, 넘으면 16.5% 분리과세로 계산합니다.
           ‘꽉 채우기’를 고르면 생활비보다 많아도 해마다 1인 1,500만원까지 과세재원을 꺼내(낮은 세율로 미리 꺼냄) 세후 금액을 ISA·일반계좌에 다시 넣습니다.
+          한 계좌 안에서는 법정 순서(과세제외 → 퇴직금 재원 → 과세재원)로만 빠지고, 운용수익은 모두 과세재원으로 쌓입니다. 퇴직소득세 감면이 40%로 커지는 11년차는 퇴직금 계좌에서 실제로 꺼낸 해만 세므로, ‘매년 최소 인출’에 작은 금액(예: 연 12만원)을 넣어 두면 쓸 일이 없는 해에도 연차가 이어집니다(꺼낸 돈은 ISA·일반계좌로).
         </p>
       </Card>
       <ContribForm />
@@ -1048,7 +1050,7 @@ function BackupPanel() {
       </Card>
 
       <Card title="전체 백업·복원">
-        <p className="mb-3 text-sm text-muted">기기를 바꾸거나 브라우저 데이터를 지우기 전에 전체 백업(JSON)을 받아 두세요.</p>
+        <p className="mb-3 text-sm text-muted">기기를 바꾸거나 브라우저 데이터를 지우기 전에 전체 백업(JSON)을 받아 두세요. 프로필·자산·부채·지출·목표·보험과 순자산 추이, 연말결산, 월별 실제 인출 기록이 모두 들어갑니다.</p>
         <div className="flex flex-wrap gap-2">
           <Button onClick={async () => downloadText(`FLP_백업_${stamp}.json`, JSON.stringify(await exportBackup(), null, 2), 'application/json')}>백업 파일 받기</Button>
           <Button variant="ghost" onClick={() => jsonRef.current?.click()}>백업에서 복원</Button>

@@ -43,7 +43,7 @@ export interface PlanInput {
   retireExpenseAnnual: number; // 은퇴 후 연 생활비
   pensions: IncomeStream[]; // 국민연금·개인연금·임대료 등 은퇴 후 소득
   /** 해당 나이에 지출되는 목적자금·반복 지출(실질). loan 이 있으면 만기일시 상환 대출의 원금 상환(그 대출 이름) */
-  goals: { age: number; amount: number; loan?: string; premium?: string; npTax?: boolean }[]; // loan: 만기일시 대출 원금, premium: 은퇴 후 보험료, npTax: 국민연금 몫 세금·건보료
+  goals: { age: number; amount: number; loan?: string; premium?: string; npTax?: boolean; flow?: boolean }[]; // loan: 만기일시 대출 원금, premium: 은퇴 후 보험료, npTax: 국민연금 몫 세금·건보료, flow: 해마다 나가는 지출(첫해는 남은 달만큼)
   /** 은퇴 후 자산 운용(미지정 시 은퇴 전과 동일) */
   retireMeanReturn?: number;
   retireVolatility?: number;
@@ -61,7 +61,16 @@ export interface PlanInput {
   inflows?: { name?: string; age: number; amount: number; kind?: 'credit' | 'sale' }[];
   /** 하락장 가드레일: 시장(명목 누적수익률)이 직전 최고점보다 drop% 이상 낮은 해에는 은퇴 후 생활비를 cut% 줄임 */
   guardrail?: Guardrail;
+  /**
+   * 첫해(currentAge)가 1년 중 차지하는 비율(0~1, 없으면 1). 11월에 계산하면 올해는 2개월(2/12)만 남았으므로
+   * 첫해의 생활비·소득·저축·대출 상환·수익을 그만큼만 셈(일시금·한 번 쓰는 목표는 그대로). 다음 해부터는 1년 단위
+   */
+  firstYearShare?: number;
 }
+
+/** 그 나이 해가 차지하는 비율: 첫해만 firstYearShare, 나머지는 1 */
+export const yearShareAt = (input: { currentAge: number; firstYearShare?: number }, age: number) =>
+  age === input.currentAge && input.firstYearShare !== undefined ? Math.min(1, Math.max(0, input.firstYearShare)) : 1;
 
 /** 하락장 가드레일 설정(%). 생활비(인출액 고정이면 고정액)만 줄이고 대출·목표 지출·보험료는 그대로 */
 export interface Guardrail { drop: number; cut: number }
@@ -154,10 +163,11 @@ export function returnAt(input: PlanInput, age: number) {
   return { mean: input.meanReturn, vol: input.volatility };
 }
 
-export function outflowAt(input: PlanInput, age: number, cut = 0) {
+/** share: 그 해가 차지하는 비율(첫해만 1보다 작음). 해마다 나가는 흐름(생활비·소득·대출·flow 지출)만 줄이고 일시금·한 번 쓰는 지출은 그대로 */
+export function outflowAt(input: PlanInput, age: number, cut = 0, share = 1) {
   let out = 0;
-  for (const g of input.goals) if (g.age === age) out += g.amount;
-  if (age >= input.retireAge) out += retireOutflowAt(input, age, cut);
+  for (const g of input.goals) if (g.age === age) out += g.amount * (g.flow ? share : 1);
+  if (age >= input.retireAge) out += retireOutflowAt(input, age, cut) * share;
   return out - inflowAt(input, age);
 }
 
@@ -176,15 +186,17 @@ export function runPath(input: PlanInput, z: () => number) {
   for (let i = 0; i < years; i++) {
     const age = input.currentAge + i;
     const { mean, vol } = returnAt(input, age);
-    const nominal = Math.max(-0.95, mean / 100 + (vol / 100) * z());
-    const real = (1 + nominal) / (1 + input.inflation / 100) - 1;
+    // 첫해가 1년이 안 되면 수익·물가도 그 기간만큼(변동성은 √기간)
+    const sh = yearShareAt(input, age);
+    const nominal = Math.max(-0.95, (mean / 100) * sh + (vol / 100) * Math.sqrt(sh) * z());
+    const real = (1 + nominal) / Math.pow(1 + input.inflation / 100, sh) - 1;
     bal = bal * (1 + real);
     index *= 1 + nominal;
     peak = Math.max(peak, index);
     const bear = g !== undefined && g.cut > 0 && age >= input.retireAge && index < peak * (1 - g.drop / 100);
     if (bear && depletedAt === null) cuts.push(age);
-    if (age < input.retireAge) bal += savingsAt(input, age);
-    bal -= outflowAt(input, age, bear ? g!.cut / 100 : 0);
+    if (age < input.retireAge) bal += savingsAt(input, age) * sh;
+    bal -= outflowAt(input, age, bear ? g!.cut / 100 : 0, sh);
     if (bal < 0) {
       if (depletedAt === null) depletedAt = age + 1;
       bal = 0;
@@ -341,8 +353,9 @@ export function retirementNeed(input: PlanInput) {
   let need = 0;
   for (let i = 0; i < n; i++) {
     const age = st.age + i;
-    const goals = input.goals.filter((g) => g.age === age).reduce((a, g) => a + g.amount, 0);
-    need += (Math.max(0, retireOutflowAt(input, age) + goals) - inflowAt(input, age)) / Math.pow(1 + r, i);
+    const sh = yearShareAt(input, age);
+    const goals = input.goals.filter((g) => g.age === age).reduce((a, g) => a + g.amount * (g.flow ? sh : 1), 0);
+    need += (Math.max(0, retireOutflowAt(input, age) * sh + goals) - inflowAt(input, age)) / Math.pow(1 + r, i);
   }
   return { need, projected: st.balance, ratio: need > 0 ? (st.balance / need) * 100 : 100, startAge: st.age };
 }

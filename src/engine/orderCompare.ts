@@ -43,6 +43,7 @@ export interface ComboResult {
   netTax: number; // 세금 − 환급
   overYears: number[]; // 1,500만 한도를 넘는 해
   overAmount: number; // 한도를 넘어 16.5%로 꺼낸 금액(실질)
+  idleAmount: number; // 한도가 남았는데 인출 시작 전 계좌에 과세재원이 묶여 못 쓴 금액(실질)
   limitAccounts: number; // 연금수령한도를 넘는 계좌 수
   contrib: number; // 추가 납입 합계(실질)
   depletedAge: number | null; // 세금 반영 고갈 나이
@@ -97,6 +98,7 @@ export function summarizeTax(tax: TaxResult, setup: TaxSetup, combo: OrderCombo 
   // 환급은 다음 해 들어옴
   const credit = setup.contrib.reduce((a, c) => a + (c.creditSelf + c.creditSpouse) / defl(c.year + 1), 0);
   const overAmount = tax.rows.reduce((a, r) => a + (r.over.self + r.over.spouse) / defl(r.year), 0);
+  const idleAmount = tax.rows.reduce((a, r) => a + (r.idle.self + r.idle.spouse) / defl(r.year), 0);
   const last = tax.rows[tax.rows.length - 1];
   return {
     combo,
@@ -106,10 +108,12 @@ export function summarizeTax(tax: TaxResult, setup: TaxSetup, combo: OrderCombo 
     netTax: totalTax - credit,
     overYears: tax.overYears,
     overAmount,
+    idleAmount,
     limitAccounts: tax.limitWarnings.length,
     contrib: tax.rows.reduce((a, r) => a + r.contrib, 0),
     depletedAge: tax.depletedAge,
-    endBalance: last ? last.left : 0,  };
+    endBalance: last ? last.left : 0,
+  };
 }
 
 /** 조합 하나를 계산: 프로필·자산을 조합대로 바꿔 계획 입력(세액공제 환급)부터 다시 만들고 세금을 입힘 */
@@ -137,7 +141,7 @@ export function runCombo(base: CompareBase, combo: OrderCombo, c: CompareContrib
     extras: plan.goals.filter((g) => g.age >= start),
   };
   const schedule = compareStrategy(base.strategy, input, 0).schedule;
-  const setup = taxSetup(vp, va, nowYear, base.input.startBalance, base.meanReturn);
+  const setup = taxSetup(vp, va, nowYear, base.input.startBalance, base.meanReturn, profile.birthYear + start);
   if (!setup) return null;
   return summarizeTax(pensionTaxSchedule(schedule, setup), setup, combo);
 }

@@ -26,10 +26,11 @@ export function emergencyRunway(s: Pick<Summary, 'savings' | 'emergencyFund'>) {
 
 /**
  * 비상금 점수(0~1): 월 지출 몇 개월분인지로 매기되, 매달 부족분으로 비상금이 줄고 있으면
- * 주의(0.6) 이하로, 목표 개월 수보다 빨리 바닥나면 위험(0.4)으로 낮춤
+ * 주의(0.6) 이하로, 목표 개월 수보다 빨리 바닥나면 위험(0.4)으로 낮춤.
+ * 이미 은퇴해 인출 중(retired)이면 ‘부족분’은 계획된 자산 인출이므로 낮추지 않음
  */
-export function emergencyScore(s: Summary, target: number) {
-  return Math.min(scale(emergencyMonths(s), target / 2, target), emergencyCap(s, target));
+export function emergencyScore(s: Summary, target: number, retired = false) {
+  return Math.min(scale(emergencyMonths(s), target / 2, target), retired ? 1 : emergencyCap(s, target));
 }
 
 /** 부족분으로 비상금이 줄고 있을 때 점수 상한: 목표 개월 수보다 빨리 바닥나면 0.4, 아니면 0.6, 부족분 없으면 1 */
@@ -39,9 +40,11 @@ export function emergencyCap(s: Pick<Summary, 'savings' | 'emergencyFund'>, targ
 }
 
 /** 비상금 설명. 부족분이 있으면 ‘지금처럼 가면 몇 개월 뒤 바닥나는지’를 덧붙임 */
-export function emergencyDetail(s: Summary, target: number) {
+export function emergencyDetail(s: Summary, target: number, retired = false) {
   const em = emergencyMonths(s);
   const base = `단기·비상금 용도 유동자산이 월 지출의 ${em.toFixed(1)}개월분입니다. 목표 ${target}개월.`;
+  // 인출 중에는 소득보다 많은 지출을 자산 인출로 메우는 것이 계획이라 ‘몇 개월 뒤 바닥’ 경고 대신 현금성 바구니를 안내
+  if (retired) return `${base} 인출 중에는 앞으로 1~2년치 인출분을 현금성으로 두면 하락장에 주식을 팔지 않아도 됩니다(노후 인출 → 인출용 자산 배치 가이드).`;
   const run = emergencyRunway(s);
   if (!Number.isFinite(run)) return base;
   return `${base} 다만 지금은 매달 ${Math.round(-s.savings).toLocaleString()}만원이 모자라, 이 부족분을 비상금에서 메우면 약 ${run.toFixed(1)}개월 뒤 바닥납니다. 그 뒤 소득이 끊기면 버틸 돈이 없으니 지출부터 줄이세요.`;
@@ -86,8 +89,8 @@ export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdr
   const items: (RiskCheck & { score: number })[] = [
     {
       key: 'emergency', label: '비상금', value: `${em.toFixed(1)}개월`,
-      score: emergencyScore(s, c.emergencyMonths), level: 'good',
-      detail: emergencyDetail(s, c.emergencyMonths),
+      score: emergencyScore(s, c.emergencyMonths, withdraw?.retired), level: 'good',
+      detail: emergencyDetail(s, c.emergencyMonths, withdraw?.retired),
     },
     {
       key: 'savings', label: '저축률', value: `${s.savingsRate.toFixed(1)}%`,
@@ -117,7 +120,7 @@ export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdr
     {
       key: 'liquidity', label: '유동성', value: `${liquidShare.toFixed(1)}%`,
       score: scale(liquidShare, 10, 20), level: 'good',
-      detail: '바로 현금화 가능한 자산 비중. 20% 이상 권장.',
+      detail: `바로 현금화 가능한 자산 비중. 20% 이상 권장.${assets.some((a) => a.type === 'pension' && a.amount > 0) ? ' 연금 계좌는 55세 이후에도 연금수령한도 안에서만 낮은 세율로 꺼낼 수 있어 뺐습니다.' : ''}`,
     },
     {
       key: 'fit', label: '위험성향 적합도', value: `투자형 ${s.investShare.toFixed(0)}%`,
@@ -147,7 +150,7 @@ export interface ScoreItem { label: string; weight: number; score: number }
 /** 종합 재무점수(100점) */
 export function financialScore(profile: Profile, assets: Asset[], s: Summary, successRate: number, ins: InsuranceGap, withdraw?: { rate: number; retired: boolean }) {
   const c = profile.criteria;
-  const debtRatio = s.totalAssets > 0 ? (s.totalDebt / s.totalAssets) * 100 : 0;
+  const debtRatio = s.totalAssets > 0 ? (s.totalDebt / s.totalAssets) * 100 : s.totalDebt > 0 ? 100 : 0;
   const fitDiff = Math.abs(s.investShare - RISK_PROFILES[profile.riskProfile].investShare);
   const conc = concentration(assets, s).share;
   const covRatio = ins.lines.reduce((a, l) => a + Math.min(1, l.need > 0 ? l.current / l.need : 1), 0) / ins.lines.length;
@@ -155,7 +158,7 @@ export function financialScore(profile: Profile, assets: Asset[], s: Summary, su
     withdraw?.retired
       ? { label: '인출률', weight: 20, score: scale(withdraw.rate, c.withdrawRateMax * 1.5, (c.withdrawRateMax * 2) / 3) }
       : { label: '저축률', weight: 20, score: scale(s.savingsRate, 0, c.savingsRate) },
-    { label: '비상금', weight: 15, score: Math.min(scale(emergencyMonths(s), 0, c.emergencyMonths), emergencyCap(s, c.emergencyMonths)) },
+    { label: '비상금', weight: 15, score: Math.min(scale(emergencyMonths(s), 0, c.emergencyMonths), withdraw?.retired ? 1 : emergencyCap(s, c.emergencyMonths)) },
     { label: '부채', weight: 15, score: scale(debtRatio, c.debtRatioMax * 2, c.debtRatioMax / 2) },
     { label: '노후 준비', weight: 25, score: scale(successRate, 30, c.successTarget) },
     { label: '분산·적합', weight: 10, score: (scale(fitDiff, 40, 10) + scale(conc, 80, 40)) / 2 },

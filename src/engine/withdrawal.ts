@@ -40,15 +40,18 @@ export interface WithdrawInput {
   inflation: number; // %
   percentRate: number; // 정률 인출 비율 %
   debts?: Debt[]; // 은퇴 후에도 남은 대출 상환
-  extras?: { age: number; amount: number }[]; // 은퇴 후 목적자금·매년 반복 지출
+  extras?: { age: number; amount: number; flow?: boolean }[]; // 은퇴 후 목적자금·매년 반복 지출(flow: 해마다 나가는 지출 — 첫해는 남은 달만큼)
   guardrail?: GuardrailOptions;
   expenseGrowth?: number; // 생활비 명목 증가율 %(없으면 물가 연동)
   expenseSteps?: ExpenseStep[]; // 나이 구간별 생활비 배율
   fixedDraw?: number; // 자산 인출액 명목 고정(연, 인출 시작 시점 금액)
   inflows?: { name?: string; age: number; amount: number }[]; // 노란우산 등 묶인 자산 수령액(실질)
+  /** 첫해(startAge)가 1년 중 차지하는 비율(없으면 1): 이미 인출 중일 때 올해 남은 달만큼만 생활비·소득·수익을 셈 */
+  firstYearShare?: number;
 }
 
-export interface ScheduleRow { age: number; pension: number; withdrawal: number; income: number; need: number; endBalance: number; inflow: number }
+/** share: 그 해가 차지하는 비율(첫해만 1보다 작을 수 있음, 없으면 1). 금액은 그 기간의 실제 금액 */
+export interface ScheduleRow { age: number; pension: number; withdrawal: number; income: number; need: number; endBalance: number; inflow: number; share?: number }
 
 export interface StrategyResult {
   key: StrategyKey;
@@ -68,22 +71,28 @@ export interface StrategyResult {
 
 const pensionAt = (inp: WithdrawInput, age: number) => inp.pensions.reduce((a, p) => a + incomeValue(p, age, inp.inflation), 0);
 const debtAt = (inp: WithdrawInput, age: number) => debtPaymentAt(inp, age);
-const extraAt = (inp: WithdrawInput, age: number) => (inp.extras ?? []).filter((e) => e.age === age).reduce((a, e) => a + e.amount, 0);
+/** 그 해 목적자금·반복 지출: 해마다 나가는 흐름(flow)은 share 만큼, 한 번 쓰는 지출은 그대로 */
+const extraAt = (inp: WithdrawInput, age: number, share = 1) => (inp.extras ?? []).filter((e) => e.age === age).reduce((a, e) => a + e.amount * (e.flow ? share : 1), 0);
+/** 그 나이 해가 차지하는 비율: 첫해만 firstYearShare */
+export const shareAt = (inp: WithdrawInput, age: number) => (age === inp.startAge && inp.firstYearShare !== undefined ? Math.min(1, Math.max(0, inp.firstYearShare)) : 1);
 export const inflowOf = (inp: WithdrawInput, age: number) => (inp.inflows ?? []).filter((e) => e.age === age).reduce((a, e) => a + e.amount, 0);
 /** 해당 나이의 생활비(실질) */
 const livingAt = (inp: WithdrawInput, age: number) =>
   inp.expenseAnnual * expenseRatioAt(inp.expenseSteps, age) * (inp.expenseGrowth === undefined ? 1 : nominalFactor(inp.expenseGrowth, inp.inflation, age - inp.startAge));
 /** 인출액 고정일 때 그해 고정액(실질): 국민·개인연금 + 자산 인출로 채움 */
 const drawAt = (inp: WithdrawInput, age: number) => (inp.fixedDraw ?? 0) * nominalFactor(0, inp.inflation, age - inp.startAge);
-/** 해당 나이에 자산에서 꺼내야 할 금액 */
-export const needAt = (inp: WithdrawInput, age: number) =>
-  inp.fixedDraw !== undefined ? Math.max(0, drawAt(inp, age) - publicPensionAt(inp, age)) + debtAt(inp, age) + extraAt(inp, age) : Math.max(0, livingAt(inp, age) + debtAt(inp, age) + extraAt(inp, age) - pensionAt(inp, age));
+/** 해당 나이에 자산에서 꺼내야 할 금액(연). share 를 주면 그 기간만큼(생활비·소득·대출은 비례, 한 번 쓰는 지출은 그대로) */
+export const needAt = (inp: WithdrawInput, age: number, share = 1) =>
+  inp.fixedDraw !== undefined
+    ? (Math.max(0, drawAt(inp, age) - publicPensionAt(inp, age)) + debtAt(inp, age)) * share + extraAt(inp, age, share)
+    : Math.max(0, (livingAt(inp, age) + debtAt(inp, age) - pensionAt(inp, age)) * share + extraAt(inp, age, share));
 /** 해당 나이의 생활비(대출·목적자금 제외). 인출액 고정이면 소득 + 고정 인출액 */
 export const livingOf = (inp: WithdrawInput, age: number) =>
   inp.fixedDraw !== undefined ? pensionAt(inp, age) - publicPensionAt(inp, age) + Math.max(drawAt(inp, age), publicPensionAt(inp, age)) : livingAt(inp, age);
 /** 해당 나이의 필요 지출: 생활비 + 남은 대출 상환 + 목적자금·반복 지출 */
-export const spendAt = (inp: WithdrawInput, age: number) => livingOf(inp, age) + debtAt(inp, age) + extraAt(inp, age);
-const toReal = (nominal: number, inf: number) => (1 + Math.max(-0.95, nominal)) / (1 + inf / 100) - 1;
+export const spendAt = (inp: WithdrawInput, age: number, share = 1) => (livingOf(inp, age) + debtAt(inp, age)) * share + extraAt(inp, age, share);
+/** 명목 수익률 → 실질(기간 share 년) */
+const toReal = (nominal: number, inf: number, share = 1) => (1 + Math.max(-0.95, nominal)) / Math.pow(1 + inf / 100, share) - 1;
 
 type Draw = () => number;
 
@@ -114,8 +123,11 @@ function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, base
 
   for (let i = 0; i < years; i++) {
     const age = inp.startAge + i;
-    const pension = pensionAt(inp, age);
-    const need = needAt(inp, age);
+    // 첫해가 1년이 안 되면 생활비·소득·수익을 그 기간만큼만(변동성은 √기간)
+    const sh = shareAt(inp, age);
+    const rt = Math.sqrt(sh);
+    const pension = pensionAt(inp, age) * sh;
+    const need = needAt(inp, age, sh);
     const inflow = inflowOf(inp, age);
     let withdrawal = 0;
     if (key === 'guardrail') {
@@ -124,7 +136,7 @@ function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, base
       minM = Math.min(minM, m);
       withdrawal = Math.min(bal, need * m);
       bal -= withdrawal;
-      bal *= 1 + toReal(mu + sg * zEq(), inp.inflation);
+      bal *= 1 + toReal(mu * sh + sg * rt * zEq(), inp.inflation, sh);
     } else if (key === 'bucket') {
       // 수령한 일시금은 성장 바구니에 넣고, 현금 → 채권 → 성장 순서로 인출
       b3 += inflow;
@@ -137,9 +149,9 @@ function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, base
         withdrawal += t;
       }
       [b1, b2, b3] = buckets;
-      const rEq = toReal(mu3 + sg3 * zEq(), inp.inflation);
-      const rBd = toReal(BOND_R + 0.05 * zBd(), inp.inflation);
-      const rCash = toReal(CASH_R, inp.inflation);
+      const rEq = toReal(mu3 * sh + sg3 * rt * zEq(), inp.inflation, sh);
+      const rBd = toReal(BOND_R * sh + 0.05 * rt * zBd(), inp.inflation, sh);
+      const rCash = toReal(CASH_R * sh, inp.inflation, sh);
       b1 *= 1 + rCash;
       b2 *= 1 + rBd;
       b3 *= 1 + rEq;
@@ -154,16 +166,16 @@ function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, base
       bal = b1 + b2 + b3;
     } else {
       bal += inflow;
-      withdrawal = key === 'fixed' ? Math.min(bal, need) : bal * (inp.percentRate / 100);
+      withdrawal = key === 'fixed' ? Math.min(bal, need) : bal * (inp.percentRate / 100) * sh;
       bal -= withdrawal;
-      bal *= 1 + toReal(mu + sg * zEq(), inp.inflation);
+      bal *= 1 + toReal(mu * sh + sg * rt * zEq(), inp.inflation, sh);
     }
     if (bal <= 1e-6) {
       bal = 0;
       if (need > 0 && !depleted) { depleted = true; depletedAge = age + 1; }
     }
     if (withdrawal < need * 0.9 - 1e-6) ok = false;
-    rows.push({ age, pension, withdrawal, income: pension + withdrawal, need: spendAt(inp, age), endBalance: bal, inflow });
+    rows.push({ age, pension, withdrawal, income: pension + withdrawal, need: spendAt(inp, age, sh), endBalance: bal, inflow, ...(sh < 1 ? { share: sh } : {}) });
   }
   return { rows, ok, depleted, depletedAge, minM };
 }
@@ -213,27 +225,39 @@ export function compareStrategy(key: StrategyKey, inp: WithdrawInput, runs = 100
 /** 가드레일 기준선: 평균수익으로 정액 인출했을 때의 연초 잔액과 그 해 인출액 */
 export function guardrailBaseline(inp: WithdrawInput) {
   const rows = runOne('fixed', inp, () => 0, () => 0).rows;
-  return { balances: [inp.startBalance, ...rows.map((r) => r.endBalance)], withdrawals: rows.map((r) => r.withdrawal) };
+  return { balances: [inp.startBalance, ...rows.map((r) => r.endBalance)], withdrawals: rows.map((r) => r.withdrawal), ...(rows[0]?.share !== undefined ? { share: rows[0].share } : {}) };
 }
 
 /** 기준선 고정 시점부터 Y년 12월 말까지 흐른 햇수(고정한 달부터 셈) */
 export const yearsToYearEnd = (base: Pick<PlanBase, 'year' | 'month'>, y: number) => y - base.year + (13 - base.month) / 12;
 
+/**
+ * 흐른 햇수 t → 기준선 배열 위치. 첫해를 남은 달만큼만 계산한 기준선(share)은 [1]이 고정한 해의 12월 말이라
+ * 첫 구간이 share 년, 그 뒤는 1년 단위
+ */
+const baseIndex = (base: Pick<PlanBase, 'share'>, t: number) => {
+  const sh = base.share !== undefined && base.share > 0 && base.share < 1 ? base.share : 1;
+  return t <= sh ? Math.max(0, t) / sh : 1 + (t - sh);
+};
+
 /** 기준선 잔액(명목): t년 뒤, 연 단위 값 사이는 직선 보간 */
 export function baseBalanceAt(base: PlanBase, t: number) {
   const b = base.balances;
   if (t <= 0) return b[0] ?? 0;
-  const i = Math.min(b.length - 1, Math.floor(t));
+  const x = baseIndex(base, t);
+  const i = Math.min(b.length - 1, Math.floor(x));
   const j = Math.min(b.length - 1, i + 1);
-  const real = b[i] + (b[j] - b[i]) * (t - i);
+  const real = b[i] + (b[j] - b[i]) * (x - i);
   return real * Math.pow(1 + base.inflation / 100, t);
 }
 
 /** 기준선 계획 인출액(명목): 기간 [t0, t1] 동안 */
 export function basePlanWithdrawal(base: PlanBase, t0: number, t1: number) {
   let real = 0;
+  const x0 = baseIndex(base, t0);
+  const x1 = baseIndex(base, t1);
   base.withdrawals.forEach((w, i) => {
-    const overlap = Math.max(0, Math.min(i + 1, t1) - Math.max(i, t0));
+    const overlap = Math.max(0, Math.min(i + 1, x1) - Math.max(i, x0));
     real += w * overlap;
   });
   return real * Math.pow(1 + base.inflation / 100, (t0 + t1) / 2);
@@ -252,16 +276,17 @@ export interface YearEndRow {
   planWithdrawal: number; // 그 해 계획 인출액(명목)
   nextPlan: number; // 다음 해 계획 인출액(명목, 연)
   nextRecommended: number; // 배율을 적용한 다음 해 권장 인출액(명목, 연)
+  /** 실제 수익률(추정, 소수) = 연말 자산 ÷ (연초 자산 − 그 해 인출) − 1. 연초 자산은 직전 해 결산(없으면 첫해의 기준선 시작 자산), 알 수 없으면 null */
+  actualReturn: number | null;
+  months: number; // 그 해 계획 기간(개월): 기준선을 고정한 첫해만 12보다 짧음
 }
 
 /** 연말결산 기록을 기준선과 비교해 해마다 가드레일 판정(1년에 한 번, 직전 배율에서 이어서) */
 export function reviewYearEnds(base: PlanBase, records: YearEnd[], g: GuardrailOptions): YearEndRow[] {
   let m = 1;
-  return records
-    .filter((r) => r.year >= base.year)
-    .slice()
-    .sort((a, b) => a.year - b.year)
-    .map((record) => {
+  const list = records.filter((r) => r.year >= base.year).slice().sort((a, b) => a.year - b.year);
+  return list
+    .map((record, i) => {
       const t = yearsToYearEnd(base, record.year);
       const baseline = baseBalanceAt(base, t);
       const lower = baseline * (1 - g.band);
@@ -269,6 +294,11 @@ export function reviewYearEnds(base: PlanBase, records: YearEnd[], g: GuardrailO
       const position: YearEndPosition = record.balance < lower ? 'below' : record.balance > upper ? 'above' : 'inside';
       m = nextGuardrail(m, record.balance, baseline, g);
       const nextPlan = basePlanWithdrawal(base, t, t + 1);
-      return { record, t, baseline, lower, upper, position, multiplier: m, planWithdrawal: basePlanWithdrawal(base, Math.max(0, t - 1), t), nextPlan, nextRecommended: nextPlan * m };
+      // 연초 자산: 직전 해 결산 잔액, 첫해(기준선을 고정한 해)는 고정 시점 자산
+      const prev = list[i - 1]?.year === record.year - 1 ? list[i - 1].balance : record.year === base.year ? base.balances[0] ?? 0 : 0;
+      const invested = prev - record.withdrawn;
+      const actualReturn = prev > 0 && invested > 0 ? record.balance / invested - 1 : null;
+      const months = record.year === base.year ? 13 - base.month : 12;
+      return { actualReturn, months, record, t, baseline, lower, upper, position, multiplier: m, planWithdrawal: basePlanWithdrawal(base, Math.max(0, t - 1), t), nextPlan, nextRecommended: nextPlan * m };
     });
 }

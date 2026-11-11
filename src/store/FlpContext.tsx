@@ -6,7 +6,7 @@ import { insuranceGap, type InsuranceGap } from '../engine/insurance';
 import { retirementNeed, simulate, withdrawStart, type PlanInput, type SimResult } from '../engine/montecarlo';
 import { summarize, type Summary } from '../engine/portfolio';
 import { bulletChecks, financialScore, riskChecks, type RiskCheck } from '../engine/risk';
-import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd } from '../types';
+import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd, Draw } from '../types';
 
 export interface FlpData {
   loading: boolean;
@@ -19,6 +19,7 @@ export interface FlpData {
   insurance: Insurance[];
   snapshots: Snapshot[];
   yearEnds: YearEnd[];
+  draws: Draw[]; // 월별 실제 인출 기록
   summary: Summary;
   planInput: PlanInput;
   sim: SimResult;
@@ -34,7 +35,7 @@ const Ctx = createContext<FlpData | null>(null);
 
 export function FlpProvider({ children }: { children: ReactNode }) {
   const raw = useLiveQuery(async () => {
-    const [profile, assets, liabilities, cashflows, goals, insurance, snapshots, stored, yearEnds] = await Promise.all([
+    const [profile, assets, liabilities, cashflows, goals, insurance, snapshots, stored, yearEnds, draws] = await Promise.all([
       getProfile(),
       db.assets.toArray(),
       db.liabilities.toArray(),
@@ -44,14 +45,16 @@ export function FlpProvider({ children }: { children: ReactNode }) {
       db.snapshots.orderBy('date').toArray(),
       db.profile.get('me'),
       db.yearEnds.orderBy('year').toArray(),
+      db.draws.orderBy('month').toArray(),
     ]);
-    return { profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds, hasProfile: !!stored };
+    return { profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds, draws, hasProfile: !!stored };
   }, []);
 
   const value = useMemo<FlpData | null>(() => {
     if (!raw) return null;
-    const { profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds } = raw;
-    const summary = summarize(profile, assets, liabilities, cashflows, undefined, insurance);
+    const { profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds, draws } = raw;
+    // 올해는 남은 달(이번 달 포함)만큼만 노후 계산에 넣음
+    const summary = summarize(profile, assets, liabilities, cashflows, undefined, insurance, new Date().getMonth() + 1);
     const planInput = buildPlanInput(profile, assets, liabilities, goals, summary);
     const sim = simulate(planInput, 1000);
     const ins = insuranceGap(profile, summary, insurance, goals);
@@ -59,7 +62,7 @@ export function FlpProvider({ children }: { children: ReactNode }) {
     return {
       loading: false,
       hasData: raw.hasProfile || assets.length > 0,
-      profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds,
+      profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds, draws,
       summary, planInput, sim,
       need: retirementNeed(planInput),
       start,

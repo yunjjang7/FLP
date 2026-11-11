@@ -100,6 +100,8 @@ export interface Summary {
   liquidAssets: number;
   emergencyFund: number; // 단기 용도 + 유동성 자산
   age: number;
+  /** 올해 남은 기간(이번 달 포함, 1 = 1년 전체). 없으면 1: 노후 계산의 첫해를 남은 달만큼만 셈 */
+  yearShare?: number;
 }
 
 /** 지출 항목 중 보험료로 보이는 것(이름·분류에 '보험') */
@@ -124,7 +126,7 @@ export const isPaying = (p: Insurance, age: number, profile: Profile) => {
   return !(end > 0 && age >= end);
 };
 
-export function summarize(profile: Profile, assets: Asset[], liabilities: Liability[], cashflows: Cashflow[], year = new Date().getFullYear(), policies: Insurance[] = []): Summary {
+export function summarize(profile: Profile, assets: Asset[], liabilities: Liability[], cashflows: Cashflow[], year = new Date().getFullYear(), policies: Insurance[] = [], month?: number): Summary {
   const totalAssets = sum(assets.map((a) => a.amount));
   const fin = assets.filter(isFinancial);
   const financialAssets = sum(fin.map((a) => a.amount));
@@ -189,5 +191,6 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
     liquidAssets,
     emergencyFund,
     age,
+    ...(month !== undefined && month >= 1 && month <= 12 ? { yearShare: (13 - Math.round(month)) / 12 } : {}),
   };
 }

@@ -2,6 +2,7 @@ import { Bar as RBar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Scatte
 import { Donut } from '../components/Donut';
 import { Badge, Bar, CHART_COLORS, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { ASSET_TYPES, NATURE_LABEL, PURPOSE_LABEL, RISK_PROFILES } from '../engine/portfolio';
+import { RE_USE, reUseOf } from '../engine/realestate';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 
@@ -138,7 +139,7 @@ export default function Invest() {
                   <tr key={a.id} className="border-b border-line last:border-0">
                     <td className="py-2 font-medium">{a.name}</td>
                     <td className="text-muted">{ASSET_TYPES[a.type].label}</td>
-                    <td className="text-muted">{PURPOSE_LABEL[a.purpose]}</td>
+                    <td className="text-muted">{a.type === 'realestate' ? RE_USE[reUseOf(a)] : PURPOSE_LABEL[a.purpose]}</td>
                     <td className="text-right">{won(a.amount)}</td>
                     <td className="text-right">{pct(share, 1)}</td>
                     <td className="pl-3"><Bar value={share} level={share > 40 ? 'caution' : undefined} /></td>

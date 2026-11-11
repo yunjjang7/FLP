@@ -4,16 +4,20 @@ import { sampleData } from '../db/sample';
 import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, realRate, scale } from './finance';
 import { buildPlanInput, expenseSteps, goalItemsFrom, goalPlanSkips, loanEndAge, onceGoalPlans, lockedInflow, planGoals, retireIncomes } from './goals';
 import { CRITICAL_BASE, insuranceGap } from './insurance';
-import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, GUARD_CUTS, GUARD_DROPS, guardrailSim, incomeValue, weakestGuardrail, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, type PlanInput } from './montecarlo';
+import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, GUARD_CUTS, GUARD_DROPS, guardrailSim, incomeValue, weakestGuardrail, outflowAt, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, yearShareAt, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
-import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireTaxRate, taxSetup } from './tax';
+import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
+import { accountBuckets, isRiskCapped, marketRule, marketState } from './buckets';
+import { milestones, monthsUntil, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
-import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, prescriptions, recurringGoalPrescription, savingsPrescription } from './prescribe';
-import { emergencyCap, emergencyRunway, financialScore, riskChecks } from './risk';
-import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
-import type { Goal, PlanBase } from '../types';
+import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
+import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, riskChecks } from './risk';
+import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
+import type { Draw, Goal, PlanBase } from '../types';
+import { drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws } from './drawLog';
+import { balanceAt, checkAges, lumpGrid, lumpTotal, returnScenarios, runScenario, scaleLiving, scaleLumps } from './scenarios';
 import { sensitivityExpenses } from '../components/Sensitivity';
 
 const DEFAULT_TAX_ON = { on: true, rentSpouseShare: 0, rentExpense: 0, npTaxable: 100, npNet: 100, dedSelf: 150, dedSpouse: 150, hiNow: 50, hiRate: 7.19, hiLtc: 13.14, hiPublic: 50, hiPropGrowth: 0, hiPrivate: false, addToDraw: false };
@@ -525,6 +529,26 @@ describe('부부 소득·연금, 가드레일 비교, 연말결산', () => {
     expect(rows[1].multiplier).toBeCloseTo(0.9, 6);
     expect(rows[1].nextRecommended).toBeCloseTo(rows[1].nextPlan * 0.9, 6);
     expect(baseBalanceAt({ ...pb, inflation: 2 }, 1)).toBeCloseTo(9000 * 1.02, 6);
+    // 실제 수익률(추정) = 연말 ÷ (연초 − 인출) − 1: 첫해 연초는 기준선 시작 자산, 다음 해는 직전 결산
+    expect(rows[0].actualReturn).toBeCloseTo(9900 / (10000 - 200) - 1, 6);
+    expect(rows[0].months).toBe(2);
+    expect(rows[1].actualReturn).toBeCloseTo(7000 / (9900 - 1200) - 1, 6);
+    expect(rows[1].months).toBe(12);
+    // 직전 해 결산이 없으면 계산하지 않음
+    expect(reviewYearEnds(pb, [{ year: 2028, balance: 7000, withdrawn: 1200 }], DEFAULT_GUARDRAIL)[0].actualReturn).toBeNull();
+  });
+  it('첫해를 남은 달만큼만 계산한 기준선: [1]이 고정한 해 12월 말', () => {
+    // 11월에 고정(2개월 남음): balances[1] = 2026년 말, [2] = 2027년 말
+    const pb: PlanBase = { savedAt: '2026-11-09', year: 2026, month: 11, inflation: 0, balances: [10000, 9800, 8600, 7400], withdrawals: [200, 1200, 1200], share: 2 / 12 };
+    expect(baseBalanceAt(pb, yearsToYearEnd(pb, 2026))).toBeCloseTo(9800, 6);
+    expect(baseBalanceAt(pb, yearsToYearEnd(pb, 2027))).toBeCloseTo(8600, 6);
+    expect(baseBalanceAt(pb, 1 / 12)).toBeCloseTo(9900, 6); // 첫 구간 안에서는 직선 보간
+    expect(basePlanWithdrawal(pb, 0, 2 / 12)).toBeCloseTo(200, 6);
+    expect(basePlanWithdrawal(pb, 2 / 12, 14 / 12)).toBeCloseTo(1200, 6);
+    const rows = reviewYearEnds(pb, [{ year: 2026, balance: 9800, withdrawn: 200 }], DEFAULT_GUARDRAIL);
+    expect(rows[0].planWithdrawal).toBeCloseTo(200, 6);
+    expect(rows[0].nextPlan).toBeCloseTo(1200, 6);
+    expect(rows[0].position).toBe('inside');
   });
   it('기준선은 평균수익 정액 인출 경로', () => {
     const inp = { startAge: 60, endAge: 63, startBalance: 10000, expenseAnnual: 1000, pensions: [], meanReturn: 2, volatility: 10, inflation: 2, percentRate: 4 };
@@ -603,15 +627,94 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
     const setup = taxSetup(d.profile, d.assets, 2026, 10000, 0)!;
     expect(setup.accounts[0]).toMatchObject({ free: 1000, retire: 3000, taxed: 6000 });
     const row = (age: number, withdrawal: number) => ({ age, pension: 0, withdrawal, income: withdrawal, need: withdrawal, endBalance: 0, inflow: 0 });
-    // 1년차: 과세제외 1,000 → 과세재원 1,500(5.5%) → 퇴직금 재원(7%)
+    // 한 계좌 안에서는 법정 순서: 과세제외 1,000 → 퇴직금 재원(7%) → (퇴직금을 다 쓴 뒤) 과세재원
     const r = pensionTaxSchedule([row(58, 3000)], setup).rows[0];
-    expect(r.slot.self).toBeCloseTo(1500, 6);
-    expect(r.tax).toBeCloseTo(1500 * 0.055 + ((3000 - 1000 - 1500 * 0.945) / 0.93) * 0.07, 6);
+    expect(r.slot.self).toBe(0);
+    expect(r.tax).toBeCloseTo((2000 / 0.93) * 0.07, 6);
     expect(r.gross - r.tax).toBeCloseTo(3000, 6);
-    // 퇴직금 재원·과세제외를 다 쓰면 한도를 넘어 16.5%
+    expect(r.accounts[0].tax).toBeCloseTo(r.tax, 6);
+    expect(r.accounts[0].freeLeft).toBeCloseTo(0, 6);
+    expect(r.accounts[0].retireLeft).toBeCloseTo(3000 - 2000 / 0.93, 6);
+    // 2년차에 퇴직금 재원을 다 쓰면 그 해부터 과세재원 1,500만(5.5%), 넘는 금액은 16.5%
     const res = pensionTaxSchedule([row(58, 3000), row(59, 3000), row(60, 3000)], setup);
-    expect(res.overYears.length).toBeGreaterThan(0);
+    expect(res.rows[1].slot.self).toBeCloseTo(1500, 6);
+    expect(res.overYears).toEqual([2027, 2028]);
     expect(res.rows.some((x) => x.over.self > 0)).toBe(true);
+  });
+
+  it('운용수익은 과세재원으로 쌓이고 과세제외·퇴직금 재원은 명목 금액 그대로', () => {
+    const d = retiree();
+    d.profile = { ...d.profile, spouseBirthYear: 0, inflation: 2, retireTaxRate: 10, retireTaxYear1: 2026 };
+    d.assets = [{ name: 'IRP', type: 'pension', amount: 10000, expectedReturn: 5, volatility: 0, purpose: 'long', nature: 'safe', taxFree: 1000, retirePart: 3000, pensionYear1: 2010 }];
+    const row = (age: number) => ({ age, pension: 0, withdrawal: 0, income: 0, need: 0, endBalance: 0, inflow: 0 });
+    const res = pensionTaxSchedule([row(58), row(59), row(60)], taxSetup(d.profile, d.assets, 2026, 10000, 5)!);
+    // 꺼내지 않으면 2년 뒤(2028)에도 과세제외 1,000 · 퇴직금 3,000(명목) 그대로, 불어난 돈은 과세재원
+    expect(res.rows[2].accounts[0].freeLeft).toBeCloseTo(1000, 6);
+    expect(res.rows[2].accounts[0].retireLeft).toBeCloseTo(3000, 6);
+    expect(res.rows[2].accounts[0].start).toBeCloseTo(10000 * 1.05 ** 2, 4);
+    // 인출 시작이 나중이면(10년 뒤) 그때까지 명목 그대로라 실질로는 물가만큼 줄어 있음
+    const later = taxSetup(d.profile, d.assets, 2026, 15000, 5, 2036)!;
+    expect(later.accounts[0].free).toBeCloseTo(1000 / 1.02 ** 10, 6);
+    expect(later.accounts[0].retire).toBeCloseTo(3000 / 1.02 ** 10, 6);
+    expect(later.accounts[0].taxed).toBeCloseTo(15000 - 4000 / 1.02 ** 10, 6);
+  });
+
+  it('퇴직금 재원 한도초과(감면 없음)가 과세재원 16.5%보다 싸면 먼저 꺼냄', () => {
+    const d = retiree();
+    d.profile = { ...d.profile, spouseBirthYear: 0, inflation: 0, retireTaxRate: 10, retireTaxYear1: 2026 };
+    const base = { type: 'pension' as const, expectedReturn: 0, volatility: 0, purpose: 'long' as const, nature: 'safe' as const };
+    d.assets = [
+      { ...base, name: '연금저축', amount: 5000, pensionYear1: 2010 },
+      { ...base, name: '퇴직 IRP', amount: 10000, retirePart: 10000, pensionYear1: 2026 }, // 1년차 한도 1,200
+    ];
+    const row = (withdrawal: number) => ({ age: 58, pension: 0, withdrawal, income: withdrawal, need: withdrawal, endBalance: 0, inflow: 0 });
+    const r = pensionTaxSchedule([row(4000)], taxSetup(d.profile, d.assets, 2026, 15000, 0)!);
+    // 연금저축 1,500(5.5%) → 퇴직 IRP 한도 안 1,200(7%) → 한도초과분은 퇴직소득세 10% 전액(16.5%보다 쌈)
+    const rest = (4000 - 1500 * 0.945 - 1200 * 0.93) / 0.9;
+    expect(r.rows[0].slot.self).toBeCloseTo(1500, 6);
+    expect(r.rows[0].over.self).toBe(0);
+    expect(r.rows[0].accounts[1].over).toBeCloseTo(rest, 6);
+    expect(r.rows[0].tax).toBeCloseTo(1500 * 0.055 + 1200 * 0.07 + rest * 0.1, 6);
+    // 퇴직소득세율이 16.5%보다 높으면 과세재원 16.5%가 먼저
+    const hi = pensionTaxSchedule([row(4000)], taxSetup({ ...d.profile, retireTaxRate: 20 }, d.assets, 2026, 15000, 0)!);
+    expect(hi.rows[0].over.self).toBeGreaterThan(0);
+    expect(hi.rows[0].accounts[1].over).toBe(0);
+  });
+
+  it('퇴직금 실수령연차는 실제로 꺼낸 해만 세고, 매년 최소 인출을 넣으면 끊기지 않음', () => {
+    expect(retireRateAt(10, 10)).toBeCloseTo(7, 6);
+    expect(retireRateAt(10, 11)).toBeCloseTo(6, 6);
+    const d = retiree();
+    d.profile = { ...d.profile, spouseBirthYear: 0, inflation: 0, retireTaxRate: 10, retireTaxYear1: 2024 };
+    const base = { type: 'pension' as const, expectedReturn: 0, volatility: 0, purpose: 'long' as const, nature: 'safe' as const, pensionYear1: 2010 };
+    d.assets = [{ ...base, name: '퇴직 IRP', amount: 10000, retirePart: 10000 }, { name: '예금', type: 'deposit', amount: 5000, expectedReturn: 0, volatility: 0, purpose: 'long', nature: 'safe' }];
+    const row = (age: number, withdrawal: number) => ({ age, pension: 0, withdrawal, income: withdrawal, need: withdrawal, endBalance: 0, inflow: 0 });
+    const sched = [row(58, 0), row(59, 0), row(60, 930)];
+    // 2024·2025년에 받았으니 2026년은 3년차. 안 꺼낸 해는 연차가 늘지 않음
+    const off = pensionTaxSchedule(sched, taxSetup(d.profile, d.assets, 2026, 15000, 0)!);
+    expect(off.rows.map((x) => x.retireNo)).toEqual([3, 3, 3]);
+    expect(off.rows[0].gross).toBe(0);
+    // 매년 최소 12만: 쓸 일이 없어도 꺼내 연차를 이어가고, 세후 금액은 ISA·일반계좌로 옮김
+    const on = pensionTaxSchedule(sched, taxSetup({ ...d.profile, retireMinDraw: 12 }, d.assets, 2026, 15000, 0)!);
+    expect(on.rows.map((x) => x.retireNo)).toEqual([3, 4, 5]);
+    expect(on.rows[0].accounts[0].drawn).toBeCloseTo(12, 6);
+    expect(on.rows[0].reinvest).toBeCloseTo(12 * 0.93, 6);
+    expect(on.rows[0].isa).toBeCloseTo(5000 + 12 * 0.93, 6);
+    // 필요해서 꺼낸 해는 그 금액이 최소 인출을 넘으므로 더 꺼내지 않음
+    expect(on.rows[2].accounts[0].drawn).toBeCloseTo(1000, 6);
+    expect(on.rows[2].reinvest).toBe(0);
+  });
+
+  it('인출 시작 전 계좌에 과세재원이 묶여 못 쓴 1,500만 한도', () => {
+    const d = retiree();
+    d.profile = { ...d.profile, spouseBirthYear: 0, inflation: 0 };
+    const base = { type: 'pension' as const, expectedReturn: 0, volatility: 0, purpose: 'long' as const, nature: 'safe' as const, pensionYear1: 2010 };
+    d.assets = [{ ...base, name: '교보', amount: 1000 }, { ...base, name: '키움', amount: 3000, drawStartYear: 2030 }];
+    const row = (withdrawal: number) => ({ age: 58, pension: 0, withdrawal, income: withdrawal, need: withdrawal, endBalance: 0, inflow: 0 });
+    const r = pensionTaxSchedule([row(945)], taxSetup(d.profile, d.assets, 2026, 4000, 0)!).rows[0];
+    expect(r.slot.self).toBeCloseTo(1000, 6);
+    expect(r.idle.self).toBeCloseTo(500, 6); // 남은 한도 500 < 키움 과세재원 3,000
+    expect(r.idle.spouse).toBe(0);
   });
 
   it('계좌별 연금수령한도: 평가액 ÷ (11 − 연차) × 120%, 넘는 금액은 연금외수령으로 경고', () => {
@@ -1031,6 +1134,156 @@ describe('생활비 명목 고정, 노란우산 수령, 연금 세금', () => {
   });
 });
 
+describe('올해는 남은 달만 계산(엑셀: 계획 시작월)', () => {
+  const flat: PlanInput = { currentAge: 60, retireAge: 60, lifeExpectancy: 63, startBalance: 10000, annualSavings: 0, meanReturn: 0, volatility: 0, inflation: 0, retireExpenseAnnual: 1200, pensions: [{ startAge: 60, annual: 240 }], goals: [] };
+
+  it('첫해는 생활비·소득·저축·수익을 그 기간만큼만, 다음 해부터 1년 단위', () => {
+    // 11월(2개월 남음): 첫해 (1,200 − 240) × 2/12 = 160, 그 뒤 해마다 960
+    const part = { ...flat, firstYearShare: 2 / 12 };
+    expect(yearShareAt(part, 60)).toBeCloseTo(2 / 12, 10);
+    expect(yearShareAt(part, 61)).toBe(1);
+    expect(deterministicPath(part).balances).toEqual([10000, 10000 - 160, 10000 - 160 - 960, 10000 - 160 - 1920].map((x) => expect.closeTo(x, 6)));
+    expect(deterministicPath(flat).balances[1]).toBeCloseTo(10000 - 960, 6);
+    // 수익도 그 기간만큼: 연 6% → 첫해 6% × 2/12
+    const grow = deterministicPath({ ...part, meanReturn: 6, retireExpenseAnnual: 240 });
+    expect(grow.balances[1]).toBeCloseTo(10000 * 1.01, 6);
+    // 은퇴 전 저축도 남은 달만큼
+    const saving = deterministicPath({ ...part, retireAge: 62, annualSavings: 1200 });
+    expect(saving.balances[1]).toBeCloseTo(10000 + 200, 6);
+    expect(saving.balances[2]).toBeCloseTo(10000 + 200 + 1200, 6);
+  });
+
+  it('한 번 쓰는 지출·일시금은 그대로, 해마다 나가는 지출(flow)만 줄임', () => {
+    const inp = { ...flat, firstYearShare: 0.5, goals: [{ age: 60, amount: 1000 }, { age: 60, amount: 600, flow: true }], inflows: [{ age: 60, amount: 300 }] };
+    expect(outflowAt(inp, 60, 0, 0.5)).toBeCloseTo(1000 + 300 + 480 - 300, 6);
+    expect(deterministicPath(inp).balances[1]).toBeCloseTo(10000 - 1480, 6);
+    // 인출률은 연으로 환산한 값이라 첫해 비율과 상관없음
+    expect(withdrawStart({ ...flat, firstYearShare: 0.5 }).rate).toBeCloseTo(withdrawStart(flat).rate, 6);
+    // 필요자금: 첫해 몫만 줄어듦
+    expect(retirementNeed(flat).need - retirementNeed({ ...flat, firstYearShare: 0.5 }).need).toBeCloseTo(480, 6);
+  });
+
+  it('요약의 달 → 계획 입력: 1월이면 1년 전체, 11월이면 2/12, 달을 안 넘기면 예전처럼 1년', () => {
+    const d = sampleData(2026);
+    const sum = (month?: number) => summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance, month);
+    const inp = (month?: number) => buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, sum(month));
+    expect(sum().yearShare).toBeUndefined();
+    expect(inp().firstYearShare).toBeUndefined();
+    expect(inp(1).firstYearShare).toBeUndefined();
+    expect(inp(11).firstYearShare).toBeCloseTo(2 / 12, 10);
+    // 매년 반복 지출·은퇴 후 보험료는 flow, 한 번 쓰는 목표는 아님
+    const goals: Goal[] = [{ name: '여행', category: 'travel', targetAge: 60, amountPV: 500, growthRate: 2, endAge: 70 }, { name: '차', category: 'car', targetAge: 62, amountPV: 3000, growthRate: 2 }];
+    const g = buildPlanInput(d.profile, d.assets, d.liabilities, goals, sum(11)).goals;
+    expect(g.filter((x) => x.age === 62 && !x.premium).map((x) => !!x.flow).sort()).toEqual([false, true]);
+    expect(g.filter((x) => x.premium).every((x) => x.flow)).toBe(true);
+  });
+
+  it('인출 스케줄·연금 세금·기준선도 첫해는 남은 달만큼', () => {
+    const w = { startAge: 60, endAge: 63, startBalance: 10000, expenseAnnual: 1200, pensions: [{ startAge: 60, annual: 240 }], meanReturn: 0, volatility: 0, inflation: 0, percentRate: 4, firstYearShare: 2 / 12, extras: [{ age: 60, amount: 500 }, { age: 60, amount: 120, flow: true }] };
+    expect(needAt(w, 60)).toBeCloseTo(960 + 620, 6); // 연 금액(화면의 인출률·월 금액용)
+    expect(needAt(w, 60, shareAt(w, 60))).toBeCloseTo(160 + 500 + 20, 6);
+    expect(shareAt(w, 61)).toBe(1);
+    const s = compareStrategy('fixed', w, 0).schedule;
+    expect(s[0]).toMatchObject({ share: 2 / 12 });
+    expect(s[0].withdrawal).toBeCloseTo(680, 6);
+    expect(s[0].pension).toBeCloseTo(40, 6);
+    expect(s[1].share).toBeUndefined();
+    expect(s[1].withdrawal).toBeCloseTo(960, 6);
+    const b = guardrailBaseline(w);
+    expect(b.share).toBeCloseTo(2 / 12, 10);
+    expect(b.balances[1]).toBeCloseTo(10000 - 680, 6);
+    expect(guardrailBaseline({ ...w, firstYearShare: undefined }).share).toBeUndefined();
+    // 세금 엔진: 첫해 운용수익도 2개월분
+    const d = sampleData(2026);
+    const profile = { ...d.profile, birthYear: 1966, spouseBirthYear: 0, inflation: 0 };
+    const assets = [{ name: '연금저축', type: 'pension' as const, amount: 10000, expectedReturn: 6, volatility: 0, purpose: 'long' as const, nature: 'safe' as const, pensionYear1: 2010 }];
+    const row = (share?: number) => ({ age: 60, pension: 0, withdrawal: 0, income: 0, need: 0, endBalance: 0, inflow: 0, ...(share ? { share } : {}) });
+    const left = (share?: number) => pensionTaxSchedule([row(share)], taxSetup(profile, assets, 2026, 10000, 6)!).rows[0].left;
+    expect(left()).toBeCloseTo(10600, 6);
+    expect(left(2 / 12)).toBeCloseTo(10000 * Math.pow(1.06, 2 / 12), 6);
+  });
+});
+
+describe('다가오는 이정표·할 일, 계좌별 자산 배치', () => {
+  const d = sampleData(2026);
+  const profile = {
+    ...d.profile, birthYear: 1968, birthMonth: 7, retireAge: 58, lifeExpectancy: 100, spouseBirthYear: 1973, spouseBirthMonth: 11,
+    nationalPension: 200, nationalPensionAge: 64, spousePension: 100, spousePensionAge: 65, retireTaxYear1: 2025,
+    slotFill: true, slotFillFrom: 2027, contrib: { self: 0, spouse: 900, from: 2027, to: 2031, selfRate: 0, spouseRate: 13.2 },
+  };
+  const base = { type: 'pension' as const, expectedReturn: 5, volatility: 8, purpose: 'long' as const, nature: 'invest' as const };
+  const assets = [
+    { ...base, name: '퇴직 IRP', amount: 30000, retirePart: 20000, pensionYear1: 2023 },
+    { ...base, name: '교보', amount: 8000, pensionYear1: 2018 },
+    { ...base, name: '키움', amount: 2000, pensionYear1: 2023, drawStartYear: 2032 },
+    { ...base, name: '아내 IRP', amount: 6000, owner: 'spouse' as const, pensionYear1: 2028, drawStartYear: 2028 },
+    { name: '노란우산', type: 'other' as const, amount: 4000, expectedReturn: 3, volatility: 0, purpose: 'long' as const, nature: 'safe' as const, lockYear: 2029, lockTax: 4 },
+  ];
+
+  it('엑셀 대시보드의 이정표를 시기순으로 만들고 지난 것은 뺌', () => {
+    const list = milestones(profile, assets, [{ name: '전세대출', balance: 5000, rate: 4, monthlyPayment: 17, repay: 'bullet', endAge: 62 }], [{ name: '차', category: 'car', targetAge: 61, amountPV: 3000, growthRate: 2 }], 2026, 11);
+    const at = (label: string) => list.find((m) => m.label.includes(label));
+    expect(list.map((m) => m.year)).toEqual([...list.map((m) => m.year)].sort((a, b) => a - b));
+    expect(at('연말결산')).toMatchObject({ year: 2027, month: 1 });
+    expect(at('교보 연금수령 11년차')).toMatchObject({ year: 2028, kind: 'limit' }); // 2018년이 1년차
+    expect(at('퇴직 IRP·키움 연금수령 11년차')).toMatchObject({ year: 2033 }); // 같은 해는 한 줄
+    expect(at('배우자 만 55세')).toMatchObject({ year: 2028, month: 11 });
+    expect(at('본인 만 55세')).toBeUndefined(); // 2023년 — 지남
+    expect(at('키움 인출 시작')).toMatchObject({ year: 2032, kind: 'open' });
+    expect(at('노란우산 수령')).toMatchObject({ year: 2029, kind: 'lump' });
+    expect(at('본인 국민연금 개시')).toMatchObject({ year: 2032, month: 8 }); // 7월생 → 8월부터
+    expect(at('배우자 국민연금 개시')).toMatchObject({ year: 2038, month: 12 });
+    expect(at('퇴직금 연금 실수령 11년차')).toMatchObject({ year: 2035 });
+    expect(at('본인 만 70세')).toMatchObject({ year: 2038, month: 7, kind: 'tax' });
+    expect(at('연금계좌 추가 납입')).toMatchObject({ year: 2027, month: 12 });
+    expect(at('세액공제 환급')).toMatchObject({ year: 2032, month: 5 });
+    expect(at('전세대출 만기')).toMatchObject({ year: 2030, kind: 'loan' });
+    expect(at('차 지출')).toMatchObject({ year: 2029, kind: 'goal' });
+    // 12월생은 다음 해 1월부터 국민연금
+    expect(milestones({ ...profile, birthMonth: 12 }, assets, [], [], 2026, 11).find((m) => m.label.includes('본인 국민연금'))).toMatchObject({ year: 2033, month: 1 });
+    expect(monthsUntil({ year: 2028, month: 11 }, 2026, 11)).toBe(24);
+    expect(untilLabel({ year: 2028, month: 11 }, 2026, 11)).toBe('2년');
+    expect(untilLabel({ year: 2027, month: 1 }, 2026, 11)).toBe('2개월');
+    expect(untilLabel({ year: 2029, month: 0 }, 2026, 11)).toBe('2년 2개월');
+  });
+
+  it('올해·내년 할 일: 개시 신청·추가 납입·환급·최소 인출·연말결산', () => {
+    expect(yearTodos(profile, assets, 2026, 2026)).toEqual([]);
+    const y27 = yearTodos({ ...profile, retireMinDraw: 12 }, assets, 2026, 2027);
+    expect(y27.some((x) => x.includes('연말결산'))).toBe(true);
+    expect(y27.some((x) => x.includes('추가 납입: 배우자 900만원'))).toBe(true);
+    expect(y27.some((x) => x.includes('최소 12만원 인출'))).toBe(true);
+    expect(y27.some((x) => x.includes('환급'))).toBe(false);
+    const y28 = yearTodos(profile, assets, 2026, 2028);
+    expect(y28.some((x) => x.includes('아내 IRP 연금 개시 신청'))).toBe(true);
+    expect(y28.some((x) => x.includes('환급 확인'))).toBe(true);
+    expect(yearTodos(profile, assets, 2026, 2029).some((x) => x.includes('노란우산 수령 신청'))).toBe(true);
+    expect(yearTodos(profile, assets, 2026, 2032).some((x) => x.includes('본인 국민연금 수령 신청'))).toBe(true);
+  });
+
+  it('계좌별 바구니: 앞 2년 인출분은 현금성, 3~5년차는 채권, IRP는 위험자산 70%까지', () => {
+    const acct = (name: string, start: number, drawn: number[]) => drawn.map((x) => ({ name, owner: 'self' as const, yearNo: 5, limit: Infinity, start, drawn: x, tax: 0, over: 0, freeLeft: 0, retireLeft: 0 }));
+    const a = acct('연금저축', 10000, [1000, 1000, 500, 500, 500, 500]);
+    const b = acct('퇴직 IRP', 20000, [0, 0, 0, 0, 0, 0]);
+    const rows = a.map((x, i) => ({ accounts: [x, b[i]] })) as unknown as TaxResult['rows'];
+    const tax = { rows, totalTax: 0, overYears: [], limitWarnings: [], depletedAge: null };
+    const [x, y] = accountBuckets(tax, 0.1);
+    expect(x).toMatchObject({ cash: 2000, bond: 1500, alt: 1000, growth: 5500, capped: false });
+    // 인출이 없는 IRP: 대체 10% + 성장 60% = 위험자산 70%, 나머지 30%는 채권·배당
+    expect(isRiskCapped('퇴직 IRP')).toBe(true);
+    expect(y).toMatchObject({ cash: 0, alt: 2000, capped: true });
+    expect(y.growth).toBeCloseTo(12000, 6);
+    expect(y.bond).toBeCloseTo(6000, 6);
+    expect(y.riskShare).toBeCloseTo(70, 6);
+    // 첫 행이 올해 남은 달만이면 현금성에 한 해를 더 넣음
+    expect(accountBuckets(tax, 0.1, true)[0]).toMatchObject({ cash: 2500, bond: 1500 });
+    expect(marketState(-18)).toBe('bear');
+    expect(marketState(0)).toBe('peak');
+    expect(marketState(-7)).toBe('normal');
+    expect(marketRule(-18).text).toContain('주식형 매도를 멈추고');
+  });
+});
+
 describe('피보험자별 보장 진단', () => {
   const d = sampleData(2026);
   const p = { ...d.profile, spouseIncome: 250 };
@@ -1084,5 +1337,229 @@ describe('나이 구간별 은퇴 후 생활비', () => {
   it('기본 생활비를 바꾸는 시나리오에서는 구간도 같은 비율로 따라감', () => {
     const more = buildPlanInput(p, d.assets, d.liabilities, d.goals, s, { retireMonthlyExpense: base * 2 });
     expect(expenseAt(more, 75)).toBeCloseTo(base * 2 * 12 * 0.8, 6);
+  });
+});
+
+describe('월별 실제 인출 기록(엑셀: 월별인출표)', () => {
+  const acct = (name: string, yearNo: number, start: number, drawn: number, owner: 'self' | 'spouse' = 'self') => ({ name, owner, yearNo, limit: 0, start, drawn, tax: 0, over: 0, freeLeft: 0, retireLeft: 0 });
+  const row = { year: 2026, age: 58, otherDrawn: 60, accounts: [acct('교보', 9, 8000, 900), acct('퇴직 IRP', 4, 35000, 12), acct('아내 IRP', 0, 6000, 0, 'spouse')] } as unknown as TaxResult['rows'][number];
+  const rec = (month: string, account: string, amount: number, note?: string): Draw => ({ month, account, amount, ...(note ? { note } : {}) });
+
+  it('달 표기: 여러 형식을 YYYY-MM 으로', () => {
+    expect(monthKey(2026, 3)).toBe('2026-03');
+    expect(parseMonth('2026-11')).toBe('2026-11');
+    expect(parseMonth('2026/1')).toBe('2026-01');
+    expect(parseMonth('2026.11.03')).toBe('2026-11');
+    expect(parseMonth('2026년 7월')).toBe('2026-07');
+    expect(parseMonth('202612')).toBe('2026-12');
+    expect(parseMonth('2026-13')).toBeNull();
+    expect(parseMonth('11월')).toBeNull();
+  });
+
+  it('첫해는 계획 시작 달부터: 연 계획 ÷ 남은 달 = 월 정기지급, 지난 달만큼이 지금까지 계획', () => {
+    const rv = reviewDraws(row, 2026, [rec('2026-11', '교보', 450), rec('2026-11', '퇴직 IRP', 6)], { firstMonth: 11, nowYear: 2026, nowMonth: 11 });
+    expect(rv.months).toBe(2);
+    expect(rv.elapsed).toBe(1);
+    expect(rv.accounts.map((a) => a.name)).toEqual(['교보', '퇴직 IRP', '아내 IRP', OTHER_ACCOUNT]);
+    expect(rv.accounts[0]).toMatchObject({ planYear: 900, planMonth: 450, planToDate: 450, actual: 450, overLimit: 0 });
+    expect(rv.accounts[3]).toMatchObject({ planYear: 60, planMonth: 30, limit: null });
+    expect(rv.planYear).toBe(972);
+    expect(rv.planToDate).toBeCloseTo(486, 6);
+    expect(rv.actual).toBe(456);
+    // 10월은 계획 기간 밖, 11월은 계획 합계와 실제 합계
+    expect(rv.rows[9]).toMatchObject({ m: 10, inPlan: false, plan: 0, actual: 0 });
+    expect(rv.rows[10]).toMatchObject({ m: 11, inPlan: true, past: true, actual: 456 });
+    expect(rv.rows[10].plan).toBeCloseTo(486, 6);
+    expect(rv.rows[11].past).toBe(false);
+  });
+
+  it('연 누적이 연금수령한도(연초 평가액 ÷ (11 − 연차) × 120%)를 넘으면 넘은 금액, 수령 전 계좌는 전액', () => {
+    // 교보 9년차: 8,000 ÷ 2 × 1.2 = 4,800
+    const many = [rec('2027-01', '교보', 3000), rec('2027-02', '교보', 2000), rec('2027-02', '아내 IRP', 100), rec('2027-03', 'ISA·일반', 50, '여행')];
+    const rv = reviewDraws({ ...row, year: 2027 }, 2027, many, { nowYear: 2027, nowMonth: 3 });
+    expect(rv.months).toBe(12);
+    expect(rv.elapsed).toBe(3);
+    expect(rv.accounts[0].limit).toBeCloseTo(pensionLimit(8000, 9), 6);
+    expect(rv.accounts[0].overLimit).toBeCloseTo(200, 6);
+    expect(rv.accounts[1].overLimit).toBe(0);
+    // 아내 IRP 는 연금수령 1년차 전(0년차): 한도 0 → 꺼낸 100 전부 한도 밖
+    expect(rv.accounts[2]).toMatchObject({ limit: 0, overLimit: 100 });
+    expect(rv.accounts[3]).toMatchObject({ actual: 50, overLimit: 0 });
+    expect(rv.rows[2].notes).toEqual(['여행']);
+    // 다른 해 기록은 섞이지 않음
+    expect(reviewDraws({ ...row, year: 2028 }, 2028, many, { nowYear: 2027, nowMonth: 3 })).toMatchObject({ actual: 0, elapsed: 0 });
+  });
+
+  it('계획에 없는 이름의 기록·계획 전의 해도 따로 모아 보여 줌', () => {
+    const old = [rec('2025-12', '옛 계좌', 300), rec('2026-11', '옛 계좌', 10)];
+    const rv = reviewDraws(row, 2026, old, { firstMonth: 11, nowYear: 2026, nowMonth: 11 });
+    expect(rv.accounts.at(-1)).toMatchObject({ name: '옛 계좌', planned: false, actual: 10, limit: null });
+    const past = reviewDraws(undefined, 2025, old, { nowYear: 2026, nowMonth: 11 });
+    expect(past).toMatchObject({ hasPlan: false, actual: 300, planYear: 0, elapsed: 0 });
+    expect(past.accounts.map((a) => a.name)).toEqual(['옛 계좌']);
+    expect(drawTotal(old, 2025)).toBe(300);
+    expect(drawYears(old)).toEqual([2025, 2026]);
+  });
+
+  it('연금 세금 계산: 계좌 인출 + ISA·일반 인출(otherDrawn) = 세전 인출 합계', () => {
+    const d = sampleData(2026);
+    const base = { type: 'pension' as const, expectedReturn: 0, volatility: 0, purpose: 'long' as const, nature: 'safe' as const, pensionYear1: 2023 };
+    const profile = { ...d.profile, birthYear: 1968, retireAge: 58, inflation: 2, spouseBirthYear: 0 };
+    const assets = [
+      { ...base, name: '연금저축', amount: 4000 },
+      { name: 'ISA', type: 'etf' as const, amount: 6000, expectedReturn: 0, volatility: 0, purpose: 'long' as const, nature: 'invest' as const },
+    ];
+    const sched = [58, 59].map((age) => ({ age, pension: 0, withdrawal: 3000, income: 3000, need: 3000, endBalance: 0, inflow: 0 }));
+    const t = pensionTaxSchedule(sched, taxSetup(profile, assets, 2026, 10000, 2)!);
+    for (const r of t.rows) {
+      const defl = Math.pow(1.02, r.year - 2026);
+      expect(r.accounts.reduce((a, x) => a + x.drawn, 0) + r.otherDrawn).toBeCloseTo(r.gross * defl, 6);
+      expect(r.otherDrawn).toBeGreaterThan(0);
+    }
+    // 월별 기록 계획의 ISA·일반 칸은 이 금액
+    expect(reviewDraws(t.rows[1], 2027, [], { nowYear: 2026, nowMonth: 11 }).accounts.at(-1)).toMatchObject({ name: OTHER_ACCOUNT, planYear: t.rows[1].otherDrawn });
+  });
+});
+
+describe('수익률 시나리오별 잔액·목돈 지출 민감도(엑셀: 우물 건강도·민감도)', () => {
+  const d = sampleData(2026);
+  const profile = { ...d.profile, birthYear: 1968, retireAge: 58, lifeExpectancy: 100, inflation: 2, spouseBirthYear: 0, retireMonthlyExpense: 300, incomes: [], incomeTax: undefined, contrib: undefined };
+  const pen = { type: 'pension' as const, expectedReturn: 5, volatility: 8, purpose: 'long' as const, nature: 'invest' as const, pensionYear1: 2020 };
+  const assets = [
+    { ...pen, name: '연금저축', amount: 40000 },
+    { name: 'ISA', type: 'etf' as const, amount: 20000, expectedReturn: 5, volatility: 8, purpose: 'long' as const, nature: 'invest' as const },
+  ];
+  const s = summarize(profile, assets, [], [], 2026, []);
+  const extras = [
+    ...Array.from({ length: 20 }, (_, i) => ({ age: 60 + i, amount: 800, flow: true })),
+    { age: 62, amount: 3000, loan: '전세대출' },
+  ];
+  const input = { startAge: 58, endAge: 100, startBalance: 60000, expenseAnnual: 3600, pensions: [{ startAge: 65, annual: 1200 }], meanReturn: 5, volatility: 8, inflation: 2, percentRate: 4, extras, guardrail: DEFAULT_GUARDRAIL };
+  const cb = { profile, assets, liabilities: [], goals: [], summary: s, input, strategy: 'fixed' as const, meanReturn: 5 };
+
+  it('기본 시나리오는 화면의 연금 세금 계산과 같고, 수익률이 낮을수록 잔액이 적음', () => {
+    const [low, base, high] = returnScenarios(cb, 3, 7);
+    expect([low.label, base.label, high.label]).toEqual(['비관', '기본', '낙관']);
+    expect([low.meanReturn, base.meanReturn, high.meanReturn]).toEqual([3, 5, 7]);
+    const tax = pensionTaxSchedule(compareStrategy('fixed', input, 0).schedule, taxSetup(profile, assets, 2026, 60000, 5, 2026)!);
+    expect(base.taxed).toBe(true);
+    expect(base.depletedAge).toBe(tax.depletedAge);
+    expect(base.totalTax).toBeCloseTo(tax.totalTax, 6);
+    expect(balanceAt(base, 80)).toBeCloseTo(tax.rows.find((r) => r.age === 80)!.left, 6);
+    expect(base.endBalance).toBeCloseTo(tax.rows.at(-1)!.left, 6);
+    for (const age of [70, 80, 90]) {
+      expect(balanceAt(low, age)!).toBeLessThanOrEqual(balanceAt(base, age)!);
+      expect(balanceAt(base, age)!).toBeLessThanOrEqual(balanceAt(high, age)!);
+    }
+    const dep = (x: { depletedAge: number | null }) => x.depletedAge ?? Infinity;
+    expect(dep(low)).toBeLessThanOrEqual(dep(base));
+    expect(dep(base)).toBeLessThanOrEqual(dep(high));
+    // 점검 나이는 계획 기간 안의 것만
+    expect(checkAges(input)).toEqual([80, 90]);
+    expect(checkAges({ startAge: 85, endAge: 105 })).toEqual([90, 100]);
+    expect(balanceAt(base, 120)).toBeNull();
+  });
+
+  it('연금계좌가 없으면 세금 없이 인출 스케줄 잔액', () => {
+    const noPen = { ...cb, assets: [assets[1]] };
+    const run = runScenario(noPen);
+    const sched = compareStrategy('fixed', input, 0).schedule;
+    expect(run.taxed).toBe(false);
+    expect(run.totalTax).toBe(0);
+    expect(balanceAt(run, 75)).toBeCloseTo(sched.find((r) => r.age === 75)!.endBalance, 6);
+  });
+
+  it('목돈 지출 배율: 목표 탭 지출만 바꾸고 대출 원금은 그대로, 바꿀 첫 나이 전은 그대로', () => {
+    expect(lumpTotal(extras, 58)).toBe(16000);
+    expect(lumpTotal(extras, 70)).toBe(8000);
+    const half = scaleLumps(extras, 0.5, 70);
+    expect(half.find((e) => e.age === 60)!.amount).toBe(800);
+    expect(half.find((e) => e.age === 70)!.amount).toBe(400);
+    expect(half.find((e) => e.age === 62 && goalKind(e) === 'loan')!.amount).toBe(3000);
+    expect(scaleLiving(input, 0.5)).toEqual({ expenseAnnual: 1800 });
+    expect(scaleLiving({ ...input, fixedDraw: 4800 }, 0.5)).toEqual({ fixedDraw: 2400 });
+  });
+
+  it('고갈 나이 표: 생활비·목돈이 클수록 빨리 바닥나고, 배율 1·1 칸은 그 수익률의 시나리오와 같음', () => {
+    const livings = [0.8, 1, 1.5];
+    const lumps = [0, 1, 2];
+    const grid = lumpGrid(cb, livings, lumps, 58, 3);
+    const dep = (v: number | null) => v ?? Infinity;
+    expect(grid[1][1]).toBe(runScenario(cb, { meanReturn: 3 }).depletedAge);
+    for (let i = 0; i < 3; i++) for (let j = 1; j < 3; j++) expect(dep(grid[i][j])).toBeLessThanOrEqual(dep(grid[i][j - 1]));
+    for (let j = 0; j < 3; j++) for (let i = 1; i < 3; i++) expect(dep(grid[i][j])).toBeLessThanOrEqual(dep(grid[i - 1][j]));
+    // 생활비 1.5배 + 목돈 2배는 기대수명 전에 바닥남
+    expect(grid[2][2]).not.toBeNull();
+  });
+});
+
+describe('이미 은퇴해 인출 중일 때의 점검·처방', () => {
+  const d = sampleData(2026);
+  const profile = { ...d.profile, birthYear: 1966, retireAge: 58, monthlyIncome: 200 };
+  const s = summarize(profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+  const pi = buildPlanInput(profile, d.assets, d.liabilities, d.goals, s);
+
+  it('비상금: 소득보다 많은 지출은 계획된 인출이라 ‘몇 개월 뒤 바닥’ 경고·점수 상한을 쓰지 않음', () => {
+    expect(s.savings).toBeLessThan(0);
+    const target = profile.criteria.emergencyMonths;
+    expect(emergencyDetail(s, target)).toContain('바닥납니다');
+    expect(emergencyDetail(s, target, true)).not.toContain('바닥납니다');
+    expect(emergencyDetail(s, target, true)).toContain('자산 배치 가이드');
+    expect(emergencyScore(s, target, true)).toBeGreaterThanOrEqual(emergencyScore(s, target));
+    const rich = { ...s, emergencyFund: s.expense * target * 2 };
+    expect(emergencyScore(rich, target)).toBeLessThan(1);
+    expect(emergencyScore(rich, target, true)).toBe(1);
+    expect(emergencyPrescription(rich, target, true)).toBeNull();
+    expect(emergencyPrescription(rich, target)).not.toBeNull();
+    const poor = emergencyPrescription({ ...s, emergencyFund: 0 }, target, true)!;
+    expect(poor.level).toBe('danger');
+    expect(poor.title).not.toContain('소진');
+    // 점검 목록·점수도 같은 기준
+    const checks = riskChecks(profile, d.assets, rich, { rate: 3, age: 60, retired: true });
+    expect(checks.find((c) => c.key === 'emergency')!.level).toBe('good');
+    const ins = insuranceGap(profile, rich, d.insurance, d.goals);
+    expect(financialScore(profile, d.assets, rich, 80, ins, { rate: 3, retired: true }).items.find((i) => i.label === '비상금')!.score).toBe(1);
+  });
+
+  it('목표: 월 적립 처방 대신 인출 계획에 들어 있다는 참고 안내', () => {
+    const goals: Goal[] = [
+      { name: '보유세', category: 'other', targetAge: 61, endAge: 90, amountPV: 500, growthRate: 2 },
+      { name: '차량 교체', category: 'car', targetAge: 63, amountPV: 4000, growthRate: 2 },
+    ];
+    const plans = planGoals(goals, d.assets, s.age);
+    const rx = retiredGoalPrescription(plans)!;
+    expect(rx).toMatchObject({ area: '목표', level: 'good', badge: '참고' });
+    expect(rx.title).toContain('2건');
+    expect(rx.detail).toContain('보유세(61~90세');
+    expect(rx.detail).toContain('차량 교체(63세');
+    expect(retiredGoalPrescription([])).toBeNull();
+    const ins = insuranceGap(profile, s, d.insurance, goals);
+    const list = prescriptions(profile, s, buildPlanInput(profile, d.assets, d.liabilities, goals, s), 50, plans, ins);
+    expect(list.some((r) => r.title.includes('인출 계획에 포함됨'))).toBe(true);
+    expect(list.some((r) => r.title.includes('월 적립'))).toBe(false);
+    expect(list.some((r) => r.title.includes('따로 모으면'))).toBe(false);
+    expect(list.some((r) => r.title.includes('뒤 소진'))).toBe(false);
+  });
+
+  it('인출액 고정 방식: 생활비 대신 월 고정 인출액을 낮추는 처방', () => {
+    const draw = { ...pi, fixedDraw: 700 * 12, startBalance: 30000, pensions: [], goals: [], debts: [], inflows: undefined };
+    const ins = insuranceGap(profile, s, d.insurance, []);
+    const list = prescriptions({ ...profile, expenseMode: 'draw', fixedDraw: 700 }, s, draw, simulate(draw, 300).successRate, [], ins);
+    const rx = list.find((r) => r.title.startsWith('월 고정 인출액'));
+    expect(rx).toBeDefined();
+    expect(list.some((r) => r.title.startsWith('은퇴 후 월 생활비'))).toBe(false);
+  });
+
+  it('보험료 부담은 납입 중인 보험만: 납입이 끝난 보험은 보장만 남음', () => {
+    const base = { death: 0, critical: 0, care: 0 };
+    const policies = [
+      { ...base, name: '납입 끝난 종신', death: 10000, monthlyPremium: 30, payEndAge: 55 },
+      { ...base, name: '납입 중 암', critical: 3000, monthlyPremium: 10, payEndAge: 70 },
+    ];
+    const ins = insuranceGap(profile, s, policies, []);
+    expect(ins.premium).toBe(10);
+    expect(ins.people[0].premium).toBe(10);
+    expect(ins.people[0].count).toBe(2);
+    expect(ins.people[0].lines.find((l) => l.key === 'death')!.current).toBe(10000);
   });
 });

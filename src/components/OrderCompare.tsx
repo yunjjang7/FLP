@@ -37,6 +37,8 @@ export function OrderCompare({ base, tax, setup }: { base: CompareBase; tax: Tax
     return !isNow && v !== null && v >= maxAt - 0.5 && v > 0.5 ? best : '';
   };
   const cmpOrder = hasCompareOrder(base.assets);
+  // 인출 시작 연도를 늦춰 못 쓴 1,500만 한도가 있는 조합이 있을 때만 열을 보여 줌
+  const showIdle = now.idleAmount > 0.5 || rows.some((r) => r.idleAmount > 0.5);
   const best = 'font-semibold text-good';
   const dep = (r: ComboResult) => (r.depletedAge === null ? `${p.lifeExpectancy}세까지 유지` : `${r.depletedAge}세`);
   const upd = (patch: Partial<CompareContrib>) => setC((x) => ({ ...x, ...patch }));
@@ -52,6 +54,7 @@ export function OrderCompare({ base, tax, setup }: { base: CompareBase; tax: Tax
       <td className={!isNow && r.netTax <= minNet + 0.5 ? best : ''}>{won(r.netTax)}</td>
       <td className="whitespace-nowrap">{r.overYears.length ? <>{r.overYears.length}개 연도<div className="text-xs text-muted">{yearRanges(r.overYears)}</div></> : '없음'}</td>
       <td>{r.overAmount > 0.5 ? won(r.overAmount) : '-'}</td>
+      {showIdle && <td className={r.idleAmount > 0.5 ? 'text-warn' : ''}>{r.idleAmount > 0.5 ? won(r.idleAmount) : '-'}</td>}
       <td className={r.limitAccounts > 0 ? 'text-bad' : ''}>{r.limitAccounts > 0 ? `${r.limitAccounts}개` : '없음'}</td>
       <td>{r.contrib > 0.5 ? won(r.contrib) : '-'}</td>
       <td className={!isNow && depKey(r) >= bestDep ? best : ''}>{dep(r)}</td>
@@ -89,6 +92,7 @@ export function OrderCompare({ base, tax, setup }: { base: CompareBase; tax: Tax
               <th className="font-medium">순 세금</th>
               <th className="font-medium">1,500만 초과 연도</th>
               <th className="font-medium">초과 인출<div className="font-normal">16.5% 과세</div></th>
+              {showIdle && <th className="font-medium">한도 미사용<div className="font-normal">시작 전 계좌 때문</div></th>}
               <th className="font-medium">수령한도 초과</th>
               <th className="font-medium">추가 납입 합계</th>
               <th className="font-medium">고갈 나이<div className="font-normal">세금 반영</div></th>
@@ -110,6 +114,7 @@ export function OrderCompare({ base, tax, setup }: { base: CompareBase; tax: Tax
             {ck}세 열은 조합이 모두 바닥나도 차이를 보려고 넣었습니다{ck !== CHECK_AGE ? ` (${CHECK_AGE}세 전에 바닥나는 조합이 있어, 모든 조합에 잔액이 남아 있는 마지막 나이로 맞춤)` : ''}. 같은 생활비를 쓰므로 이 나이 잔액이 많을수록 유리한 조합입니다. 다만 납입 조합은 낸 돈만큼 덜 쓴 효과가 섞여 있습니다.
           </li>
         )}
+        {showIdle && <li>‘한도 미사용’은 그 해 1,500만 한도가 남았는데 인출 시작 연도 전인 계좌에 과세재원이 묶여 낮은 세율(5.5~3.3%)로 못 꺼낸 금액입니다. 계속 크게 남으면 그 계좌의 인출 시작 연도를 당기는 것을 검토하세요(‘꽉 채우기’를 켜지 않았다면 필요한 만큼만 꺼내므로 남는 것이 정상입니다).</li>}
         <li>추가 납입은 인출 시작 전인 계좌(없으면 첫 계좌)로 넣고, 세액공제율은 데이터·설정의 추가 납입 설정(비우면 종합소득금액으로 자동)을 따릅니다. 공제는 그 해 종합소득세까지만 받고 환급은 다음 해 들어옵니다.</li>
         <li>납입금은 ISA·일반계좌에서 먼저 내고, 모자라면 연금계좌에서 더 꺼냅니다. 납입 조합의 고갈 나이·잔액이 좋아 보이는 것은 대부분 덜 쓰고 모은 효과이니, 세금 효과는 ‘순 세금’과 ‘초과 인출’로 비교하세요.</li>
         <li>여기 입력한 납입액은 비교에만 쓰입니다. 계획에 넣으려면 데이터·설정의 ‘추가 납입’에 입력하세요. 초록 굵은 글씨는 조합 가운데 가장 좋은 값입니다.</li>

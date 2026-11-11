@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd } from '../types';
+import type { Asset, Cashflow, Draw, Goal, Insurance, Liability, Profile, Snapshot, YearEnd } from '../types';
 import { defaultProfile, sampleData, DEFAULT_CRITERIA } from './sample';
 
 export class FlpDB extends Dexie {
@@ -11,6 +11,7 @@ export class FlpDB extends Dexie {
   insurance!: EntityTable<Insurance, 'id'>;
   snapshots!: EntityTable<Snapshot, 'id'>;
   yearEnds!: EntityTable<YearEnd, 'id'>;
+  draws!: EntityTable<Draw, 'id'>;
 
   constructor() {
     super('flp');
@@ -25,6 +26,8 @@ export class FlpDB extends Dexie {
     });
     // v2: 연말결산(해마다 12월 말 실제 자산·인출액)
     this.version(2).stores({ yearEnds: '++id, &year' });
+    // v3: 월별 실제 인출 기록(달·계좌마다 1건)
+    this.version(3).stores({ draws: '++id, month' });
   }
 }
 
@@ -41,8 +44,8 @@ export async function getProfile(): Promise<Profile> {
 
 export async function loadSample() {
   const d = sampleData();
-  await db.transaction('rw', [db.profile, db.assets, db.liabilities, db.cashflows, db.goals, db.insurance, db.snapshots, db.yearEnds], async () => {
-    await Promise.all([db.assets.clear(), db.liabilities.clear(), db.cashflows.clear(), db.goals.clear(), db.insurance.clear(), db.snapshots.clear(), db.yearEnds.clear()]);
+  await db.transaction('rw', [db.profile, db.assets, db.liabilities, db.cashflows, db.goals, db.insurance, db.snapshots, db.yearEnds, db.draws], async () => {
+    await Promise.all([db.assets.clear(), db.liabilities.clear(), db.cashflows.clear(), db.goals.clear(), db.insurance.clear(), db.snapshots.clear(), db.yearEnds.clear(), db.draws.clear()]);
     await db.profile.put(d.profile);
     await db.assets.bulkAdd(d.assets);
     await db.liabilities.bulkAdd(d.liabilities);
@@ -53,7 +56,7 @@ export async function loadSample() {
 }
 
 export async function resetAll() {
-  await Promise.all([db.profile.clear(), ...LIST_TABLES.map((t) => db[t].clear()), db.snapshots.clear(), db.yearEnds.clear()]);
+  await Promise.all([db.profile.clear(), ...LIST_TABLES.map((t) => db[t].clear()), db.snapshots.clear(), db.yearEnds.clear(), db.draws.clear()]);
 }
 
 /** 오늘 날짜 스냅샷 기록(같은 날은 덮어씀) */
@@ -80,6 +83,7 @@ export interface Backup {
   insurance: Insurance[];
   snapshots: Snapshot[];
   yearEnds?: YearEnd[];
+  draws?: Draw[];
 }
 
 export async function exportBackup(): Promise<Backup> {
@@ -95,12 +99,13 @@ export async function exportBackup(): Promise<Backup> {
     insurance: await db.insurance.toArray(),
     snapshots: await db.snapshots.toArray(),
     yearEnds: await db.yearEnds.toArray(),
+    draws: await db.draws.toArray(),
   };
 }
 
 export async function importBackup(b: Backup) {
   if (b?.app !== 'flp') throw new Error('FLP 백업 파일이 아닙니다.');
-  await db.transaction('rw', [db.profile, db.assets, db.liabilities, db.cashflows, db.goals, db.insurance, db.snapshots, db.yearEnds], async () => {
+  await db.transaction('rw', [db.profile, db.assets, db.liabilities, db.cashflows, db.goals, db.insurance, db.snapshots, db.yearEnds, db.draws], async () => {
     await resetAll();
     if (b.profile) await db.profile.put(b.profile);
     await db.assets.bulkAdd(b.assets ?? []);
@@ -110,5 +115,27 @@ export async function importBackup(b: Backup) {
     await db.insurance.bulkAdd(b.insurance ?? []);
     await db.snapshots.bulkAdd(b.snapshots ?? []);
     await db.yearEnds.bulkAdd(b.yearEnds ?? []);
+    await db.draws.bulkAdd(b.draws ?? []);
   });
+}
+
+/** 월별 실제 인출 기록 저장: 같은 달·계좌는 1건만 두고, 금액이 0 이하면 지움 */
+export async function saveDraw(month: string, account: string, amount: number, note?: string) {
+  await db.transaction('rw', db.draws, async () => {
+    const same = (await db.draws.where('month').equals(month).toArray()).filter((r) => r.account === account);
+    if (!(amount > 0)) {
+      await db.draws.bulkDelete(same.map((r) => r.id!));
+      return;
+    }
+    const keep = same[0];
+    await db.draws.bulkDelete(same.slice(1).map((r) => r.id!));
+    const memo = note === undefined ? keep?.note : note.trim() || undefined;
+    if (keep) await db.draws.put({ id: keep.id, month, account, amount, ...(memo ? { note: memo } : {}) });
+    else await db.draws.add({ month, account, amount, ...(memo ? { note: memo } : {}) });
+  });
+}
+
+/** CSV 로 읽은 인출 기록을 넣음: 같은 달·계좌는 덮어씀 */
+export async function importDraws(rows: Draw[]) {
+  for (const r of rows) await saveDraw(r.month, r.account, r.amount, r.note ?? '');
 }

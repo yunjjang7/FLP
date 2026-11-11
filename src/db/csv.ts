@@ -1,5 +1,7 @@
 import Papa from 'papaparse';
+import { parseMonth } from '../engine/drawLog';
 import { ASSET_TYPES } from '../engine/portfolio';
+import type { Draw } from '../types';
 import type { ListTable } from './db';
 import { TABLES, type FieldDef } from './schema';
 
@@ -96,4 +98,40 @@ export function downloadText(filename: string, text: string, mime = 'text/csv;ch
   a.download = filename;
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const DRAW_HEAD = { month: '월', account: '계좌', amount: '세전 인출액', note: '메모' } as const;
+
+/** 월별 실제 인출 기록 → CSV(월·계좌 순) */
+export function drawsToCSV(rows: Draw[]) {
+  const sorted = rows.slice().sort((a, b) => a.month.localeCompare(b.month) || a.account.localeCompare(b.account, 'ko'));
+  return Papa.unparse({ fields: Object.values(DRAW_HEAD), data: sorted.map((r) => [r.month, r.account, r.amount, r.note ?? '']) });
+}
+
+/** 인출 기록 CSV 양식: 지금 계획의 계좌 이름으로 예시 한 달 */
+export function drawsTemplateCSV(month: string, accounts: string[]) {
+  return drawsToCSV(accounts.map((account, i) => ({ month, account, amount: i === 0 ? 100 : 0, note: i === 0 ? '예시: 지우고 쓰세요' : '' })));
+}
+
+/** CSV → 월별 실제 인출 기록. 같은 달·계좌가 여러 줄이면 더함. 금액이 0인 줄은 건너뜀 */
+export function drawsFromCSV(text: string): { rows: Draw[]; errors: string[] } {
+  const parsed = Papa.parse<Row>(text.replace(/^﻿/, ''), { header: true, skipEmptyLines: true });
+  const errors = parsed.errors.map((e) => `${(e.row ?? 0) + 2}행: ${e.message}`);
+  const map = new Map<string, Draw>();
+  parsed.data.forEach((raw, i) => {
+    const get = (k: keyof typeof DRAW_HEAD) => raw[DRAW_HEAD[k]] ?? raw[k] ?? (k === 'amount' ? raw['금액'] : undefined);
+    const account = String(get('account') ?? '').trim();
+    const month = parseMonth(get('month'));
+    const amount = num(get('amount'));
+    if (!account && !String(get('month') ?? '').trim()) return;
+    if (!month) return void errors.push(`${i + 2}행: '월' 값 '${String(get('month') ?? '')}'을(를) 알 수 없습니다(예: 2026-11).`);
+    if (!account) return void errors.push(`${i + 2}행: 계좌가 비어 있어 건너뜁니다.`);
+    if (amount < 0) return void errors.push(`${i + 2}행: 금액이 음수라 건너뜁니다.`);
+    if (amount === 0) return;
+    const note = String(get('note') ?? '').trim();
+    const key = `${month}|${account}`;
+    const prev = map.get(key);
+    map.set(key, { month, account, amount: (prev?.amount ?? 0) + amount, ...(note || prev?.note ? { note: [prev?.note, note].filter(Boolean).join(' / ') } : {}) });
+  });
+  return { rows: [...map.values()], errors };
 }

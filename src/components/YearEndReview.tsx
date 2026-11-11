@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { db } from '../db/db';
+import { drawTotal } from '../engine/drawLog';
 import { baseBalanceAt, DEFAULT_GUARDRAIL, guardrailBaseline, reviewYearEnds, yearsToYearEnd, type StrategyResult, type WithdrawInput, type YearEndPosition } from '../engine/withdrawal';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -61,7 +62,7 @@ const POSITION: Record<YearEndPosition, { label: string; level: Level }> = {
 
 /** 연말결산: 해마다 12월 말 실제 자산·인출액을 기록하고 고정한 기준선과 비교해 가드레일 판정 */
 export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: WithdrawInput; startAge: number; band: number; cut: number; cutOnly: boolean }) {
-  const { profile: p, yearEnds } = useFlp();
+  const { profile: p, yearEnds, draws } = useFlp();
   const now = new Date();
   const thisYear = now.getFullYear();
   const retiredNow = startAge <= thisYear - p.birthYear;
@@ -88,6 +89,8 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
     else await db.yearEnds.add(rec);
     setNote('');
   };
+  // 월별 실제 인출 기록이 있으면 그 해 합계를 바로 넣을 수 있게
+  const logged = drawTotal(draws, year);
   const fixBase = () => {
     if (p.planBase && !confirm('지금 계획으로 기준선을 다시 고정할까요? 이전 기준선과의 비교는 사라집니다.')) return;
     db.profile.put({ ...p, planBase: live });
@@ -125,7 +128,12 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
       <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Labeled label="결산 연도"><NumberField value={year} unit="년" onChange={(v) => setYear(Math.round(v))} /></Labeled>
         <Labeled label="12월 말 금융자산" hint="평가액 합계(명목) · 수령 전 노란우산 등 제외"><NumberField value={balance} unit="만원" onChange={setBalance} /></Labeled>
-        <Labeled label="그 해 실제 인출" hint="계좌에서 꺼낸 합계"><NumberField value={withdrawn} unit="만원" onChange={setWithdrawn} /></Labeled>
+        <Labeled label="그 해 실제 인출" hint="계좌에서 꺼낸 합계">
+          <NumberField value={withdrawn} unit="만원" onChange={setWithdrawn} />
+          {logged > 0.5 && Math.abs(logged - withdrawn) > 0.5 && (
+            <button type="button" className="mt-1 block text-[11px] text-brand hover:underline" onClick={() => setWithdrawn(Math.round(logged * 10) / 10)}>월별 기록 합계 {won(logged)} 넣기</button>
+          )}
+        </Labeled>
         <Labeled label="메모(선택)"><TextField value={note} onChange={setNote} /></Labeled>
         <div className="self-end">
           <Button onClick={saveRecord} disabled={balance <= 0}>{yearEnds.some((r) => r.year === year) ? '결산 고치기' : '결산 저장'}</Button>
@@ -150,7 +158,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
             </ResponsiveContainer>
           </div>
           <div className="-mx-4 mt-3 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-            <table className="w-full min-w-[640px] text-sm num-table">
+            <table className="w-full min-w-[720px] text-sm num-table">
               <thead>
                 <tr className="border-b border-line text-right text-xs text-muted">
                   <th className="py-1.5 text-left font-medium">연도</th>
@@ -159,6 +167,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
                   <th className="font-medium">판정</th>
                   <th className="font-medium">계획 인출</th>
                   <th className="font-medium">실제 인출</th>
+                  <th className="font-medium">실제 수익률<div className="font-normal">추정</div></th>
                   <th className="font-medium">다음 해 권장(월)</th>
                   <th />
                 </tr>
@@ -175,6 +184,10 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
                     <td><Badge level={POSITION[r.position].level}>{POSITION[r.position].label}</Badge></td>
                     <td className="text-muted">{won(r.planWithdrawal)}</td>
                     <td className={r.record.withdrawn > r.planWithdrawal * 1.1 ? 'text-warn' : ''}>{won(r.record.withdrawn)}</td>
+                    <td className={r.actualReturn === null ? 'text-muted' : r.actualReturn < 0 ? 'text-bad' : ''}>
+                      {r.actualReturn === null ? '-' : `${r.actualReturn >= 0 ? '+' : ''}${(r.actualReturn * 100).toFixed(1)}%`}
+                      {r.actualReturn !== null && r.months < 12 && <span className="ml-1 text-xs text-muted">{r.months}개월</span>}
+                    </td>
                     <td className="font-semibold">{won(r.nextRecommended / 12)}</td>
                     <td>
                       <button className="text-xs text-bad hover:underline" onClick={() => confirm(`${r.record.year}년 결산을 삭제할까요?`) && db.yearEnds.delete(r.record.id!)}>삭제</button>
@@ -189,6 +202,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">
         <li>매년 1월에 전년도 12월 말 평가액과 그 해 실제 인출액을 넣으세요. 판정은 1년에 한 번만 하고, 연중 등락에는 반응하지 않습니다.</li>
         <li>기준선과 계획 인출액은 물가를 반영한 그 해 금액입니다. 첫해는 기준선을 고정한 달부터 12월까지만 셉니다.</li>
+        <li>실제 수익률(추정) = 12월 말 자산 ÷ (연초 자산 − 그 해 인출) − 1입니다. 연초 자산은 직전 해 결산값(첫해는 기준선을 고정할 때의 자산)을 쓰고, 직전 해 결산이 없으면 계산하지 않습니다. 연중에 넣은 돈(추가 납입·일시금 수령)이 있으면 그만큼 높게 나옵니다.</li>
         <li>결산을 넣은 뒤 ‘데이터·설정 → 자산’ 금액도 12월 말 평가액으로 고쳐야 노후 진단·인출 계획이 그 값에서 다시 계산됩니다.</li>
       </ul>
     </Card>

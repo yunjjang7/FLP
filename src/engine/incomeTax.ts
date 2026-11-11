@@ -373,5 +373,5 @@ export function creditInflows(profile: Profile, nowYear: number, contrib: Contri
 
 /** 국민연금 때문에 늘어나는 종소세·건보료(실질, 본인 나이별) — ‘인출에 더하기’를 켰을 때 지출로 반영 */
 export function npCostOutflows(rows: IncomeTaxRow[]) {
-  return rows.filter((r) => r.npPart > 0).map((r) => ({ age: r.age, amount: r.npPart / r.defl, npTax: true as const }));
+  return rows.filter((r) => r.npPart > 0).map((r) => ({ age: r.age, amount: r.npPart / r.defl, npTax: true as const, flow: true as const }));
 }
