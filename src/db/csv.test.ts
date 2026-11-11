@@ -128,4 +128,21 @@ describe('월별 실제 인출 기록 CSV', () => {
     expect(drawsTemplateCSV('2026-11', ['교보', '퇴직 IRP']).split(/\r?\n/)).toHaveLength(3);
     expect(rows).toEqual([{ month: '2026-11', account: '교보', amount: 100, note: '예시: 지우고 쓰세요' }]);
   });
+
+  describe('연금 계좌 설정 CSV', () => {
+    it('과세제외·퇴직금 재원·연차·인출 순서가 내보내기·가져오기에서 유지됨', () => {
+      const pension = { name: 'IRP', type: 'pension', amount: 9000, purpose: 'long', nature: 'invest', expectedReturn: 4, volatility: 8, owner: 'spouse', taxFree: 300, retirePart: 5000, pensionYear1: 2028, drawStartYear: 2031, drawOrder: 2, compareOrder: 1 };
+      const { rows, errors } = fromCSV('assets', toCSV('assets', [pension]));
+      expect(errors).toHaveLength(0);
+      expect(rows[0]).toMatchObject(pension);
+    });
+    it('연금 계좌가 아닌 행에서는 연금 전용 열을 쓰지 않음', () => {
+      const deposit = { name: '예금', type: 'deposit', amount: 100, purpose: 'short', nature: 'safe', expectedReturn: 3, volatility: 0.5, taxFree: 50, drawOrder: 3 };
+      const csv = toCSV('assets', [deposit]);
+      const { rows } = fromCSV('assets', csv);
+      expect(rows[0].taxFree).toBeUndefined();
+      expect(rows[0].drawOrder).toBeUndefined();
+      expect(templateCSV('assets')).toContain('과세제외 금액');
+    });
+  });
 });

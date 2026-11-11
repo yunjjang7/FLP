@@ -144,7 +144,7 @@ function ProfileForm() {
             <div className="grid grid-cols-2 gap-3">
               {n('spouseBirthYear', '출생연도', '년', hasSpouse ? `본인보다 ${Math.abs(p.spouseBirthYear - p.birthYear)}살 ${p.spouseBirthYear > p.birthYear ? '적음' : p.spouseBirthYear < p.birthYear ? '많음' : '같음'}` : '0이면 배우자 없음(본인 나이로 계산)')}
               {n('spouseIncome', '세후 월소득', '만원', '가구 월소득 중 배우자 몫')}
-              {n('spouseRetireAge', '은퇴 나이', '세', spouseYear(p.spouseRetireAge ?? 0))}
+              {n('spouseRetireAge', '은퇴 나이', '세', (p.spouseRetireAge ?? 0) > 0 ? spouseYear(p.spouseRetireAge ?? 0) : '0이면 이미 은퇴(근로소득 없음)')}
               {n('spouseWageGross', '은퇴 전 세전 총급여(연)', '만원', hasSpouse && (p.spouseRetireAge ?? 0) > spouseNow ? `종소세 계산용 · ${p.spouseBirthYear + (p.spouseRetireAge ?? 0) - 1}년까지` : '이미 은퇴 · 계산에 안 씀')}
               {n('spouseBirthMonth', '출생 월', '월', monthHint(p.spouseBirthMonth))}
               {n('spousePension', '국민연금 월액', '만원', '국민연금공단 예상액')}
@@ -647,7 +647,8 @@ function ListEditor({ table }: { table: ListTable }) {
   const rows = data[table] as unknown as (Record<string, unknown> & { id?: number })[];
   const { label, fields, example } = TABLES[table];
   const tbl = db[table] as unknown as { add: (r: unknown) => Promise<unknown>; update: (id: number, p: unknown) => Promise<unknown>; delete: (id: number) => Promise<void> };
-  const amountKey = fields.find((f) => f.unit === '만원')?.key;
+  // 보험은 보장 종류가 여럿이라 합계 한 줄 대신 아래 피보험자별 요약을 씀
+  const amountKey = table === 'insurance' ? undefined : fields.find((f) => f.unit === '만원')?.key;
   const total = amountKey ? rows.reduce((a, r) => a + Number(r[amountKey] ?? 0), 0) : 0;
   // 실거주 주택 구입 대출 표시가 계산에 쓰이려면 프로필의 세 설정이 모두 켜져 있어야 함: 꺼진 것을 안내
   const it = { ...DEFAULT_INCOME_TAX, ...(data.profile.incomeTax ?? {}) };
@@ -1024,6 +1025,11 @@ function BackupPanel() {
   const onCSV = async (file: File) => {
     const { rows, errors } = fromCSV(table, await file.text());
     const tbl = db[table] as unknown as { clear: () => Promise<void>; bulkAdd: (r: unknown[]) => Promise<unknown> };
+    // 읽을 수 있는 행이 없으면(다른 표의 파일·빈 파일) ‘교체’여도 기존 데이터를 지우지 않음
+    if (rows.length === 0) {
+      setMsg(`가져올 ${TABLES[table].label} 행이 없어 아무것도 바꾸지 않았습니다. ‘대상’과 파일이 맞는지 확인해 주세요.${errors.length ? `\n확인 필요:\n- ${errors.join('\n- ')}` : ''}`);
+      return;
+    }
     if (mode === 'replace') await tbl.clear();
     await tbl.bulkAdd(rows);
     setMsg(`${TABLES[table].label} ${rows.length}건을 가져왔습니다.${errors.length ? `\n확인 필요:\n- ${errors.join('\n- ')}` : ''}`);

@@ -9,14 +9,15 @@ type Row = Record<string, unknown>;
 
 /** 레코드 배열 → CSV 문자열(한글 헤더, 선택값은 한글 라벨) */
 const allFields = (table: ListTable) => [...TABLES[table].fields, ...(TABLES[table].csvExtra ?? [])];
-const isRE = (r: Row) => r.type === 'realestate';
+/** 부동산·연금 계좌 전용 열인데 그 유형이 아닌 행 */
+const notFor = (f: FieldDef, type: unknown) => (f.reOnly && type !== 'realestate') || (f.penOnly && type !== 'pension');
 
 /** 레코드 배열 → CSV 문자열(한글 헤더, 선택값은 한글 라벨). 선택 열은 값이 없거나 부동산 전용인데 부동산이 아니면 빈칸 */
 export function toCSV(table: ListTable, rows: Row[]) {
   const fields = allFields(table);
   const cell = (r: Row, f: FieldDef) => {
     const v = r[f.key];
-    if ((f.reOnly && !isRE(r)) || v === undefined || v === null) return '';
+    if (notFor(f, r.type) || v === undefined || v === null) return '';
     return f.kind === 'select' ? f.options?.[String(v)] ?? v : v;
   };
   return Papa.unparse({ fields: fields.map((f) => f.label), data: rows.map((r) => fields.map((f) => cell(r, f))) });
@@ -55,7 +56,7 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
     // 선택 열: 빈칸이면 값 없음, 부동산 전용 열은 부동산 행에서만 읽음
     for (const f of TABLES[table].csvExtra ?? []) {
       const s = String(raw[f.label] ?? raw[f.key] ?? '').trim();
-      if (!s || (f.reOnly && rec.type !== 'realestate')) continue;
+      if (!s || notFor(f, rec.type)) continue;
       if (f.kind === 'number') rec[f.key] = num(s);
       else {
         const code = Object.entries(f.options ?? {}).find(([k, lbl]) => k === s || lbl === s)?.[0];

@@ -15,6 +15,8 @@ export interface FieldDef {
   short?: string;
   /** CSV 선택 열: 부동산 행에만 쓰는 값(다른 유형은 빈칸) */
   reOnly?: boolean;
+  /** CSV 선택 열: 연금 계좌 행에만 쓰는 값 */
+  penOnly?: boolean;
 }
 
 export const GOAL_CATEGORY: Record<string, string> = {
@@ -41,6 +43,12 @@ const assetCsvExtra: FieldDef[] = [
   { key: 'hpRate', label: '주택연금 대출 금리', kind: 'number', unit: '%', reOnly: true },
   { key: 'hpInitFee', label: '주택연금 초기보증료', kind: 'number', unit: '%', reOnly: true },
   { key: 'hpAnnualFee', label: '주택연금 연보증료', kind: 'number', unit: '%', reOnly: true },
+  { key: 'taxFree', label: '과세제외 금액', kind: 'number', unit: '만원', penOnly: true },
+  { key: 'retirePart', label: '퇴직금 재원', kind: 'number', unit: '만원', penOnly: true },
+  { key: 'pensionYear1', label: '연금수령 1년차 연도', kind: 'number', penOnly: true },
+  { key: 'drawStartYear', label: '인출 시작 연도', kind: 'number', penOnly: true },
+  { key: 'drawOrder', label: '꺼내는 순서', kind: 'number', penOnly: true },
+  { key: 'compareOrder', label: '비교 기준 순서', kind: 'number', penOnly: true },
 ];
 
 /** 보험 피보험자: 납입 종료 나이를 누구 나이로 입력했는지 */
