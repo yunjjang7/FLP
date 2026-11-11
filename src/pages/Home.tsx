@@ -82,14 +82,21 @@ export default function Home() {
 
         {retiredFlow ? (
           <Card title="월 현금흐름" action={<span className="text-xs text-muted">{d.start.age}세 · 은퇴 후 · 오늘 물가</span>}>
+            {/* 소득 − 지출 = 수지, 모자라는 만큼 금융자산에서 인출 */}
             <div className="space-y-2.5 text-sm">
-              <Row label="은퇴 후 생활비" value={won(retiredFlow.living)} />
-              {retiredFlow.debt > 0 && <Row label="대출 원리금" value={won(retiredFlow.debt)} />}
-              {retiredFlow.goals > 0.5 && <Row label="올해 목표 지출(월 환산)" value={won(retiredFlow.goals)} />}
-              <Row label="연금·소득(국민·개인연금, 월세 등)" value={`− ${won(retiredFlow.pension)}`} muted />
+              <Row label="소득 (국민·개인연금, 월세 등)" value={won(retiredFlow.pension)} />
+              <Row label="은퇴 후 생활비" value={`− ${won(retiredFlow.living)}`} muted />
+              {retiredFlow.debt > 0 && <Row label="대출 원리금" value={`− ${won(retiredFlow.debt)}`} muted />}
+              {retiredFlow.goals > 0.5 && <Row label="올해 목표 지출(월 환산)" value={`− ${won(retiredFlow.goals)}`} muted />}
               <div className="border-t border-line pt-2.5">
-                <Row label="금융자산에서 인출" value={won(retiredFlow.draw)} strong />
+                <Row label={retiredFlow.draw > 0.5 ? '월 수지 (소득 − 지출, 부족)' : '월 수지 (소득 − 지출)'} value={retiredFlow.draw > 0.5 ? `− ${won(retiredFlow.draw)}` : won(-retiredFlow.draw)} strong />
               </div>
+              {retiredFlow.draw > 0.5 && (
+                <div className="flex items-center justify-between rounded-lg bg-sunken px-3 py-2">
+                  <span>→ 부족분은 금융자산에서 인출</span>
+                  <span className="text-base font-bold">{won(retiredFlow.draw)}</span>
+                </div>
+              )}
             </div>
             <div className="mt-4">
               <div className="mb-1 flex justify-between text-xs text-muted">

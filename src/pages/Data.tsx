@@ -569,7 +569,8 @@ function InsuranceSummary() {
 
 /** 지출 입력 안내: 보험료·대출 원리금·재무목표는 자동 반영되므로 지출에 다시 넣지 않음 */
 function CashflowGuide() {
-  const { summary: s, cashflows } = useFlp();
+  const { summary: s, cashflows, profile: p, start } = useFlp();
+  const retired = start.retired;
   const dup = s.insuranceDup.length > 0 && s.insuranceTotal > 0;
   // 보험료로 보이는 지출 항목을 지우면 보험 탭 보험료가 자동으로 더해짐
   const removeDup = async () => {
@@ -580,6 +581,21 @@ function CashflowGuide() {
   };
   return (
     <div className="space-y-2">
+      {/* 입력하면서 바로 보이는 저축 여력. 지출이 소득보다 많으면 부족분 안내 */}
+      <div className={`rounded-xl px-4 py-3 text-sm ${s.savings < 0 && !retired ? 'bg-warn-soft text-warn' : 'bg-sunken'}`}>
+        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <span className={s.savings < 0 && !retired ? '' : 'text-muted'}>
+            세후 소득 {won(s.income)} − 지출 {won(s.fixed + s.variable)}{s.debtPayment > 0 ? ` − 대출 ${won(s.debtPayment)}` : ''}{s.insurance > 0 ? ` − 보험료 ${won(s.insurance)}` : ''}
+          </span>
+          <b>{s.savings < 0 ? `매달 ${won(-s.savings)} 부족` : `저축 여력 ${won(s.savings)}`}</b>
+        </div>
+        {s.savings < 0 && !retired && (
+          <p className="mt-1 text-xs">
+            은퇴 전({p.retireAge}세)까지도 이 부족분을 매달 금융자산에서 꺼내 쓰는 것으로 계산합니다. 연금 계좌(연금저축·IRP·퇴직연금)나 투자 자산에서 꺼내는 돈은 ‘세후 월소득’에 넣지 마세요. 넣으면 자산이 줄어드는 게 계산에서 빠집니다.
+          </p>
+        )}
+        {retired && <p className="mt-1 text-xs text-muted">은퇴 나이({p.retireAge}세)가 지나 이 지출 목록은 은퇴 후 계산에 쓰지 않습니다. 은퇴 후에는 프로필의 ‘은퇴 후 월 생활비’로 계산합니다.</p>}
+      </div>
       {dup && (
         <div className="rounded-xl bg-warn-soft px-4 py-3 text-sm text-warn">
           <b>보험료 중복 의심</b> · 지출의 {s.insuranceDup.map((n) => `‘${n}’`).join(', ')} 항목이 보험료로 보입니다. 그래서 보험 탭의 보험료 {s.insuranceCount}건(월 {won(s.insuranceTotal)})은 지출에 더하지 않았습니다.
@@ -594,6 +610,7 @@ function CashflowGuide() {
       <Guide
         items={[
           <>지금 매달 나가는 생활비만 넣으세요. 저축 여력 = 세후 소득 − 지출 − 대출 원리금 − 보험료입니다.</>,
+          <><b>연금 계좌·투자 자산에서 꺼내 쓰는 돈</b>은 소득이 아닙니다. 세후 월소득에 넣지 말고, 지출이 소득보다 많으면 그 부족분이 금융자산에서 빠지는 것으로 두세요.</>,
           <><b>보험료</b>는 보험 탭의 월 보험료 합계를 자동으로 더합니다{s.insurance > 0 ? `(지금 월 ${won(s.insurance)})` : ''}. 지출에 따로 넣지 마세요.</>,
           <><b>대출 원리금</b>(이자 포함)은 부채의 월 상환액으로 계산합니다. 상환이 끝나면 그만큼 저축이 늘어납니다.</>,
           <><b>앞으로 나갈 목표 지출</b>(등록금·차 구입 등)은 재무목표에만 넣으세요. 목표용 적금 납입액은 지출이 아닙니다.</>,
