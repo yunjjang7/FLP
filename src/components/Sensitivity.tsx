@@ -9,6 +9,12 @@ const RUNS = 300;
 
 type Metric = 'rate' | 'age';
 
+/** 민감도 표 생활비 행: 지금 생활비에서 50만원씩 내려 300만원 이상인 데까지(지금이 낮으면 −100까지), 위로는 +100 */
+export function sensitivityExpenses(current: number) {
+  const down = Math.max(2, Math.floor((current - 300) / 50));
+  return Array.from({ length: down + 3 }, (_, i) => current + (i - down) * 50).filter((x) => x > 0);
+}
+
 function evaluate(input: PlanInput, metric: Metric) {
   if (metric === 'rate') return simulate(input, RUNS, 7).successRate;
   return deterministicPath(input).depletedAt;
@@ -21,8 +27,9 @@ export function Sensitivity() {
   const baseReturn = inp.retireMeanReturn ?? inp.meanReturn;
   const vol = inp.retireVolatility ?? inp.volatility;
 
-  const expenses = [-100, -50, 0, 50, 100].map((x) => p.retireMonthlyExpense + x).filter((x) => x > 0);
-  const returns = [-2, -1, 0, 1, 2].map((x) => +(baseReturn + x).toFixed(1)).filter((x) => x > 0);
+  // 생활비: 300만원(또는 지금 −100) 근처부터 지금 +100까지 50만원 간격, 수익률: 지금 −2%p ~ +3%p
+  const expenses = sensitivityExpenses(p.retireMonthlyExpense);
+  const returns = [-2, -1, 0, 1, 2, 3].map((x) => +(baseReturn + x).toFixed(1)).filter((x) => x > 0);
 
   const grid = useMemo(
     () => expenses.map((e) => returns.map((r) => evaluate({ ...inp, retireExpenseAnnual: e * 12, retireMeanReturn: r, retireVolatility: vol }, metric))),

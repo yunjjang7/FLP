@@ -264,7 +264,8 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
     retireAge: o.retireAge ?? profile.retireAge,
     lifeExpectancy: profile.lifeExpectancy,
     startBalance,
-    annualSavings: Math.max(0, o.monthlySavings ?? s.savings) * 12,
+    // 지출이 소득보다 많으면(저축 여력 마이너스) 그 부족분은 은퇴 전에도 금융자산에서 꺼내 쓴다고 봄
+    annualSavings: (o.monthlySavings ?? s.savings) * 12,
     meanReturn: o.meanReturn ?? liqReturn,
     volatility: o.volatility ?? liqVol,
     inflation,

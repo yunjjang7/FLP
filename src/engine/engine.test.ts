@@ -13,6 +13,7 @@ import { prescriptions } from './prescribe';
 import { financialScore, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, yearsToYearEnd } from './withdrawal';
 import type { PlanBase } from '../types';
+import { sensitivityExpenses } from '../components/Sensitivity';
 
 const DEFAULT_TAX_ON = { on: true, rentSpouseShare: 0, rentExpense: 0, npTaxable: 100, npNet: 100, dedSelf: 150, dedSpouse: 150, hiNow: 50, hiRate: 7.19, hiLtc: 13.14, hiPublic: 50, hiPropGrowth: 0, hiPrivate: false, addToDraw: false };
 
@@ -93,6 +94,22 @@ describe('샘플 데이터 통합', () => {
     // 지출에 보험료 항목이 따로 있으면(보험 탭 금액을 더하지 않았으면) 저축 변화도 넣지 않음
     const dup = summarize(d.profile, d.assets, d.liabilities, [...d.cashflows, { name: '보험료', kind: 'fixed' as const, category: '보험', monthly: 45 }], 2026, ins);
     expect(buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, dup).savingsChanges).toBeUndefined();
+  });
+  it('저축 여력이 마이너스면 은퇴 전에도 그 부족분을 금융자산에서 꺼냄(0으로 자르지 않음)', () => {
+    const short = { ...s, savings: -476 };
+    const inp = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, short);
+    expect(inp.annualSavings).toBe(-476 * 12);
+    const ok = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
+    const det = (i: PlanInput) => deterministicPath(i).balances;
+    // 1년 뒤 자산 차이 = 저축 차이(부족분 + 원래 저축)
+    expect(det(ok)[1] - det(inp)[1]).toBeCloseTo((s.savings + 476) * 12, 6);
+    expect(simulate(inp, 300, 7).successRate).toBeLessThan(simulate(ok, 300, 7).successRate);
+  });
+  it('민감도 표 생활비 행: 300만원 근처부터 지금 +100까지 50만원 간격', () => {
+    expect(sensitivityExpenses(750)).toEqual([300, 350, 400, 450, 500, 550, 600, 650, 700, 750, 800, 850]);
+    expect(sensitivityExpenses(350)).toEqual([250, 300, 350, 400, 450]); // 지금이 낮으면 −100까지
+    expect(sensitivityExpenses(725)[0]).toBe(325);
+    expect(sensitivityExpenses(60)).toEqual([10, 60, 110, 160]); // 0 이하(−40) 제외
   });
   it('피보험자별 납입 종료 나이: 배우자·자녀 나이를 본인 나이로 바꿔 계산', () => {
     const [a, b, c] = d.insurance;

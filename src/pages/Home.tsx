@@ -4,6 +4,8 @@ import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YA
 import { Donut } from '../components/Donut';
 import { Badge, Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
+import { debtPaymentAt, pensionAt, retireOutflowAt } from '../engine/montecarlo';
+import { withdrawLevel } from '../engine/risk';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
 
@@ -14,7 +16,18 @@ export default function Home() {
   const s = d.summary;
   const scoreLevel: Level = d.score.total >= 75 ? 'good' : d.score.total >= 50 ? 'caution' : 'danger';
   const alerts = d.checks.filter((c) => c.level !== 'good').sort((a, b) => (a.level === 'danger' ? -1 : 0) - (b.level === 'danger' ? -1 : 0)).slice(0, 3);
-  const successLevel: Level = d.sim.successRate >= d.profile.criteria.successTarget ? 'good' : d.sim.successRate >= 60 ? 'caution' : 'danger';
+  // 이미 은퇴했으면 노후 진단과 같은 방식(생활비 − 연금·소득 + 대출 = 금융자산 인출, 첫해 실질 월액)
+  const retiredFlow = d.start.retired
+    ? (() => {
+        const draw = retireOutflowAt(d.planInput, d.start.age);
+        const debt = debtPaymentAt(d.planInput, d.start.age);
+        const pension = pensionAt(d.planInput, d.start.age);
+        // 인출률과 같은 기준: 그해 목표 지출까지 더한 금액(withdrawStart.outflow)
+        const goals = Math.max(0, d.start.outflow - Math.max(0, draw));
+        return { living: Math.max(0, draw - debt + pension) / 12, debt: debt / 12, pension: pension / 12, goals: goals / 12, draw: d.start.outflow / 12 };
+      })()
+    : null;
+  const successLevel: Level =d.sim.successRate >= d.profile.criteria.successTarget ? 'good' : d.sim.successRate >= 60 ? 'caution' : 'danger';
 
   return (
     <>
@@ -67,6 +80,27 @@ export default function Home() {
           <Donut data={view === 'type' ? s.byType : [...s.byPurpose, ...s.byReUse]} />
         </Card>
 
+        {retiredFlow ? (
+          <Card title="월 현금흐름" action={<span className="text-xs text-muted">{d.start.age}세 · 은퇴 후 · 오늘 물가</span>}>
+            <div className="space-y-2.5 text-sm">
+              <Row label="은퇴 후 생활비" value={won(retiredFlow.living)} />
+              {retiredFlow.debt > 0 && <Row label="대출 원리금" value={won(retiredFlow.debt)} />}
+              {retiredFlow.goals > 0.5 && <Row label="올해 목표 지출(월 환산)" value={won(retiredFlow.goals)} />}
+              <Row label="연금·소득(국민·개인연금, 월세 등)" value={`− ${won(retiredFlow.pension)}`} muted />
+              <div className="border-t border-line pt-2.5">
+                <Row label="금융자산에서 인출" value={won(retiredFlow.draw)} strong />
+              </div>
+            </div>
+            <div className="mt-4">
+              <div className="mb-1 flex justify-between text-xs text-muted">
+                <span>인출률 {pct(d.start.rate, 1)}</span>
+                <span>상한 {d.profile.criteria.withdrawRateMax}% · {((d.profile.criteria.withdrawRateMax * 2) / 3).toFixed(0)}% 이하 권장</span>
+              </div>
+              <Bar value={d.start.rate} max={Math.max(d.profile.criteria.withdrawRateMax, d.start.rate)} level={withdrawLevel(d.start.rate, d.profile.criteria.withdrawRateMax)} />
+            </div>
+            <p className="mt-3 text-xs text-muted">은퇴 나이({d.profile.retireAge}세)가 지나 노후 진단과 같은 방식으로 보여 줍니다: 생활비는 프로필의 ‘은퇴 후 월 생활비’, 연금 계좌(사적연금)·투자 자산에서 꺼내는 돈은 ‘금융자산에서 인출’에 들어갑니다. 지출 탭의 고정비·변동비와 세후 월소득은 은퇴 후 계산에 쓰지 않습니다.</p>
+          </Card>
+        ) : (
         <Card title="월 현금흐름">
           <div className="space-y-2.5 text-sm">
             <Row label="세후 소득" value={won(s.income)} />
@@ -85,7 +119,13 @@ export default function Home() {
             </div>
             <Bar value={s.savingsRate} max={Math.max(d.profile.criteria.savingsRate, s.savingsRate)} level={s.savingsRate >= d.profile.criteria.savingsRate ? 'good' : s.savingsRate >= d.profile.criteria.savingsRate / 2 ? 'caution' : 'danger'} />
           </div>
+          {s.savings < 0 && (
+            <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
+              매달 {won(-s.savings)}이 모자라 은퇴 전({d.profile.retireAge}세)까지 이만큼을 금융자산에서 꺼내 쓰는 것으로 계산합니다. 연금 계좌·투자 자산에서 꺼내는 돈은 ‘세후 소득’에 넣지 마세요. 넣으면 자산이 줄어드는 게 계산에서 빠집니다. 이미 은퇴했다면 ‘데이터·설정 → 노후 계획’의 은퇴 희망 나이를 지금 나이 이하로 바꾸면 연금·인출 기준으로 보여 줍니다.
+            </p>
+          )}
         </Card>
+        )}
       </div>
 
       <div className="mt-4 grid gap-4 lg:grid-cols-3">
