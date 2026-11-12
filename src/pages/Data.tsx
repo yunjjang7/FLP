@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
 import { INSURED_WHO, TABLES, type FieldDef } from '../db/schema';
-import { housePension, HP_LOAN, HP_PRICE_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentDuplicates, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
+import { housePension, HP_LOAN, HP_MARKET_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentDuplicates, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
 import { ASSET_TYPES, insuredBirthYear, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, PageHeader } from '../components/ui';
@@ -60,7 +60,7 @@ function PensionOverlapNote({ accounts }: { accounts: Asset[] }) {
   if (accounts.length === 0) return null;
   return (
     <p role="alert" className="col-span-2 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
-      <b>두 번 계산될 수 있어요.</b> 자산 탭 연금 계좌({accounts.map((a) => `${a.name || '연금'} ${won(a.amount)}`).join(', ')}) 잔액은 노후 인출에서 이미 꺼내 씁니다. 그 계좌에서 받을 월 수령액이라면 월액을 0으로 두고, 계좌와 별개로 정해진 금액이 나오는 연금(종신형 연금보험 등)만 넣으세요.
+      <b>두 번 계산될 수 있어요.</b> 자산 탭 연금 계좌({accounts.map((a) => `${a.name || '연금'} ${won(a.amount)}`).join(', ')}) 잔액은 인출 계획에서 이미 꺼내 씁니다. 그 계좌에서 받을 월 수령액이라면 월액을 0으로 두고, 계좌와 별개로 정해진 금액이 나오는 연금(종신형 연금보험 등)만 넣으세요.
     </p>
   );
 }
@@ -162,7 +162,7 @@ function ProfileForm() {
       <IncomeList />
       <Card title="은퇴 후 자산 운용" action={<span className="text-xs text-muted">현재 포트폴리오 {summary.portfolioReturn.toFixed(1)}% / 변동성 {summary.portfolioVol.toFixed(1)}%</span>}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Labeled label="운용 방식" hint="노후 진단·노후 인출에 반영">
+          <Labeled label="운용 방식" hint="노후 진단·인출 계획에 반영">
             <SelectField value={p.retireSeparate ? 'on' : 'off'} onChange={(v) => save({ retireSeparate: v === 'on' })} options={{ off: '은퇴 전과 동일', on: '따로 입력' }} />
           </Labeled>
           {p.retireSeparate && (
@@ -192,7 +192,7 @@ function ProfileForm() {
         )}
         <p className="mt-3 text-xs text-muted">권장 범위는 예금 금리(약 3%)를 넘는 초과수익 1%마다 변동성 2.5~5%로 잡은 대략적인 기준입니다(채권 위주 4% → 2.5~5%, 주식·채권 반반 6% → 7.5~15%, 주식 위주 8% → 12.5~25%).</p>
       </Card>
-      <Card title="연금 세금" action={<span className="text-xs text-muted">노후 인출 스케줄의 세금 계산에 사용</span>}>
+      <Card title="연금 세금" action={<span className="text-xs text-muted">인출 계획 스케줄의 세금 계산에 사용</span>}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {n('retireTaxRate', '퇴직소득세 실효세율', '%', '감면 전 세율(퇴직소득 원천징수영수증)', 0.01)}
           {n('retireTaxYear1', '퇴직금 연금 실수령 1년차', '년', '11년차부터 감면 30%→40% · 실제로 꺼낸 해만 연차로 셈')}
@@ -279,7 +279,7 @@ function IncomeTaxForm() {
       }
     >
       {!t.on ? (
-        <p className="text-sm text-muted">임대·근로·사업소득과 국민연금 등 공적연금에 붙는 종합소득세와 지역 건강보험료를 해마다 추정해 노후 인출 화면에 보여 줍니다. 오른쪽 위에서 ‘추정하기’를 고르세요.</p>
+        <p className="text-sm text-muted">임대·근로·사업소득과 국민연금 등 공적연금에 붙는 종합소득세와 지역 건강보험료를 해마다 추정해 인출 계획 화면에 보여 줍니다. 오른쪽 위에서 ‘추정하기’를 고르세요.</p>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -419,7 +419,7 @@ function IncomeList() {
     <Card title="그 밖의 은퇴 후 소득" action={<Button variant="ghost" onClick={add}>+ 소득 추가</Button>}>
       {list.length === 0 && (
         <div className="space-y-1 text-sm text-muted">
-          <p>근로소득·사업소득·임대료처럼 <b>은퇴 후</b> 들어오는 돈이 있으면 추가하세요. 노후 진단과 노후 인출에 반영되고, 종류를 고르면 종합소득세·건강보험료에도 종류대로 들어갑니다.</p>
+          <p>근로소득·사업소득·임대료처럼 <b>은퇴 후</b> 들어오는 돈이 있으면 추가하세요. 노후 진단과 인출 계획에 반영되고, 종류를 고르면 종합소득세·건강보험료에도 종류대로 들어갑니다.</p>
           <p className="text-xs">은퇴 전 소득(지금 받는 월세 포함)은 위 ‘세후 월소득(가구)’에 합쳐 넣고, 국민연금·개인·퇴직연금은 프로필의 전용 칸에 넣으세요. 여기에 또 넣으면 두 번 계산됩니다.</p>
         </div>
       )}
@@ -968,6 +968,11 @@ function RealEstateExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asse
           </p>
         )}
         {rental && (a.rent ?? 0) === 0 && <p>월세를 넣으면 은퇴 후 소득·종합소득세·건강보험료에 반영됩니다. 전세는 보증금만 부채로 계산합니다.</p>}
+        {hp && a.amount > HP_MARKET_CAP && (
+          <p className="rounded-lg bg-warn-soft px-3 py-2 text-warn">
+            <b>가입이 어려울 수 있어요.</b> 주택연금은 공시가격 12억원 이하 주택만 가입할 수 있는데, 지금 시세 {won(a.amount)}은 그 기준(시세로 약 {won(HP_MARKET_CAP)})을 크게 넘습니다. 공시가격을 확인하고, 넘는다면 가입 나이를 0으로 두거나 더 작은 집으로 옮긴 뒤 가입하는 계획(매각 연도·새 집 구입액)으로 바꾸세요. 아래 금액은 가입된다고 가정한 값입니다.
+          </p>
+        )}
         {hp ? (
           <p>
             {hp.eligible ? (
@@ -976,7 +981,6 @@ function RealEstateExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asse
                 {' '}노후 진단·인출의 연금 소득에 들어가고, 대출이라 종합소득세·건강보험료 대상은 아닙니다. 집은 계속 소유하므로 순자산에는 그대로 남습니다.
                 {est && <> 기대수명({est.age}세, {est.year}년)까지 받으면 대출 잔액은 받은 돈 {won(est.paid)} + 이자·보증료 = {won(est.balance)}이고, 예상 시세 {won(est.price)}에서 빼면 <b className="text-ink">상속 시 남는 주택 가치 {won(est.left)}</b>(현재가치 {won(est.leftReal)}){est.left === 0 ? ' — 잔액이 집값을 넘어도 모자라는 돈은 상속인이 갚지 않습니다' : ''}. 대출 금리 {loan.rate}%, 보증료 초기 {loan.initFee}%·연 {loan.annualFee}%로 계산했습니다(위 입력칸에서 바꿀 수 있음).</>}
                 {hp.auto && ' 자동 추정은 한국주택금융공사 2026.3 월지급금 예시(일반주택·종신 정액형)를 나이로 보간한 값입니다.'}
-                {hp.price > HP_PRICE_CAP * 1.4 && ' 공시가격 12억을 넘으면 가입할 수 없으니 확인해 주세요.'}
               </>
             ) : (
               '주택연금은 부부 중 한 명이 55세 이상이어야 가입할 수 있어 반영하지 않았습니다.'

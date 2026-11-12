@@ -1,6 +1,7 @@
 import { Fragment, useMemo, useState } from 'react';
 import { Slider } from '../components/fields';
 import { LifeChart } from '../components/LifeChart';
+import { PlanCompare } from '../components/PlanCompare';
 import { Badge, Bar, Button, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { db } from '../db/db';
 import { GOAL_CATEGORY } from '../db/schema';
@@ -9,11 +10,11 @@ import { simulate } from '../engine/montecarlo';
 import { bucketMap, prescriptions } from '../engine/prescribe';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
-import type { Level } from '../types';
+import type { Level, Profile } from '../types';
 
 export default function Prescribe() {
   const d = useFlp();
-  if (!d.hasData) return <><PageHeader title="처방 실행" /><EmptyState /></>;
+  if (!d.hasData) return <><PageHeader title="처방" /><EmptyState /></>;
   // 데이터가 바뀌면(저축 여력·수익률·은퇴 나이·생활비) What-if 슬라이더 시작값도 새로 맞춤
   const s = d.summary;
   return <PrescribeInner key={`${Math.round(s.savings)}|${s.portfolioReturn.toFixed(1)}|${d.profile.retireAge}|${d.profile.retireMonthlyExpense}`} />;
@@ -55,10 +56,12 @@ function PrescribeInner() {
   }, [changed, d.sim, o, p, d.assets, d.liabilities, d.goals, s, retired, drawMode, baseReturn, baseVol]);
   const delta = whatIf.successRate - d.sim.successRate;
   const lvl = (v: number): Level => (v >= p.criteria.successTarget ? 'good' : v >= 60 ? 'caution' : 'danger');
+  // ‘내 계획에 반영’과 같은 필드: 은퇴 나이·생활비(인출액 고정 방식이면 월 고정 인출액)를 바꿨을 때만
+  const draft: Partial<Profile> | undefined = changed && (o.retireAge !== p.retireAge || o.retireMonthlyExpense !== baseLiving) ? { retireAge: o.retireAge, ...(drawMode ? { fixedDraw: o.retireMonthlyExpense } : { retireMonthlyExpense: o.retireMonthlyExpense }) } : undefined;
 
   return (
     <>
-      <PageHeader title="처방 실행" desc="진단 결과를 바탕으로 행동 지침을 제시하고, 계획을 바꿨을 때의 결과를 바로 확인합니다." />
+      <PageHeader title="처방" desc="진단 결과를 바탕으로 행동 지침을 제시하고, 계획을 바꿨을 때의 결과를 바로 확인합니다." />
 
       <Card title="처방전" action={<span className="text-xs text-muted">목표 성공확률 {p.criteria.successTarget}% 기준</span>}>
         <ul className="divide-y divide-line">
@@ -88,8 +91,8 @@ function PrescribeInner() {
               <Stat label="현재 계획" value={pct(d.sim.successRate)} tone={lvl(d.sim.successRate)} />
               <Stat label="바꾼 계획" value={pct(whatIf.successRate)} tone={lvl(whatIf.successRate)} sub={changed ? `${delta >= 0 ? '+' : ''}${delta.toFixed(0)}%p` : '슬라이더를 움직여 보세요'} />
             </div>
-            {changed && (o.retireAge !== p.retireAge || o.retireMonthlyExpense !== baseLiving) && (
-              <Button variant="ghost" className="w-full" onClick={() => db.profile.put({ ...p, retireAge: o.retireAge, ...(drawMode ? { fixedDraw: o.retireMonthlyExpense } : { retireMonthlyExpense: o.retireMonthlyExpense }) })}>
+            {draft && (
+              <Button variant="ghost" className="w-full" onClick={() => db.profile.put({ ...p, ...draft })}>
                 {retired ? '' : '은퇴 나이·'}{drawMode ? '고정 인출액을' : '생활비를'} 내 계획에 반영
               </Button>
             )}
@@ -103,6 +106,8 @@ function PrescribeInner() {
           <LifeChart sim={whatIf} retireAge={o.retireAge} height={320} />
         </div>
       </Card>
+
+      <PlanCompare draft={draft} />
 
       <Card title="재무목표별 필요 적립액" className="mt-4">
         {d.goalPlans.length === 0 ? (
@@ -231,7 +236,7 @@ function PrescribeInner() {
               );
             })}
           </div>
-          {retired && <p className="mt-3 rounded-lg bg-sunken px-3 py-2 text-xs text-muted">이미 인출 중입니다. 계좌마다 현금성(앞 2년 인출분)·채권(3~5년차)·성장자산을 얼마씩 둘지는 ‘노후 인출 → 인출용 자산 배치 가이드’에서 볼 수 있습니다.</p>}
+          {retired && <p className="mt-3 rounded-lg bg-sunken px-3 py-2 text-xs text-muted">이미 인출 중입니다. 계좌마다 현금성(앞 2년 인출분)·채권(3~5년차)·성장자산을 얼마씩 둘지는 ‘인출 계획 → 인출용 자산 배치 가이드’에서 볼 수 있습니다.</p>}
           {!retired && s.savings < 0 && (
             <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
               매달 {won(-s.savings)}이 모자라 금융자산에서 빠져나갑니다.{' '}

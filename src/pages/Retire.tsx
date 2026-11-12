@@ -8,7 +8,9 @@ import { StressTest } from '../components/StressTest';
 import { debtAnnualAt, expenseAt, expenseRatioAt, GOAL_KIND_LABEL, goalBreakdownAt, goalKind, guardrailSim, incomeValue, nominalFactor } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
 import { goalItemsFrom, loanEndAge, loanSchedule } from '../engine/goals';
-import { hpEstate, housePension, RE_USE, reUseOf, usesHp, willSell } from '../engine/realestate';
+import { CashflowFlow } from '../components/CashflowFlow';
+import { SurvivorCard } from '../components/SurvivorCard';
+import { HP_OVER_NOTE, hpEstate, hpOverCap, housePension, RE_USE, reUseOf, usesHp, willSell } from '../engine/realestate';
 import { Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -31,7 +33,7 @@ export default function Retire() {
   const fullAge = Math.max(start.age, ...inp.pensions.map((x) => x.startAge));
   const draw = inp.fixedDraw !== undefined;
   // 소득 − 지출 = 월 수지(fullAge 기준, 현재가치). 인출액 고정이면 고정액에서 국민·개인연금만 빼고 나머지는 연금계좌 등 금융자산에서 인출
-  // 인출액 고정 방식은 노후 인출과 같이 생활비 = 국민·개인연금과 고정 인출액 중 큰 쪽 + 그 밖의 소득(월세 등, 받는 만큼 더 씀)
+  // 인출액 고정 방식은 인출 계획과 같이 생활비 = 국민·개인연금과 고정 인출액 중 큰 쪽 + 그 밖의 소득(월세 등, 받는 만큼 더 씀)
   const incomeRows = inp.pensions
     .map((x) => ({ x, monthly: incomeValue({ ...x, firstShare: undefined }, fullAge, inp.inflation) / 12 }))
     .filter((r) => r.monthly > 0.5);
@@ -79,6 +81,7 @@ export default function Retire() {
       : re.map((a) => `${a.name}(${RE_USE[reUseOf(a)]}${usesHp(a) ? ` · ${a.hpAge}세 주택연금` : willSell(a, nowYear) ? ` · ${a.lockYear}년 매각` : ''}${reUseOf(a) === 'rental' && (a.rent ?? 0) > 0 ? ' · 월세 소득' : ''})`).join(' · ') + ' — 보유 중엔 시뮬레이션 제외';
   // 주택연금: 기대수명 때 대출 잔액을 빼고 상속으로 남는 주택 가치(참고 · 순자산·부채에는 넣지 않음)
   const hpNote = re.filter((a) => usesHp(a) && housePension(a, p, d.summary.age).eligible).map((a) => { const e = hpEstate(a, p, d.summary.age); return `${a.name} ${won(e.left)}(현재가치 ${won(e.leftReal)}, ${e.age}세 · 시세 ${won(e.price)} − 대출 잔액 ${won(e.balance)})`; }).join(' · ');
+  const hpOver = re.filter(hpOverCap).map((a) => a.name || '주택').join(' · ');
   const readyLevel: Level = need.ratio >= 100 ? 'good' : need.ratio >= 70 ? 'caution' : 'danger';
 
   const verdict =
@@ -179,7 +182,7 @@ export default function Retire() {
           )}
           <div className="mt-3 rounded-lg bg-sunken px-3 py-2 text-sm">
             <Line label={`${retired ? '현재' : `은퇴 첫해(${start.age}세)`} 인출률`} value={`${pct(start.rate, 1)} · 상한 ${p.criteria.withdrawRateMax}%`} />
-            <div className="mt-0.5 text-xs text-muted">연 {won(start.outflow)} ÷ {retired ? '현재 금융자산' : '평균수익 가정 은퇴 시점 금융자산'} {won(start.balance)} · 노후 인출 화면과 같은 기준</div>
+            <div className="mt-0.5 text-xs text-muted">연 {won(start.outflow)} ÷ {retired ? '현재 금융자산' : '평균수익 가정 은퇴 시점 금융자산'} {won(start.balance)} · 인출 계획 화면과 같은 기준</div>
           </div>
           <p className="mt-3 text-xs text-muted">소득 개시 전 기간에는 그만큼 더 자산에서 인출합니다. 인상률을 넣은 소득은 물가보다 덜 오르면 실질 금액이 줄어듭니다.{lateDebts.length > 0 && ' 은퇴 후에도 남는 대출 상환액은 상환이 끝날 때까지 추가로 인출합니다.'}{premiums.length > 0 && ' 은퇴 뒤까지 내는 보험료도 납입이 끝날 때까지 추가로 인출합니다.'}</p>
         </Card>
@@ -203,12 +206,15 @@ export default function Retire() {
       </div>
 
       <StressTest />
+      <SurvivorCard />
 
       <Sensitivity />
 
       <ExpenseCompare />
 
       <LoanTable liabilities={d.liabilities} age={d.summary.age} retireAge={inp.retireAge} lifeExpectancy={p.lifeExpectancy} birthYear={p.birthYear} />
+
+      <CashflowFlow />
 
       <Card title="시뮬레이션 가정" className="mt-4">
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm md:grid-cols-4">
@@ -232,6 +238,7 @@ export default function Retire() {
           {premiums.length > 0 && <Assume k={GOAL_KIND_LABEL.premium} v={premiums.map((x) => `${x.name} ${x.first.age}~${x.last}세 · 총 ${won(x.total)}`).join(' · ')} />}
           <Assume k="부동산" v={reNote} />
           {hpNote && <Assume k="주택연금 상속 시 남는 주택 가치" v={hpNote} />}
+          {hpOver && <Assume k="주택연금 가입 요건 주의" v={`${hpOver}: ${HP_OVER_NOTE}. 가입이 안 되면 이 화면의 결과는 주택연금 소득만큼 실제보다 좋게 나온 것입니다.`} />}
         </dl>
       </Card>
       <Disclaimer />

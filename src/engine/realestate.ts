@@ -129,6 +129,11 @@ const HP_PER_EOK = [15.6, 21.07, 25.29, 30.78, 38.12, 48.3];
 const HP_CAP = [187.2, 252.8, 303.5, 341.4, 366.6, 406.0];
 /** 가입 가능 주택: 공시가격 12억 이하(시세로 대략 17억 안팎) */
 export const HP_PRICE_CAP = 120000;
+/** 공시가격 12억에 해당하는 시세 어림(공시가격이 시세의 70% 안팎이라고 봄). 지금 시세가 이를 넘으면 가입이 어려울 수 있음 */
+export const HP_MARKET_CAP = 170000;
+/** 주택연금을 넣었는데 지금 시세가 가입 기준(공시가격 12억 ≈ 시세 17억)을 넘는 집인지 */
+export const hpOverCap = (a: Asset) => usesHp(a) && a.amount > HP_MARKET_CAP;
+export const HP_OVER_NOTE = '시세가 약 17억(공시가격 12억 어림)을 넘어 주택연금 가입이 어려울 수 있음 — 공시가격 확인';
 
 function interp(xs: number[], ys: number[], x: number) {
   if (x <= xs[0]) return ys[0];

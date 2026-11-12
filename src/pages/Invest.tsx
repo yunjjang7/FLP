@@ -1,5 +1,6 @@
 import { Bar as RBar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { Donut } from '../components/Donut';
+import { RebalanceCard } from '../components/RebalanceCard';
 import { Badge, Bar, CHART_COLORS, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { ASSET_TYPES, NATURE_LABEL, PURPOSE_LABEL, RISK_PROFILES } from '../engine/portfolio';
 import { RE_USE, reUseOf } from '../engine/realestate';
@@ -73,6 +74,8 @@ export default function Invest() {
           <Donut data={s.byPurpose} />
         </Card>
       </div>
+
+      <RebalanceCard />
 
       <div className="mt-4 grid gap-4 lg:grid-cols-2">
         <Card title="유형별 비중 (금융자산)">

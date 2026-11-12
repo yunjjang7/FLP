@@ -8,7 +8,7 @@ export const STRATEGIES: Record<StrategyKey, { label: string; desc: string }> = 
   fixed: { label: '정액 인출', desc: '부족한 생활비(생활비 − 연금)를 매년 같은 실질금액으로 인출합니다. 생활은 안정적이지만 하락장에서 고갈 위험이 커집니다.' },
   percent: { label: '정률 인출', desc: '매년 잔액의 일정 비율(예: 4%)만 인출합니다. 자산은 고갈되지 않지만 인출액이 시장에 따라 변합니다.' },
   bucket: { label: '3-버킷 전략', desc: '현금(2년치)·채권(5년치)·성장자산으로 나눠, 현금 바구니에서 인출하고 성장자산이 오른 해에만 채워 넣어 하락장 매도를 피합니다.' },
-  guardrail: { label: '가드레일', desc: '매년 초 자산을 평균수익 계획의 기준선과 비교해, 하단선 아래면 인출을 줄이고 상단선 위면 되돌립니다. 하락장에서 조금 덜 써서 고갈을 늦춥니다.' },
+  guardrail: { label: '가드레일', desc: '매년 초 자산을 평균수익 계획의 기준선과 비교해, 하단선 아래면 인출을 줄이고 상단선 위면 되돌립니다. 하락장에서 조금 덜 써서 고갈을 늦춥니다. 자산이 끝까지 버티는 데 필요한 금액보다 충분히 많으면 기준선보다 낮아도 줄이지 않습니다.' },
 };
 
 export interface GuardrailOptions {
@@ -22,10 +22,17 @@ export interface GuardrailOptions {
 
 export const DEFAULT_GUARDRAIL: GuardrailOptions = { band: 0.15, cut: 0.1, raise: 0.1, floor: 0.7, ceil: 1.3, cutOnly: true };
 
-/** 가드레일 배율 갱신: 연초 자산(bal)을 기준선(base)과 비교 */
-export function nextGuardrail(m: number, bal: number, base: number, g: GuardrailOptions) {
-  if (bal < base * (1 - g.band)) return Math.max(g.floor, m * (1 - g.cut));
+/**
+ * 가드레일 배율 갱신: 연초 자산(bal)을 기준선(base)과 비교.
+ * required(평균 수익으로 끝까지 버티는 데 필요한 자산)를 주면 감액 판정은 기준선과 필요 자산 중 낮은 쪽으로 함:
+ * 매각대금처럼 큰 돈이 들어와 기준선이 필요 자산보다 훨씬 높은 계획에서, 자산이 충분한데도 기준선보다 낮다는 이유로 줄이지 않게.
+ */
+export function nextGuardrail(m: number, bal: number, base: number, g: GuardrailOptions, required?: number) {
+  const line = required === undefined ? base : Math.min(base, Math.max(0, required));
+  if (bal < line * (1 - g.band)) return Math.max(g.floor, m * (1 - g.cut));
   if (bal > base * (1 + g.band)) return Math.min(g.cutOnly ? Math.max(1, m) : g.ceil, m * (1 + g.raise));
+  // 줄였던 인출은 필요 자산의 상단선만 넘어도 되돌림
+  if (m < 1 && bal > line * (1 + g.band)) return Math.min(1, m * (1 + g.raise));
   return m;
 }
 
@@ -96,8 +103,24 @@ const toReal = (nominal: number, inf: number, share = 1) => (1 + Math.max(-0.95,
 
 type Draw = () => number;
 
-/** baseline: 가드레일 기준선(평균수익 정액 인출 경로의 연초 잔액) */
-function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, baseline?: number[]) {
+/**
+ * 필요 자산: 평균 수익이 날 때 그 해 초(그 해 유입 전) 자산이 얼마면 끝까지 계획 인출을 댈 수 있는지(실질).
+ * [i] = i번째 해 초, 마지막은 0. 뒤에 들어올 일시금·매각대금은 그 해부터의 필요액에서 빼되, 들어오기 전 해의 인출은 그대로 필요
+ */
+export function requiredBalances(inp: WithdrawInput) {
+  const years = Math.max(0, inp.endAge - inp.startAge);
+  const out = new Array<number>(years + 1).fill(0);
+  for (let i = years - 1; i >= 0; i--) {
+    const age = inp.startAge + i;
+    const sh = shareAt(inp, age);
+    const r = toReal((inp.meanReturn / 100) * sh, inp.inflation, sh);
+    out[i] = Math.max(0, needAt(inp, age, sh) - inflowOf(inp, age) + out[i + 1] / (1 + r));
+  }
+  return out;
+}
+
+/** baseline: 가드레일 기준선(평균수익 정액 인출 경로의 연초 잔액), required: 필요 자산 */
+function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, baseline?: number[], required?: number[]) {
   const years = Math.max(0, inp.endAge - inp.startAge);
   const rows: ScheduleRow[] = [];
   let ok = true;
@@ -131,7 +154,7 @@ function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, base
     const inflow = inflowOf(inp, age);
     let withdrawal = 0;
     if (key === 'guardrail') {
-      if (i > 0 && baseline) m = nextGuardrail(m, bal, baseline[i] ?? 0, g);
+      if (i > 0 && baseline) m = nextGuardrail(m, bal, baseline[i] ?? 0, g, required?.[i]);
       bal += inflow;
       minM = Math.min(minM, m);
       withdrawal = Math.min(bal, need * m);
@@ -194,8 +217,9 @@ export function compareStrategy(key: StrategyKey, inp: WithdrawInput, runs = 100
   const depAges: number[] = [];
   // 기준선: 평균수익으로 정액 인출했을 때의 연초 잔액
   const baseline = key === 'guardrail' ? [inp.startBalance, ...runOne('fixed', inp, () => 0, () => 0).rows.map((r) => r.endBalance)] : undefined;
+  const required = key === 'guardrail' ? requiredBalances(inp) : undefined;
   for (let r = 0; r < runs; r++) {
-    const { rows, ok, depleted, depletedAge, minM } = runOne(key, inp, g1, g2, baseline);
+    const { rows, ok, depleted, depletedAge, minM } = runOne(key, inp, g1, g2, baseline, required);
     if (depletedAge !== null) depAges.push(depletedAge);
     rows.forEach((row, i) => { bals[i].push(row.endBalance); incs[i].push(row.income); });
     if (ok) okCount++;
@@ -204,7 +228,7 @@ export function compareStrategy(key: StrategyKey, inp: WithdrawInput, runs = 100
     mins.push(minM);
   }
   const pct = (cols: number[][], p: number) => cols.map((c) => percentile(c.sort((a, b) => a - b), p));
-  const det = runOne(key, inp, () => 0, () => 0, baseline);
+  const det = runOne(key, inp, () => 0, () => 0, baseline, required);
   return {
     key,
     successRate: runs ? (okCount / runs) * 100 : 0,
@@ -225,7 +249,7 @@ export function compareStrategy(key: StrategyKey, inp: WithdrawInput, runs = 100
 /** 가드레일 기준선: 평균수익으로 정액 인출했을 때의 연초 잔액과 그 해 인출액 */
 export function guardrailBaseline(inp: WithdrawInput) {
   const rows = runOne('fixed', inp, () => 0, () => 0).rows;
-  return { balances: [inp.startBalance, ...rows.map((r) => r.endBalance)], withdrawals: rows.map((r) => r.withdrawal), ...(rows[0]?.share !== undefined ? { share: rows[0].share } : {}) };
+  return { balances: [inp.startBalance, ...rows.map((r) => r.endBalance)], withdrawals: rows.map((r) => r.withdrawal), required: requiredBalances(inp), ...(rows[0]?.share !== undefined ? { share: rows[0].share } : {}) };
 }
 
 /** 기준선 고정 시점부터 Y년 12월 말까지 흐른 햇수(고정한 달부터 셈) */
@@ -242,7 +266,22 @@ const baseIndex = (base: Pick<PlanBase, 'share'>, t: number) => {
 
 /** 기준선 잔액(명목): t년 뒤, 연 단위 값 사이는 직선 보간 */
 export function baseBalanceAt(base: PlanBase, t: number) {
-  const b = base.balances;
+  return seriesAt(base, base.balances, t);
+}
+
+/** 필요 자산(명목): t년 뒤. 예전에 고정해 값이 없는 기준선은 undefined */
+export function baseRequiredAt(base: PlanBase, t: number) {
+  return base.required?.length ? seriesAt(base, base.required, t) : undefined;
+}
+
+/** 감액 판정선(명목): 기준선과 필요 자산 중 낮은 쪽 */
+export function baseFloorAt(base: PlanBase, t: number) {
+  const bl = baseBalanceAt(base, t);
+  const rq = baseRequiredAt(base, t);
+  return rq === undefined ? bl : Math.min(bl, rq);
+}
+
+function seriesAt(base: PlanBase, b: number[], t: number) {
   if (t <= 0) return b[0] ?? 0;
   const x = baseIndex(base, t);
   const i = Math.min(b.length - 1, Math.floor(x));
@@ -315,10 +354,11 @@ export function reviewYearEnds(base: PlanBase, records: YearEnd[], g: GuardrailO
     .map((record, i) => {
       const t = yearsToYearEnd(base, record.year);
       const baseline = baseBalanceAt(base, t);
-      const lower = baseline * (1 - g.band);
+      const required = baseRequiredAt(base, t);
+      const lower = baseFloorAt(base, t) * (1 - g.band);
       const upper = baseline * (1 + g.band);
       const position: YearEndPosition = record.balance < lower ? 'below' : record.balance > upper ? 'above' : 'inside';
-      m = nextGuardrail(m, record.balance, baseline, g);
+      m = nextGuardrail(m, record.balance, baseline, g, required);
       const nextPlan = basePlanWithdrawal(base, t, t + 1);
       // 연초 자산: 직전 해 결산 잔액, 첫해(기준선을 고정한 해)는 고정 시점 자산
       const prev = list[i - 1]?.year === record.year - 1 ? list[i - 1].balance : record.year === base.year ? base.balances[0] ?? 0 : 0;

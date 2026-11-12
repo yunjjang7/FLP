@@ -200,7 +200,7 @@ export function runPath(input: PlanInput, z: () => number) {
     if (bear && depletedAt === null) cuts.push(age);
     const out = outflowAt(input, age, bear ? g!.cut / 100 : 0, sh);
     if (age >= input.retireAge) {
-      // 은퇴 후: 그 해 쓸 돈을 연초에 먼저 꺼내고 남은 돈만 굴림(노후 인출 화면과 같은 순서, 연말에 꺼내는 것보다 보수적)
+      // 은퇴 후: 그 해 쓸 돈을 연초에 먼저 꺼내고 남은 돈만 굴림(인출 계획 화면과 같은 순서, 연말에 꺼내는 것보다 보수적)
       bal -= out;
       if (bal < 0) {
         if (depletedAt === null) depletedAt = age + 1;

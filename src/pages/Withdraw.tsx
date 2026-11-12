@@ -30,7 +30,7 @@ const COLORS: Record<StrategyKey, string> = { fixed: 'var(--chart-3)', percent: 
 
 export default function Withdraw() {
   const d = useFlp();
-  if (!d.hasData) return <><PageHeader title="노후 인출" /><EmptyState /></>;
+  if (!d.hasData) return <><PageHeader title="인출 계획" /><EmptyState /></>;
   return <WithdrawInner />;
 }
 
@@ -123,7 +123,7 @@ function WithdrawInner() {
 
   return (
     <>
-      <PageHeader title="노후 인출" desc="은퇴 후 자산을 어떤 방식으로 꺼내 쓸지 전략별로 비교합니다. 금액은 현재 물가 기준입니다." />
+      <PageHeader title="인출 계획" desc="은퇴 후 자산을 어떤 방식으로 꺼내 쓸지 전략별로 비교합니다. 금액은 현재 물가 기준입니다." />
 
       <Card title="인출 조건" action={retired && <Badge level="good">{startAge}세 · 인출 중</Badge>}>
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">

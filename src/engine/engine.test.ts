@@ -64,7 +64,7 @@ describe('몬테카를로', () => {
     const d = deterministicPath(base).balances;
     r.p50.forEach((v, i) => expect(v).toBeCloseTo(d[i], 4));
   });
-  it('은퇴 후에는 그 해 쓸 돈을 연초에 먼저 꺼내고 남은 돈만 굴림(노후 인출의 정액 인출과 같은 경로)', () => {
+  it('은퇴 후에는 그 해 쓸 돈을 연초에 먼저 꺼내고 남은 돈만 굴림(인출 계획의 정액 인출과 같은 경로)', () => {
     const d = deterministicPath(base).balances;
     const i = base.retireAge - base.currentAge;
     const real = 1.05 / 1.02;

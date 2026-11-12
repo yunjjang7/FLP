@@ -136,9 +136,9 @@ export function retiredGoalPrescription(goalPlans: GoalPlan[]): Prescription | n
     area: '목표', level: 'good', badge: '참고',
     title: `앞으로 쓸 목적자금·반복 지출 ${goalPlans.length}건 — 인출 계획에 포함됨`,
     detail:
-      `${items.join(' · ')}. 이미 인출 중이라 따로 적립하는 대신 그 해에 금융자산에서 꺼내 쓰는 것으로 노후 진단·노후 인출에 반영했습니다(그 해 금액). ` +
+      `${items.join(' · ')}. 이미 인출 중이라 따로 적립하는 대신 그 해에 금융자산에서 꺼내 쓰는 것으로 노후 진단·인출 계획에 반영했습니다(그 해 금액). ` +
       (short > 0 ? `이 가운데 ${short}건은 ‘중기·목적자금’ 용도 자산으로 다 떼어 두지 못했습니다. 가까운 지출부터 현금성·채권으로 옮겨 두면 하락장에 주식을 팔지 않아도 됩니다. ` : '') +
-      '줄였을 때의 효과는 ‘노후 인출 → 목돈 지출 민감도’에서 볼 수 있습니다.',
+      '줄였을 때의 효과는 ‘인출 계획 → 목돈 지출 민감도’에서 볼 수 있습니다.',
   };
 }
 
@@ -154,7 +154,7 @@ export function emergencyPrescription(s: Summary, target: number, retired = fals
     return {
       area: '비상금', level: em < target / 2 ? 'danger' : 'caution',
       title: `현금성 자산 ${(target - em).toFixed(1)}개월분(${fmt((target - em) * s.expense)}원) 부족`,
-      detail: `단기·비상금 용도의 예금·현금성 자산이 월 지출의 ${em.toFixed(1)}개월분입니다(목표 ${target}개월). 인출 중에는 앞으로 1~2년치 인출분을 현금성(MMF·예금)으로 두어야 하락장에 주식을 팔지 않아도 됩니다. 연금계좌 안의 현금성 상품으로 두고 있다면 ‘노후 인출 → 인출용 자산 배치 가이드’의 계좌별 바구니 목표와 비교해 보세요.`,
+      detail: `단기·비상금 용도의 예금·현금성 자산이 월 지출의 ${em.toFixed(1)}개월분입니다(목표 ${target}개월). 인출 중에는 앞으로 1~2년치 인출분을 현금성(MMF·예금)으로 두어야 하락장에 주식을 팔지 않아도 됩니다. 연금계좌 안의 현금성 상품으로 두고 있다면 ‘인출 계획 → 인출용 자산 배치 가이드’의 계좌별 바구니 목표와 비교해 보세요.`,
     };
   }
   const run = emergencyRunway(s);

@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Asset, Cashflow, Draw, Goal, Insurance, Liability, Profile, Snapshot, YearEnd } from '../types';
+import type { Asset, Cashflow, Draw, Goal, Insurance, Liability, Profile, SavedPlan, Snapshot, YearEnd } from '../types';
 import { defaultProfile, sampleData, DEFAULT_CRITERIA } from './sample';
 
 export class FlpDB extends Dexie {
@@ -116,6 +116,23 @@ export async function importBackup(b: Backup) {
     await db.snapshots.bulkAdd(b.snapshots ?? []);
     await db.yearEnds.bulkAdd(b.yearEnds ?? []);
     await db.draws.bulkAdd(b.draws ?? []);
+  });
+}
+
+/**
+ * 저장한 계획 불러오기: 자산·부채·수입지출·목표·보험을 계획의 것으로 바꾸고 프로필도 계획의 것으로 바꿈.
+ * 지금 프로필의 저장 계획 목록은 그대로 두고, 순자산 추이·연말결산·월별 인출 기록은 건드리지 않음
+ */
+export async function loadPlan(plan: SavedPlan) {
+  await db.transaction('rw', [db.profile, db.assets, db.liabilities, db.cashflows, db.goals, db.insurance], async () => {
+    const cur = await db.profile.get('me');
+    await Promise.all(LIST_TABLES.map((t) => db[t].clear()));
+    await db.profile.put({ ...plan.profile, id: 'me', plans: cur?.plans ?? [] });
+    await db.assets.bulkAdd(plan.assets ?? []);
+    await db.liabilities.bulkAdd(plan.liabilities ?? []);
+    await db.cashflows.bulkAdd(plan.cashflows ?? []);
+    await db.goals.bulkAdd(plan.goals ?? []);
+    await db.insurance.bulkAdd(plan.insurance ?? []);
   });
 }
 

@@ -7,7 +7,8 @@ import { hiLoanDeduct, hiPropBase, hiPropScore, incomeTaxSchedule } from './inco
 import { debtAnnualAt, debtPaymentAt, incomeValue, inflowAt, savingsAt } from './montecarlo';
 import { summarize } from './portfolio';
 import { bucketMap, bulletPrescriptions } from './prescribe';
-import { HP_LOAN, hpEstate, hpEstimate, hpLoanOf, housePension, rentStreams, rentYield, saleInflow, selfShare, willSell } from './realestate';
+import { HP_LOAN, HP_MARKET_CAP, HP_OVER_NOTE, hpEstate, hpEstimate, hpLoanOf, hpOverCap, housePension, rentStreams, rentYield, saleInflow, selfShare, willSell } from './realestate';
+import { milestones } from './milestones';
 
 const Y = 2026;
 const rental = (over: Partial<Asset> = {}): Asset => ({
@@ -403,5 +404,34 @@ describe('만기일시 상환 대출', () => {
     const huge = bulletPrescriptions(buildPlanInput(d.profile, d.assets, [...d.liabilities, { ...bullet, balance: 9_000_000 }], d.goals, s));
     expect(huge[0]).toMatchObject({ level: 'danger' });
     expect(huge[0].title).toContain('금융자산 부족');
+  });
+});
+
+describe('주택연금 가입 요건 경고', () => {
+  const d = sampleData(Y);
+  const home: Asset = { ...d.assets.find((x) => x.type === 'realestate')!, hpAge: 65 };
+
+  it('시세 17억을 넘고 주택연금을 넣은 거주용만 경고', () => {
+    expect(HP_MARKET_CAP).toBe(170000);
+    expect(hpOverCap({ ...home, amount: 180000 })).toBe(true);
+    expect(hpOverCap({ ...home, amount: 170000 })).toBe(false); // 17억 딱 맞으면 경고 안 함
+    expect(hpOverCap(home)).toBe(false); // 7.5억
+    expect(hpOverCap({ ...home, amount: 180000, hpAge: 0 })).toBe(false); // 주택연금 안 함
+    expect(hpOverCap({ ...home, amount: 180000, hpAge: undefined })).toBe(false);
+    expect(hpOverCap({ ...home, amount: 180000, reUse: 'rental' })).toBe(false); // 임대용은 주택연금 대상 아님
+    expect(hpOverCap({ ...home, amount: 180000, reUse: undefined })).toBe(true); // 용도가 비면 거주용
+    expect(hpOverCap(rental({ amount: 180000, hpAge: 65 }))).toBe(false);
+    expect(HP_OVER_NOTE).toContain('17억');
+  });
+
+  it('이정표: 요건을 넘는 집의 주택연금 가입 항목에만 경고 문구', () => {
+    const find = (a: Asset) => milestones(d.profile, d.assets.map((x) => (x.type === 'realestate' ? a : x)), d.liabilities, d.goals, Y, 1).find((m) => m.label.includes('주택연금 가입'));
+    const over = find({ ...home, amount: 180000 })!;
+    expect(over.year).toBe(d.profile.birthYear + 65);
+    expect(over.kind).toBe('estate');
+    expect(over.note).toBe(HP_OVER_NOTE);
+    const ok = find(home)!;
+    expect(ok).toBeDefined();
+    expect(ok.note).toBeUndefined();
   });
 });

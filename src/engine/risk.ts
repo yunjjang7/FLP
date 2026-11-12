@@ -59,7 +59,7 @@ export function emergencyDetail(s: Summary, target: number, retired = false) {
   const em = emergencyMonths(s);
   const base = `단기·비상금 용도 유동자산이 ${retired ? '은퇴 후 월 지출(생활비 + 대출 상환 + 보험료)' : '월 지출'}의 ${em.toFixed(1)}개월분입니다. 목표 ${target}개월.`;
   // 인출 중에는 소득보다 많은 지출을 자산 인출로 메우는 것이 계획이라 ‘몇 개월 뒤 바닥’ 경고 대신 현금성 바구니를 안내
-  if (retired) return `${base} 인출 중에는 앞으로 1~2년치 인출분을 현금성으로 두면 하락장에 주식을 팔지 않아도 됩니다(노후 인출 → 인출용 자산 배치 가이드).`;
+  if (retired) return `${base} 인출 중에는 앞으로 1~2년치 인출분을 현금성으로 두면 하락장에 주식을 팔지 않아도 됩니다(인출 계획 → 인출용 자산 배치 가이드).`;
   const run = emergencyRunway(s);
   if (!Number.isFinite(run)) return base;
   return `${base} 다만 지금은 매달 ${Math.round(-s.savings).toLocaleString()}만원이 모자라, 이 부족분을 비상금에서 메우면 약 ${run.toFixed(1)}개월 뒤 바닥납니다. 그 뒤 소득이 끊기면 버틸 돈이 없으니 지출부터 줄이세요.`;

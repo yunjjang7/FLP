@@ -2,7 +2,7 @@ import type { Asset, Goal, Liability, Profile } from '../types';
 import { isLocked, isRecurring, lockedInflow } from './goals';
 import { DEFAULT_CONTRIB } from './incomeTax';
 import { isFinancial } from './portfolio';
-import { isRealEstate, usesHp, willSell } from './realestate';
+import { HP_OVER_NOTE, hpOverCap, isRealEstate, usesHp, willSell } from './realestate';
 import { PENSION_OPEN_AGE } from './tax';
 
 export type MilestoneKind = 'review' | 'open' | 'limit' | 'lump' | 'pension' | 'tax' | 'contrib' | 'estate' | 'loan' | 'goal';
@@ -141,7 +141,7 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
 
   // 부동산 매각·주택연금
   for (const a of assets.filter(isRealEstate)) {
-    if (usesHp(a)) out.push({ year: profile.birthYear + a.hpAge!, month: 0, kind: 'estate', label: `${a.name || '주택'} 주택연금 가입(본인 ${a.hpAge}세)` });
+    if (usesHp(a)) out.push({ year: profile.birthYear + a.hpAge!, month: 0, kind: 'estate', label: `${a.name || '주택'} 주택연금 가입(본인 ${a.hpAge}세)`, ...(hpOverCap(a) ? { note: HP_OVER_NOTE } : {}) });
     else if (willSell(a, nowYear)) out.push({ year: a.lockYear!, month: 0, kind: 'estate', label: `${a.name || '부동산'} 매각 예정`, note: '매각대금은 금융자산으로 들어와 함께 운용' });
   }
 

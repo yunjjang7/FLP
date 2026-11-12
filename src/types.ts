@@ -174,6 +174,7 @@ export interface PlanBase {
   inflation: number; // 명목 환산용 물가상승률
   balances: number[]; // 연초 잔액: [0] = 고정 시점 자산, [i] = i년 뒤
   withdrawals: number[]; // [i] = i번째 해 계획 인출액
+  required?: number[]; // 필요 자산: [i] = i년 뒤, 평균 수익으로 끝까지 버티는 데 필요한 자산(감액 판정은 기준선과 이 값 중 낮은 쪽)
   share?: number; // 첫해를 남은 달만큼만 계산한 기준선이면 그 비율(balances[1] = 고정한 해 12월 말). 없으면 1년 단위
 }
 
@@ -188,6 +189,7 @@ export interface Profile {
   spouseWageGross?: number; // 배우자 은퇴 전 세전 총급여(연, 오늘 기준, 만원)
   inflation: number;
   riskProfile: RiskProfile;
+  targetInvest?: number; // 리밸런싱 목표 투자형 비중(%, 0·없음이면 투자 성향 권장값)
   retireMonthlyExpense: number; // 은퇴 후 월 생활비(현재가치)
   dependentYears: number; // 부양 필요 기간(년)
   nationalPension: number; // 국민연금 월 수령액(현재가치)
@@ -222,6 +224,20 @@ export interface Profile {
   slotFillFrom?: number; // 꽉 채우기 시작 연도(0이면 올해)
   incomeTax?: IncomeTaxSettings; // 종합소득세·건강보험료 추정
   contrib?: ContribPlan; // 연금계좌 추가 납입(세액공제)
+  plans?: SavedPlan[]; // 저장한 계획(나란히 비교·불러오기용, 최대 5개)
+}
+
+/** 저장한 계획: 그때의 프로필·자산·부채·수입지출·목표·보험 묶음(안쪽 profile 에는 plans 를 넣지 않음) */
+export interface SavedPlan {
+  id: string;
+  name: string;
+  savedAt: string; // YYYY-MM-DD
+  profile: Profile;
+  assets: Asset[];
+  liabilities: Liability[];
+  cashflows: Cashflow[];
+  goals: Goal[];
+  insurance: Insurance[];
 }
 
 /** 나이 구간별 은퇴 후 생활비: fromAge(본인 나이)부터 월 monthly(오늘 물가 기준, 만원) */

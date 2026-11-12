@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { db } from '../db/db';
 import { carryBefore, carryOverPlan, carryPatch, drawTotal, undoCarryPlan, undoPatch, yearEndAccounts } from '../engine/drawLog';
-import { baseBalanceAt, DEFAULT_GUARDRAIL, guardrailBaseline, rebaseDiff, refixBase, restoreBase, reviewYearEnds, yearsToYearEnd, type StrategyResult, type WithdrawInput, type YearEndPosition, type YearEndRow } from '../engine/withdrawal';
+import { baseBalanceAt, baseFloorAt, DEFAULT_GUARDRAIL, guardrailBaseline, rebaseDiff, refixBase, restoreBase, reviewYearEnds, yearsToYearEnd, type StrategyResult, type WithdrawInput, type YearEndPosition, type YearEndRow } from '../engine/withdrawal';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Asset, Level, PlanBase, YearEnd } from '../types';
@@ -184,7 +184,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
   const chart: { year: number; baseline: number; lower: number; upper: number; actual: number | null }[] = [];
   for (let y = base.year; y <= Math.min(lastYear, base.year + base.balances.length - 2); y++) {
     const bl = baseBalanceAt(base, yearsToYearEnd(base, y));
-    chart.push({ year: y, baseline: bl, lower: bl * (1 - band), upper: bl * (1 + band), actual: yearEnds.find((r) => r.year === y)?.balance ?? null });
+    chart.push({ year: y, baseline: bl, lower: baseFloorAt(base, yearsToYearEnd(base, y)) * (1 - band), upper: bl * (1 + band), actual: yearEnds.find((r) => r.year === y)?.balance ?? null });
   }
   const gap = last ? ((last.record.balance - last.baseline) / last.baseline) * 100 : 0;
 
@@ -382,7 +382,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
         <li>매년 1월에 전년도 12월 말 평가액과 그 해 실제 인출액을 넣으세요. 판정은 1년에 한 번만 하고, 연중 등락에는 반응하지 않습니다.</li>
         <li>기준선과 계획 인출액은 물가를 반영한 그 해 금액입니다. 첫해는 기준선을 고정한 달부터 12월까지만 셉니다.</li>
         <li>
-          ‘기준선 다시 고정’은 누른 날의 계획(평균수익·정액 인출 경로)을 새 비교 잣대로 저장합니다. 판정·차이(%)·다음 해 권장 인출이 새 기준선으로 다시 계산되고, 가드레일 감액·증액 누적은 처음부터 다시 셉니다. 새 기준선 시작 연도보다 앞선 결산은 판정 표·그래프에서 빠집니다(기록은 남음). 저장한 결산, 자산 탭 금액, 월별 인출 기록, 노후 인출 전략 비교·세금·건보료 표, 노후 진단·처방은 바뀌지 않습니다. 바뀌는 내용은 확인 창에서 먼저 보여 주고, 직전 기준선은 한 단계 보관돼 ‘이전 기준선으로 되돌리기’로 돌아갈 수 있습니다.
+          ‘기준선 다시 고정’은 누른 날의 계획(평균수익·정액 인출 경로)을 새 비교 잣대로 저장합니다. 판정·차이(%)·다음 해 권장 인출이 새 기준선으로 다시 계산되고, 가드레일 감액·증액 누적은 처음부터 다시 셉니다. 새 기준선 시작 연도보다 앞선 결산은 판정 표·그래프에서 빠집니다(기록은 남음). 저장한 결산, 자산 탭 금액, 월별 인출 기록, 인출 계획 전략 비교·세금·건보료 표, 노후 진단·처방은 바뀌지 않습니다. 바뀌는 내용은 확인 창에서 먼저 보여 주고, 직전 기준선은 한 단계 보관돼 ‘이전 기준선으로 되돌리기’로 돌아갈 수 있습니다.
         </li>
         <li>실제 수익률(추정) = 12월 말 자산 ÷ (연초 자산 − 그 해 인출) − 1입니다. 연초 자산은 직전 해 결산값(첫해는 기준선을 고정할 때의 자산)을 쓰고, 직전 해 결산이 없으면 계산하지 않습니다. 연중에 넣은 돈(추가 납입·일시금 수령)이 있으면 그만큼 높게 나옵니다.</li>
         <li>‘계좌별로 입력’으로 저장하면 ‘이어받기’로 자산 탭 금액을 12월 말 평가액으로 한 번에 바꾸고, 연금계좌는 그 해 실제 인출(월별 기록)만큼 과세제외 금액·퇴직금 재원도 줄일 수 있습니다. 잘못 적용했으면 ‘이어받기 되돌리기’로 적용 직전 값으로 돌아갑니다. 합계만 넣었다면 ‘데이터·설정 → 자산’ 금액을 직접 12월 말 평가액으로 고쳐야 노후 진단·인출 계획이 그 값에서 다시 계산됩니다.</li>
