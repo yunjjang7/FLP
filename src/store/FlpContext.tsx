@@ -5,7 +5,7 @@ import { buildPlanInput, planGoals, type GoalPlan } from '../engine/goals';
 import { insuranceGap, type InsuranceGap } from '../engine/insurance';
 import { retirementNeed, simulate, withdrawStart, type PlanInput, type SimResult } from '../engine/montecarlo';
 import { summarize, type Summary } from '../engine/portfolio';
-import { bulletChecks, financialScore, riskChecks, type RiskCheck } from '../engine/risk';
+import { bulletChecks, financialScore, retiredBasis, riskChecks, type RiskCheck } from '../engine/risk';
 import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd, Draw } from '../types';
 
 export interface FlpData {
@@ -21,6 +21,7 @@ export interface FlpData {
   yearEnds: YearEnd[];
   draws: Draw[]; // 월별 실제 인출 기록
   summary: Summary;
+  basis: Summary; // 점검·처방 기준: 은퇴 후에는 월소득·월 지출을 은퇴 후 흐름으로 바꾼 값(은퇴 전이면 summary 와 같음)
   planInput: PlanInput;
   sim: SimResult;
   need: ReturnType<typeof retirementNeed>;
@@ -57,19 +58,21 @@ export function FlpProvider({ children }: { children: ReactNode }) {
     const summary = summarize(profile, assets, liabilities, cashflows, undefined, insurance, new Date().getMonth() + 1);
     const planInput = buildPlanInput(profile, assets, liabilities, goals, summary);
     const sim = simulate(planInput, 1000);
-    const ins = insuranceGap(profile, summary, insurance, goals);
+    // 이미 은퇴했으면 비상금·DSR·보험료 부담은 지출 탭·세후 월소득 대신 은퇴 후 흐름 기준
+    const basis = retiredBasis(summary, planInput);
+    const ins = insuranceGap(profile, basis, insurance, goals);
     const start = withdrawStart(planInput);
     return {
       loading: false,
       hasData: raw.hasProfile || assets.length > 0,
       profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds, draws,
-      summary, planInput, sim,
+      summary, basis, planInput, sim,
       need: retirementNeed(planInput),
       start,
       goalPlans: planGoals(goals, assets, summary.age),
       ins,
-      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, summary, start)],
-      score: financialScore(profile, assets, summary, sim.successRate, ins, start),
+      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start)],
+      score: financialScore(profile, assets, basis, sim.successRate, ins, start),
     };
   }, [raw]);
 

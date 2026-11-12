@@ -106,3 +106,7 @@ select {
   white-space: nowrap;
   padding-left: 1rem;
 }
+
+/* 가로로 넘기는 탭 줄: 스크롤은 되고 막대만 숨김 */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }

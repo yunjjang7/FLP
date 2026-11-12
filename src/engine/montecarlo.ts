@@ -66,6 +66,8 @@ export interface PlanInput {
    * 첫해의 생활비·소득·저축·대출 상환·수익을 그만큼만 셈(일시금·한 번 쓰는 목표는 그대로). 다음 해부터는 1년 단위
    */
   firstYearShare?: number;
+  /** 스트레스 테스트: 그 나이 해의 명목 수익률을 ret(%)로 고정(은퇴 직후 폭락·수익 없는 10년). 난수는 그대로 소비해 다른 해의 시장 경로는 기본 계산과 같음 */
+  shocks?: { age: number; ret: number }[];
 }
 
 /** 그 나이 해가 차지하는 비율: 첫해만 firstYearShare, 나머지는 1 */
@@ -188,18 +190,30 @@ export function runPath(input: PlanInput, z: () => number) {
     const { mean, vol } = returnAt(input, age);
     // 첫해가 1년이 안 되면 수익·물가도 그 기간만큼(변동성은 √기간)
     const sh = yearShareAt(input, age);
-    const nominal = Math.max(-0.95, (mean / 100) * sh + (vol / 100) * Math.sqrt(sh) * z());
+    const drawn = Math.max(-0.95, (mean / 100) * sh + (vol / 100) * Math.sqrt(sh) * z());
+    const shock = input.shocks?.find((x) => x.age === age);
+    const nominal = shock ? Math.max(-0.95, shock.ret / 100) : drawn;
     const real = (1 + nominal) / Math.pow(1 + input.inflation / 100, sh) - 1;
-    bal = bal * (1 + real);
     index *= 1 + nominal;
     peak = Math.max(peak, index);
     const bear = g !== undefined && g.cut > 0 && age >= input.retireAge && index < peak * (1 - g.drop / 100);
     if (bear && depletedAt === null) cuts.push(age);
-    if (age < input.retireAge) bal += savingsAt(input, age) * sh;
-    bal -= outflowAt(input, age, bear ? g!.cut / 100 : 0, sh);
-    if (bal < 0) {
-      if (depletedAt === null) depletedAt = age + 1;
-      bal = 0;
+    const out = outflowAt(input, age, bear ? g!.cut / 100 : 0, sh);
+    if (age >= input.retireAge) {
+      // 은퇴 후: 그 해 쓸 돈을 연초에 먼저 꺼내고 남은 돈만 굴림(노후 인출 화면과 같은 순서, 연말에 꺼내는 것보다 보수적)
+      bal -= out;
+      if (bal < 0) {
+        if (depletedAt === null) depletedAt = age + 1;
+        bal = 0;
+      }
+      bal = bal * (1 + real);
+    } else {
+      // 은퇴 전: 한 해 굴린 뒤 연말에 저축을 더하고 그 해 지출을 뺌
+      bal = bal * (1 + real) + savingsAt(input, age) * sh - out;
+      if (bal < 0) {
+        if (depletedAt === null) depletedAt = age + 1;
+        bal = 0;
+      }
     }
     balances[i + 1] = bal;
   }

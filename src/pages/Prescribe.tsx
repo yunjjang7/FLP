@@ -21,7 +21,8 @@ export default function Prescribe() {
 
 function PrescribeInner() {
   const d = useFlp();
-  const { profile: p, summary: s } = d;
+  // 처방·바구니 기준: 은퇴 후에는 월 지출·소득을 은퇴 후 흐름으로(은퇴 전이면 summary 와 같음)
+  const { profile: p, basis: s } = d;
   const rx = useMemo(() => prescriptions(p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins), [p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins]);
   const buckets = useMemo(() => bucketMap(p, s, d.goalPlans), [p, s, d.goalPlans]);
   // 필요 적립액 표에서 빠지는 목표(끝난 반복 지출·지난 목표·은퇴 분류)와 이유

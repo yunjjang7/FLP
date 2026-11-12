@@ -13,12 +13,13 @@ import { accountBuckets, isRiskCapped, marketRule, marketState } from './buckets
 import { milestones, monthsUntil, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
-import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, riskChecks } from './risk';
+import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, retiredBasis, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, rebaseDiff, refixBase, restoreBase, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
 import type { Draw, Goal, PlanBase } from '../types';
 import { carryBefore, carryOverPlan, carryPatch, undoCarryPlan, undoPatch, drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws, yearEndAccounts } from './drawLog';
 import { balanceAt, checkAges, lumpGrid, lumpTotal, returnScenarios, runScenario, scaleLiving, scaleLumps } from './scenarios';
 import { sensitivityExpenses } from '../components/Sensitivity';
+import { runStress, stressCases, STRESS_CRASH, STRESS_LONG } from './stress';
 
 const DEFAULT_TAX_ON = { on: true, rentSpouseShare: 0, rentExpense: 0, npTaxable: 100, npNet: 100, dedSelf: 150, dedSpouse: 150, hiNow: 50, hiRate: 7.19, hiLtc: 13.14, hiPublic: 50, hiPropGrowth: 0, hiPrivate: false, addToDraw: false };
 
@@ -63,6 +64,26 @@ describe('몬테카를로', () => {
     const d = deterministicPath(base).balances;
     r.p50.forEach((v, i) => expect(v).toBeCloseTo(d[i], 4));
   });
+  it('은퇴 후에는 그 해 쓸 돈을 연초에 먼저 꺼내고 남은 돈만 굴림(노후 인출의 정액 인출과 같은 경로)', () => {
+    const d = deterministicPath(base).balances;
+    const i = base.retireAge - base.currentAge;
+    const real = 1.05 / 1.02;
+    expect(d[i + 1]).toBeCloseTo((d[i] - 3000) * real, 6);
+    // 은퇴 전에는 한 해 굴린 뒤 연말에 저축을 더함
+    expect(d[1]).toBeCloseTo(base.startBalance * real + base.annualSavings, 6);
+    const w = { startAge: 60, endAge: 100, startBalance: d[i], expenseAnnual: 3000, pensions: base.pensions, meanReturn: 5, volatility: 10, inflation: 2, percentRate: 4 };
+    const f = compareStrategy('fixed', w, 10);
+    f.schedule.forEach((row, k) => expect(row.endBalance).toBeCloseTo(d[i + 1 + k], 4));
+  });
+  it('이미 은퇴했으면 비상금·DSR 기준은 지출 탭·세후 월소득 대신 은퇴 후 소득·지출', () => {
+    const sm = { income: 400, expense: 800, emergencyFund: 9000, debtPayment: 100 } as unknown as Parameters<typeof retiredBasis>[0];
+    const inp: PlanInput = { ...base, currentAge: 62, retireAge: 60, retireExpenseAnnual: 6000, pensions: [{ startAge: 60, annual: 2400 }], debts: [{ endAge: 70, annual: 1200 }], goals: [{ age: 62, amount: 360, premium: '종신', flow: true }, { age: 62, amount: 500 }] };
+    const b = retiredBasis(sm, inp);
+    expect(b.income).toBeCloseTo(200, 6); // 연금·월세 등 지금 소득
+    expect(b.expense).toBeCloseTo((6000 + 1200 + 360) / 12, 6); // 생활비 + 대출 + 보험료(목표 탭 지출은 빼고)
+    // 은퇴 전이면 그대로
+    expect(retiredBasis(sm, { ...inp, currentAge: 50 })).toBe(sm);
+  });
   it('저축이 늘면 성공확률이 줄지 않음', () => {
     expect(simulate({ ...base, annualSavings: 3000 }).successRate).toBeGreaterThanOrEqual(simulate(base).successRate);
   });
@@ -70,6 +91,28 @@ describe('몬테카를로', () => {
     const v = solveFor(base, (i, x) => ({ ...i, annualSavings: x }), 0, 20000, 85)!;
     expect(v).not.toBeNull();
     expect(simulate({ ...base, annualSavings: v }, 400, 7).successRate).toBeGreaterThanOrEqual(85);
+  });
+  it('스트레스 테스트: 나쁜 사건을 더하면 성공확률이 오르지 않고, 폭락은 그 해 수익률만 바꿈', () => {
+    const sb: PlanInput = { ...base, pensions: [{ name: '국민연금', startAge: 65, annual: 1200 }] };
+    const sim0 = simulate(sb, 400);
+    const cases = stressCases(sb);
+    expect(cases.map((c) => c.key)).toEqual(['crash', 'flat', 'inflation', 'long', 'npCut', 'noSave', 'combo']);
+    const res = Object.fromEntries(cases.map((c) => [c.key, runStress(c, 400)]));
+    for (const c of cases) expect(res[c.key].successRate).toBeLessThanOrEqual(sim0.successRate);
+    expect(res.combo.successRate).toBeLessThanOrEqual(res.crash.successRate);
+    expect(res.long.lifeExpectancy).toBe(base.lifeExpectancy + STRESS_LONG);
+    // 폭락: 은퇴 첫해 연초 잔액까지는 기본 경로와 같고, 그 해 말 잔액만 (연초에 그 해 쓸 돈을 꺼낸 뒤 남은 돈의) 수익률 차이만큼 낮음
+    const crash = cases[0].input;
+    const d0 = deterministicPath(base).balances;
+    const d1 = deterministicPath(crash).balances;
+    const i = base.retireAge - base.currentAge;
+    expect(d1.slice(0, i + 1)).toEqual(d0.slice(0, i + 1));
+    expect(d1[i + 1]).toBeLessThan(d0[i + 1]);
+    const real = (r: number) => (1 + r / 100) / (1 + base.inflation / 100);
+    expect(d0[i + 1] - d1[i + 1]).toBeCloseTo((d0[i] - outflowAt(sb, sb.retireAge)) * (real(base.retireMeanReturn ?? base.meanReturn) - real(STRESS_CRASH)), 4);
+    // 이미 은퇴했으면 저축 중단은 없고, 국민연금이 없으면 삭감도 없음
+    const keys = stressCases({ ...base, currentAge: base.retireAge, pensions: [] }).map((c) => c.key);
+    expect(keys).toEqual(['crash', 'flat', 'inflation', 'long', 'combo']);
   });
   it('하락장 가드레일: 생활비를 줄이면 성공확률이 줄지 않고, 감축 0이면 그대로', () => {
     const now = simulate(base, 500);
@@ -302,7 +345,7 @@ describe('은퇴 후 운용·대출 상환', () => {
     const a = deterministicPath(base).balances;
     const b = deterministicPath(late).balances;
     expect(b[20]).toBeCloseTo(a[20], 6); // 은퇴 시점까지 동일(상환 중이라 저축 증가 없음)
-    expect(b[21]).toBeCloseTo(a[21] - 600, 6);
+    expect(b[21]).toBeCloseTo(a[21] - 600 * (1.05 / 1.02), 6); // 은퇴 후에는 연초에 꺼내므로 그 돈의 한 해 수익만큼 더 줄어듦
     const w = { startAge: 60, endAge: 100, startBalance: 60000, expenseAnnual: 4000, pensions: [], meanReturn: 5, volatility: 10, inflation: 2, percentRate: 4 };
     const f = compareStrategy('fixed', { ...w, debts: [{ endAge: 65, annual: 600 }] }, 50);
     expect(f.schedule[0].withdrawal).toBeCloseTo(4600, 6);

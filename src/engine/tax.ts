@@ -341,10 +341,11 @@ export function pensionTaxSchedule(schedule: ScheduleRow[], setup: TaxSetup): Ta
     }
     // 운용수익은 모두 과세재원으로: 과세제외·퇴직금 재원은 명목 금액 그대로(실질로는 물가만큼 줄어듦).
     // 손실로 평가액이 남은 원금보다 작아지면 비례해 줄임
-    // 첫해가 1년이 안 되면(스케줄의 share) 수익·물가도 그 기간만큼
+    // 첫해가 1년이 안 되면(스케줄의 share) 수익도 그 기간만큼
     const sh = r.share ?? 1;
     const grow = Math.pow(1 + setup.realReturn, sh);
-    const inf = Math.pow(1 + setup.inflation / 100, sh);
+    // 명목 환산(defl)은 달력 연도 단위라, 과세제외·퇴직금 재원의 명목 금액이 그대로 유지되도록 첫해가 짧아도 한 해치 물가로 나눔
+    const inf = 1 + setup.inflation / 100;
     for (const p of accts) {
       const total = Math.max(0, (p.free + p.taxed + p.retire) * grow);
       let free = p.free / inf;

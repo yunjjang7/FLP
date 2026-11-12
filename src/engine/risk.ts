@@ -4,6 +4,21 @@ import { bulletNoMaturity } from './goals';
 import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
+import { goalBreakdownAt, pensionAt, retireOutflowAt, type PlanInput } from './montecarlo';
+
+/**
+ * 이미 은퇴해 인출 중이면 비상금·DSR·보험료 부담의 기준을 지출 탭·세후 월소득(은퇴 전 값) 대신
+ * 지금의 은퇴 후 흐름으로 바꿈: 월소득 = 연금·월세 등, 월 지출 = 은퇴 후 생활비 + 대출 상환 + 은퇴 후 보험료(+ 국민연금 몫 세금).
+ * 홈의 ‘월 현금흐름’과 같은 금액. 은퇴 전이면 그대로
+ */
+export function retiredBasis(s: Summary, input: PlanInput): Summary {
+  if (input.currentAge < input.retireAge) return s;
+  const age = input.currentAge;
+  const income = pensionAt(input, age);
+  const by = goalBreakdownAt(input, age);
+  const spend = Math.max(0, retireOutflowAt(input, age) + income) + by.premium + by.npTax;
+  return { ...s, income: income / 12, expense: spend / 12 };
+}
 
 export interface RiskCheck {
   key: string;
@@ -42,7 +57,7 @@ export function emergencyCap(s: Pick<Summary, 'savings' | 'emergencyFund'>, targ
 /** 비상금 설명. 부족분이 있으면 ‘지금처럼 가면 몇 개월 뒤 바닥나는지’를 덧붙임 */
 export function emergencyDetail(s: Summary, target: number, retired = false) {
   const em = emergencyMonths(s);
-  const base = `단기·비상금 용도 유동자산이 월 지출의 ${em.toFixed(1)}개월분입니다. 목표 ${target}개월.`;
+  const base = `단기·비상금 용도 유동자산이 ${retired ? '은퇴 후 월 지출(생활비 + 대출 상환 + 보험료)' : '월 지출'}의 ${em.toFixed(1)}개월분입니다. 목표 ${target}개월.`;
   // 인출 중에는 소득보다 많은 지출을 자산 인출로 메우는 것이 계획이라 ‘몇 개월 뒤 바닥’ 경고 대신 현금성 바구니를 안내
   if (retired) return `${base} 인출 중에는 앞으로 1~2년치 인출분을 현금성으로 두면 하락장에 주식을 팔지 않아도 됩니다(노후 인출 → 인출용 자산 배치 가이드).`;
   const run = emergencyRunway(s);
@@ -105,7 +120,7 @@ export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdr
     {
       key: 'dsr', label: '원리금 상환 부담(DSR)', value: `${dsr.toFixed(1)}%`,
       score: scale(dsr, 60, 40), level: 'good',
-      detail: '월소득 대비 대출 원리금 상환액. 40% 이하 권장.',
+      detail: withdraw?.retired ? '지금 들어오는 소득(연금·월세 등) 대비 대출 원리금 상환액. 40% 이하 권장.' : '월소득 대비 대출 원리금 상환액. 40% 이하 권장.',
     },
     {
       key: 'concentration', label: '단일 자산 집중도', value: `${conc.share.toFixed(1)}%`,

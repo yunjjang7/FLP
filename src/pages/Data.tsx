@@ -38,7 +38,7 @@ export default function Data() {
   return (
     <>
       <PageHeader title="데이터·설정" desc="모든 데이터는 이 기기의 브라우저 안에만 저장되며 외부로 전송되지 않습니다. 금액 단위는 만원입니다." />
-      <div className="-mx-4 mb-4 overflow-x-auto px-4 md:mx-0 md:px-0">
+      <div className="no-scrollbar -mx-4 mb-4 overflow-x-auto px-4 md:mx-0 md:px-0">
         <div className="flex w-max gap-1.5">
           {TABS.map((t) => (
             <button key={t.key} onClick={() => setTab(t.key)} className={`rounded-full px-3.5 py-1.5 text-sm font-medium ${tab === t.key ? 'bg-ink text-surface' : 'border border-line bg-surface text-muted'}`}>
@@ -74,7 +74,7 @@ function ProfileForm() {
   const { profile: p, summary, start, assets } = useFlp();
   const save = useSaveProfile();
   const rentals = assets.filter((a) => a.type === 'realestate' && reUseOf(a) === 'rental' && (a.rent ?? 0) > 0);
-  const incomeHint = [
+  const incomeHint = start.retired ? '은퇴 나이가 지나 노후 계산에는 쓰지 않습니다(지금 소득은 연금·월세 등 은퇴 후 소득으로 계산)' : [
     p.spouseBirthYear > 0 ? '배우자 소득 포함, 부부 합계' : '',
     rentals.length > 0 ? `은퇴 전 월세(${rentals[0].name || '임대 부동산'}${rentals.length > 1 ? ' 등' : ''})도 합쳐 넣으세요` : '',
   ].filter(Boolean).join(' · ');

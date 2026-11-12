@@ -200,7 +200,7 @@ export function guardrailPrescription(input: PlanInput, successRate: number, tar
   return {
     area: '노후', level: 'caution',
     title: `하락장 가드레일만으로는 목표 ${target}% 미달(가장 효과 큰 설정 ${best.sim.successRate.toFixed(0)}%)`,
-    detail: `최고점 −${best.drop}% 이하인 해에 생활비를 ${best.cut}% 줄여도 성공확률은 ${successRate.toFixed(0)}% → ${best.sim.successRate.toFixed(0)}%입니다. 하락장 대응과 함께 위의 저축·생활비·은퇴 시점 조정이 필요합니다.`,
+    detail: `최고점 −${best.drop}% 이하인 해에 생활비를 ${best.cut}% 줄여도 성공확률은 ${successRate.toFixed(0)}% → ${best.sim.successRate.toFixed(0)}%입니다. 하락장 대응만으로는 부족하니 위의 다른 조정안(생활비 등)과 함께 써야 합니다.`,
   };
 }
 

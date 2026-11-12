@@ -4,6 +4,7 @@ import { ExpenseCompare } from '../components/ExpenseCompare';
 import { GuardrailCompare } from '../components/GuardrailCompare';
 import { LifeChart } from '../components/LifeChart';
 import { Sensitivity } from '../components/Sensitivity';
+import { StressTest } from '../components/StressTest';
 import { debtAnnualAt, expenseAt, expenseRatioAt, GOAL_KIND_LABEL, goalBreakdownAt, goalKind, guardrailSim, incomeValue, nominalFactor } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
 import { goalItemsFrom, loanEndAge, loanSchedule } from '../engine/goals';
@@ -51,7 +52,10 @@ export default function Retire() {
   const premiumRows = inp.goals.filter((g) => g.premium);
   const premiums = [...new Set(premiumRows.map((g) => g.premium!))].map((name) => {
     const rows = premiumRows.filter((g) => g.premium === name);
-    return { name, first: rows[0], last: rows[rows.length - 1].age, total: rows.reduce((a, g) => a + g.amount, 0) };
+    // 이름이 같은 보험이 여러 건이면 첫해 금액을 합치고 가장 늦은 납입 나이를 씀
+    const firstAge = Math.min(...rows.map((g) => g.age));
+    const first = { ...rows[0], age: firstAge, amount: rows.filter((g) => g.age === firstAge).reduce((a, g) => a + g.amount, 0) };
+    return { name, first, last: Math.max(...rows.map((g) => g.age)), total: rows.reduce((a, g) => a + g.amount, 0) };
   });
   const goalRows = inp.goals.filter((g) => goalKind(g) === 'goal');
   const npTaxRows = inp.goals.filter((g) => goalKind(g) === 'npTax');
@@ -104,7 +108,7 @@ export default function Retire() {
         <Card><Stat label={retired ? '앞으로 필요한 자금' : '은퇴 시점 필요자금'} value={won(need.need)} sub={`${start.age}세~${p.lifeExpectancy}세 부족 생활비·지출의 현재가치`} /></Card>
         <Card><Stat label={retired ? '현재 금융자산' : '은퇴 시점 예상자산'} value={won(need.projected)} sub={retired ? `${start.age}세 · 인출 중` : '평균수익 가정, 목적자금 지출 후'} /></Card>
         <Card>
-          <Stat label="은퇴 준비율" value={pct(need.ratio)} tone={readyLevel} />
+          <Stat label="은퇴 준비율" value={pct(need.ratio)} tone={readyLevel} sub="해마다 평균 수익만 날 때 기준 · 100%여도 성공확률은 절반 안팎" />
           <div className="mt-2"><Bar value={need.ratio} level={readyLevel} /></div>
         </Card>
         {retired ? (
@@ -198,6 +202,8 @@ export default function Retire() {
         </Card>
       </div>
 
+      <StressTest />
+
       <Sensitivity />
 
       <ExpenseCompare />
@@ -208,7 +214,7 @@ export default function Retire() {
         <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm md:grid-cols-4">
           <Assume k="시작 금융자산" v={won(inp.startBalance)} />
           {inp.firstYearShare !== undefined && <Assume k={`올해(${inp.currentAge}세) 계산 기간`} v={`남은 ${Math.max(1, Math.round(inp.firstYearShare * 12))}개월 · 내년부터 1년 단위`} />}
-          <Assume k="연 저축액(은퇴 전)" v={inp.annualSavings < 0 ? `연 ${won(-inp.annualSavings)} 부족 · 금융자산에서 인출` : won(inp.annualSavings)} />
+          {!retired && <Assume k="연 저축액(은퇴 전)" v={inp.annualSavings < 0 ? `연 ${won(-inp.annualSavings)} 부족 · 금융자산에서 인출` : won(inp.annualSavings)} />}
           <Assume k={inp.retireMeanReturn === undefined ? '기대수익률 / 변동성' : '은퇴 전 수익률 / 변동성'} v={`${inp.meanReturn.toFixed(1)}% / ${inp.volatility.toFixed(1)}%`} />
           {inp.retireMeanReturn !== undefined && <Assume k="은퇴 후 수익률 / 변동성" v={`${inp.retireMeanReturn.toFixed(1)}% / ${(inp.retireVolatility ?? inp.volatility).toFixed(1)}%`} />}
           {(inp.debts ?? []).map((x) => (

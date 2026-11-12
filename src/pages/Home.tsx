@@ -37,7 +37,7 @@ export default function Home() {
 
   return (
     <>
-      <PageHeader title={`${d.profile.name ? d.profile.name + '님의 ' : ''}자산 한눈에`} desc={`${s.age}세 · 은퇴 목표 ${d.profile.retireAge}세 · 기준일 ${new Date().toLocaleDateString('ko-KR')}`} />
+      <PageHeader title={`${d.profile.name ? d.profile.name + '님의 ' : ''}자산 한눈에`} desc={`${s.age}세 · ${d.start.retired ? `은퇴 ${d.profile.retireAge}세(인출 중)` : `은퇴 목표 ${d.profile.retireAge}세`} · 기준일 ${new Date().toLocaleDateString('ko-KR')}`} />
 
       <div className="grid gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
