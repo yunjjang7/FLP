@@ -281,6 +281,32 @@ export interface YearEndRow {
   months: number; // 그 해 계획 기간(개월): 기준선을 고정한 첫해만 12보다 짧음
 }
 
+/** 기준선을 바꾸면 연말결산이 어떻게 달라지는지: 최근 판정·다음 해 권장 인출(전/후)과 판정에서 빠지는 결산 연도 */
+export function rebaseDiff(from: PlanBase | undefined, to: PlanBase, records: YearEnd[], g: GuardrailOptions) {
+  const before = from ? reviewYearEnds(from, records, g) : [];
+  const after = reviewYearEnds(to, records, g);
+  const kept = new Set(after.map((r) => r.record.year));
+  return {
+    before: before[before.length - 1] ?? null,
+    after: after[after.length - 1] ?? null,
+    dropped: before.map((r) => r.record.year).filter((y) => !kept.has(y)),
+  };
+}
+
+type BaseHolder = { planBase?: PlanBase; planBasePrev?: PlanBase };
+
+/** 기준선 다시 고정: 새 기준선으로 바꾸고 지금 기준선은 한 단계 보관 */
+export function refixBase<T extends BaseHolder>(p: T, next: PlanBase): T {
+  return { ...p, planBase: next, ...(p.planBase ? { planBasePrev: p.planBase } : {}) };
+}
+
+/** 이전 기준선으로 되돌리기: 보관한 기준선을 다시 쓰고 보관 칸은 비움(한 단계만) */
+export function restoreBase<T extends BaseHolder>(p: T): T {
+  if (!p.planBasePrev) return p;
+  const { planBasePrev, ...rest } = p;
+  return { ...rest, planBase: planBasePrev } as T;
+}
+
 /** 연말결산 기록을 기준선과 비교해 해마다 가드레일 판정(1년에 한 번, 직전 배율에서 이어서) */
 export function reviewYearEnds(base: PlanBase, records: YearEnd[], g: GuardrailOptions): YearEndRow[] {
   let m = 1;

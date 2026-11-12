@@ -210,6 +210,7 @@ export interface Profile {
   retireVolatility: number; // 은퇴 후 변동성(%)
   criteria: Criteria;
   planBase?: PlanBase; // 가드레일 기준선(연말결산 비교용)
+  planBasePrev?: PlanBase; // ‘기준선 다시 고정’ 직전 기준선(한 단계, 되돌리기용)
   expenseMode?: ExpenseMode; // 은퇴 후 생활비가 해마다 어떻게 변하는지(기본 물가 연동)
   expenseGrowth?: number; // expenseMode='growth': 생활비 명목 증가율(%)
   expenseSteps?: ExpenseBand[]; // 나이 구간별 은퇴 후 생활비(인출액 고정 방식에서는 쓰지 않음)

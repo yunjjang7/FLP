@@ -14,7 +14,7 @@ import { milestones, monthsUntil, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
 import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, riskChecks } from './risk';
-import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
+import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, rebaseDiff, refixBase, restoreBase, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
 import type { Draw, Goal, PlanBase } from '../types';
 import { carryBefore, carryOverPlan, carryPatch, undoCarryPlan, undoPatch, drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws, yearEndAccounts } from './drawLog';
 import { balanceAt, checkAges, lumpGrid, lumpTotal, returnScenarios, runScenario, scaleLiving, scaleLumps } from './scenarios';
@@ -536,6 +536,34 @@ describe('부부 소득·연금, 가드레일 비교, 연말결산', () => {
     expect(rows[1].months).toBe(12);
     // 직전 해 결산이 없으면 계산하지 않음
     expect(reviewYearEnds(pb, [{ year: 2028, balance: 7000, withdrawn: 1200 }], DEFAULT_GUARDRAIL)[0].actualReturn).toBeNull();
+  });
+  it('기준선 다시 고정: 바뀌는 판정·권장 인출·빠지는 결산 미리보기와 한 단계 되돌리기', () => {
+    const old: PlanBase = { savedAt: '2026-11-09', year: 2026, month: 11, inflation: 0, balances: [10000, 9000, 8000, 7000], withdrawals: [1200, 1200, 1200] };
+    const next: PlanBase = { savedAt: '2027-12-20', year: 2027, month: 1, inflation: 0, balances: [7000, 6000, 5000], withdrawals: [1000, 1000] };
+    const recs = [{ year: 2026, balance: 9900, withdrawn: 200 }, { year: 2027, balance: 7000, withdrawn: 1200 }];
+    const d = rebaseDiff(old, next, recs, DEFAULT_GUARDRAIL);
+    // 이전 기준선: 2027 말 하단선 아래(배율 0.9) → 새 기준선: 2027 말 기준선 6000의 +16.7% → 상단선 위, 감액만이라 배율 1
+    expect(d.before!.position).toBe('below');
+    expect(d.before!.multiplier).toBeCloseTo(0.9, 6);
+    expect(d.after!.position).toBe('above');
+    expect(d.after!.multiplier).toBe(1);
+    expect(d.after!.nextRecommended).toBeCloseTo(1000, 6);
+    expect(d.dropped).toEqual([2026]); // 새 기준선 시작(2027)보다 앞선 결산은 판정에서 빠짐
+    // 기준선이 없던 상태에서 처음 고정하면 비교할 이전 판정이 없음
+    expect(rebaseDiff(undefined, old, recs, DEFAULT_GUARDRAIL)).toMatchObject({ before: null, dropped: [] });
+
+    // 다시 고정하면 직전 기준선을 한 단계 보관, 되돌리면 보관 칸을 비움
+    const p0: { name: string; planBase?: PlanBase; planBasePrev?: PlanBase } = { name: 'x', planBase: old };
+    const p1 = refixBase(p0, next);
+    expect(p1.planBase).toBe(next);
+    expect(p1.planBasePrev).toBe(old);
+    expect(p1.name).toBe('x');
+    const p2 = restoreBase(p1);
+    expect(p2.planBase).toBe(old);
+    expect('planBasePrev' in p2).toBe(false);
+    expect(restoreBase(p2)).toBe(p2); // 보관한 게 없으면 그대로
+    // 처음 고정할 때는 보관할 기준선이 없음
+    expect('planBasePrev' in refixBase({ name: 'y' } as { name: string; planBase?: PlanBase; planBasePrev?: PlanBase }, old)).toBe(false);
   });
   it('첫해를 남은 달만큼만 계산한 기준선: [1]이 고정한 해 12월 말', () => {
     // 11월에 고정(2개월 남음): balances[1] = 2026년 말, [2] = 2027년 말
