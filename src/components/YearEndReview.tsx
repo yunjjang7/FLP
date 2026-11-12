@@ -198,7 +198,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
             {p.planBasePrev && <Button variant="ghost" onClick={undoBase}>이전 기준선으로 되돌리기</Button>}
             <Button variant="ghost" onClick={fixBase}>{p.planBase ? '기준선 다시 고정' : '지금 계획을 기준선으로 고정'}</Button>
           </div>
-          {p.planBase && <span className="hidden max-w-[18rem] text-right sm:block text-[11px] leading-snug text-muted">은퇴 시점·생활비·수익률 같은 계획을 바꿨을 때만 누르세요. 자산이 줄었다고 다시 고정하면 가드레일 판정이 의미를 잃습니다.</span>}
+          {p.planBase && <span className="hidden max-w-[18rem] text-right sm:block lg:max-w-none lg:whitespace-nowrap text-[11px] leading-snug text-muted">계획(은퇴 시점·생활비·수익률)을 바꿨을 때만 누르세요. 자산이 줄었다고 누르면 판정이 의미를 잃습니다.</span>}
         </div>
       }
     >
