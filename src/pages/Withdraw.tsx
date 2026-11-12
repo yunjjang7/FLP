@@ -20,6 +20,7 @@ import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
 import { debtAnnualAt, GOAL_KIND_LABEL, goalKind, incomeValue } from '../engine/montecarlo';
 import { goalItemsFrom } from '../engine/goals';
+import { pensionOpenMonth } from '../engine/milestones';
 
 type Basis = 'avg' | 'p50' | 'p10' | 'custom';
 const basisLabel = (b: Basis, retired: boolean) => (b === 'avg' ? (retired ? '현재 자산' : '평균수익') : b === 'p50' ? '중앙값' : b === 'p10' ? '비관' : '직접');
@@ -433,7 +434,16 @@ function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase, minDraw, mon
  * 증권사 정기지급(연금 지급신청) 금액으로 넣을 월 세전 금액·세금·세후 수령액(명목)
  */
 function AccountLimits({ row, hasSpouse, months }: { row: TaxResult['rows'][number]; hasSpouse: boolean; months: number }) {
-  const sum = (f: (a: TaxResult['rows'][number]['accounts'][number]) => number) => row.accounts.reduce((s, a) => s + f(a), 0);
+  type Acct = TaxResult['rows'][number]['accounts'][number];
+  const { profile: p } = useFlp();
+  // 만 55세가 되는 해에 여는 계좌는 생일이 든 달부터만 받을 수 있어 그 달~12월로 나눔
+  const monthsOf = (a: Acct) => {
+    const spouse = a.owner === 'spouse' && p.spouseBirthYear > 0;
+    const open = pensionOpenMonth(row.year, spouse ? p.spouseBirthYear : p.birthYear, spouse ? p.spouseBirthMonth : p.birthMonth);
+    return Math.max(1, Math.min(months, 13 - open));
+  };
+  const late = row.accounts.filter((a) => a.drawn > 0.5 && monthsOf(a) < months);
+  const sum = (f: (a: Acct) => number) => row.accounts.reduce((s, a) => s + f(a), 0);
   return (
     <div className="mt-3">
       <div className="mb-1 text-xs font-medium text-muted">{row.year}년 계좌별 인출 지시 — 증권사 정기지급(연금 지급신청) 금액으로 설정 (그 해 금액)</div>
@@ -458,9 +468,9 @@ function AccountLimits({ row, hasSpouse, months }: { row: TaxResult['rows'][numb
                 <tr key={a.name} className={`border-b border-line text-right ${a.over > 0.5 ? 'text-bad' : a.drawn <= 0.5 ? 'text-muted' : ''}`}>
                   <td className="py-1.5 text-left">{a.name}{hasSpouse && <span className="ml-1 text-xs text-muted">{a.owner === 'spouse' ? '배우자' : '본인'}</span>}</td>
                   <td>{a.yearNo >= 1 ? `${a.yearNo}년차` : '수령 전'}</td>
-                  <td className="font-semibold">{a.drawn > 0.5 ? won(a.drawn / months) : '-'}</td>
-                  <td>{a.drawn > 0.5 ? won(a.tax / months) : '-'}</td>
-                  <td>{a.drawn > 0.5 ? won((a.drawn - a.tax) / months) : '-'}</td>
+                  <td className="font-semibold">{a.drawn > 0.5 ? won(a.drawn / monthsOf(a)) : '-'}</td>
+                  <td>{a.drawn > 0.5 ? won(a.tax / monthsOf(a)) : '-'}</td>
+                  <td>{a.drawn > 0.5 ? won((a.drawn - a.tax) / monthsOf(a)) : '-'}</td>
                   <td>{won(a.drawn)}</td>
                   <td>{closed ? '-' : a.limit === Infinity ? '한도 없음' : won(a.limit)}</td>
                   <td>{closed || a.limit === Infinity ? '-' : a.over > 0.5 ? `초과 ${won(a.over)}` : a.limit > 0 ? pct((a.drawn / a.limit) * 100) : '-'}</td>
@@ -470,9 +480,9 @@ function AccountLimits({ row, hasSpouse, months }: { row: TaxResult['rows'][numb
             <tr className="text-right font-semibold">
               <td className="py-1.5 text-left">합계</td>
               <td />
-              <td>{won(sum((a) => a.drawn) / months)}</td>
-              <td>{won(sum((a) => a.tax) / months)}</td>
-              <td>{won(sum((a) => a.drawn - a.tax) / months)}</td>
+              <td>{won(sum((a) => a.drawn / monthsOf(a)))}</td>
+              <td>{won(sum((a) => a.tax / monthsOf(a)))}</td>
+              <td>{won(sum((a) => (a.drawn - a.tax) / monthsOf(a)))}</td>
               <td>{won(sum((a) => a.drawn))}</td>
               <td />
               <td />
@@ -481,7 +491,7 @@ function AccountLimits({ row, hasSpouse, months }: { row: TaxResult['rows'][numb
         </table>
       </div>
       <p className="mt-1 text-xs text-muted">
-        올해 계획(세전)을 {months < 12 ? `남은 ${months}개월` : '12'}로 나눈 금액입니다. 목돈 지출이 있는 해는 그만큼 커지니, 생활비 몫만 정기지급으로 걸고 목돈은 필요한 달에 따로 꺼내도 됩니다. ISA·일반계좌에서 꺼내는 돈과 재투자로 옮기는 돈은 아래 스케줄 표에서 확인하세요.
+        올해 계획(세전)을 {months < 12 ? `남은 ${months}개월` : '12'}로 나눈 금액입니다.{late.length > 0 && ` ${late.map((a) => `${a.name}은 만 55세 생일이 든 달부터 ${monthsOf(a)}개월`).join(', ')}로 나눴습니다(합계는 그 달부터의 월액).`} 목돈 지출이 있는 해는 그만큼 커지니, 생활비 몫만 정기지급으로 걸고 목돈은 필요한 달에 따로 꺼내도 됩니다. ISA·일반계좌에서 꺼내는 돈과 재투자로 옮기는 돈은 아래 스케줄 표에서 확인하세요.
         {row.idle.self + row.idle.spouse > 0.5 && ` 올해 1,500만 한도 가운데 ${won(row.idle.self + row.idle.spouse)}은 인출 시작 연도 전인 계좌에 과세재원이 묶여 쓰지 못합니다.`}
       </p>
     </div>

@@ -51,6 +51,11 @@ function monthAfterBirthday(year: number, birthMonth: number) {
   return birthMonth === 12 ? { year: year + 1, month: 1 } : { year, month: birthMonth + 1 };
 }
 
+/** 그 해 연금계좌를 꺼낼 수 있는 첫 달: 만 55세가 되는 해면 생일이 든 달, 그 뒤 해는 1월(출생 월을 모르면 1월) */
+export function pensionOpenMonth(year: number, birthYear: number, birthMonth?: number) {
+  return year === birthYear + PENSION_OPEN_AGE ? validMonth(birthMonth) || 1 : 1;
+}
+
 const man = (v: number) => `${Math.round(v).toLocaleString('ko-KR')}만원`;
 
 /**
@@ -85,17 +90,22 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
   }
 
   // 계좌별: 연금수령 11년차(한도 없음), 인출 시작 연도 — 같은 해는 한 줄로 묶음
-  const group = (kind: MilestoneKind, yearOf: (a: Asset) => number, text: (names: string) => string, note?: string) => {
-    const by = new Map<number, string[]>();
+  const group = (kind: MilestoneKind, yearOf: (a: Asset) => number, text: (names: string) => string, note?: string, monthOf: (a: Asset, year: number) => number = () => 1) => {
+    const by = new Map<string, { year: number; month: number; names: string[] }>();
     for (const a of pensions) {
-      const y = yearOf(a);
-      if (y > 0) by.set(y, [...(by.get(y) ?? []), a.name || '연금']);
+      const year = yearOf(a);
+      if (!(year > 0)) continue;
+      const month = monthOf(a, year);
+      const k = `${year}-${month}`;
+      by.set(k, { year, month, names: [...(by.get(k)?.names ?? []), a.name || '연금'] });
     }
-    for (const [year, names] of by) out.push({ year, month: 1, kind, label: text(names.join('·')), note });
+    for (const g of by.values()) out.push({ year: g.year, month: g.month, kind, label: text(g.names.join('·')), note });
   };
-  const year1Of = (a: Asset) => a.pensionYear1 || people.find((p) => p.key === ownerOf(a))!.birth + PENSION_OPEN_AGE;
+  const personOf = (a: Asset) => people.find((p) => p.key === ownerOf(a))!;
+  const year1Of = (a: Asset) => a.pensionYear1 || personOf(a).birth + PENSION_OPEN_AGE;
   group('limit', (a) => year1Of(a) + 10, (n) => `${n} 연금수령 11년차 → 수령한도 없음`);
-  group('open', (a) => a.drawStartYear ?? 0, (n) => `${n} 인출 시작 — 연금 개시 신청`, '그 전 해까지는 추가 납입을 받는 계좌');
+  // 만 55세가 되는 해에 시작하면 1월이 아니라 생일이 든 달부터
+  group('open', (a) => a.drawStartYear ?? 0, (n) => `${n} 인출 시작 — 연금 개시 신청`, '그 전 해까지는 추가 납입을 받는 계좌', (a, year) => pensionOpenMonth(year, personOf(a).birth, personOf(a).month));
 
   // 퇴직금 연금 실수령 11년차: 감면 30% → 40%
   if ((profile.retireTaxYear1 ?? 0) > 0 && pensions.some((a) => (a.retirePart ?? 0) > 0)) {

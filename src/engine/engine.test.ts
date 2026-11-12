@@ -10,7 +10,7 @@ import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, s
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
 import { accountBuckets, isRiskCapped, marketRule, marketState } from './buckets';
-import { milestones, monthsUntil, untilLabel, yearTodos } from './milestones';
+import { milestones, monthsUntil, pensionOpenMonth, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
 import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, retiredBasis, riskChecks } from './risk';
@@ -1420,7 +1420,12 @@ describe('다가오는 이정표·할 일, 계좌별 자산 배치', () => {
     expect(at('퇴직 IRP·키움 연금수령 11년차')).toMatchObject({ year: 2033 }); // 같은 해는 한 줄
     expect(at('배우자 만 55세')).toMatchObject({ year: 2028, month: 11 });
     expect(at('본인 만 55세')).toBeUndefined(); // 2023년 — 지남
-    expect(at('키움 인출 시작')).toMatchObject({ year: 2032, kind: 'open' });
+    expect(at('키움 인출 시작')).toMatchObject({ year: 2032, month: 1, kind: 'open' });
+    // 만 55세가 되는 해에 시작하는 계좌는 1월이 아니라 생일이 든 달(11월생 → 11월)
+    expect(at('아내 IRP 인출 시작')).toMatchObject({ year: 2028, month: 11, kind: 'open' });
+    expect(pensionOpenMonth(2028, 1973, 11)).toBe(11);
+    expect(pensionOpenMonth(2029, 1973, 11)).toBe(1);
+    expect(pensionOpenMonth(2028, 1973, 0)).toBe(1); // 출생 월을 모르면 1월
     expect(at('노란우산 수령')).toMatchObject({ year: 2029, kind: 'lump' });
     expect(at('본인 국민연금 개시')).toMatchObject({ year: 2032, month: 8 }); // 7월생 → 8월부터
     expect(at('배우자 국민연금 개시')).toMatchObject({ year: 2038, month: 12 });
