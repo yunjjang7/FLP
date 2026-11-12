@@ -198,7 +198,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
             {p.planBasePrev && <Button variant="ghost" onClick={undoBase}>이전 기준선으로 되돌리기</Button>}
             <Button variant="ghost" onClick={fixBase}>{p.planBase ? '기준선 다시 고정' : '지금 계획을 기준선으로 고정'}</Button>
           </div>
-          {p.planBase && <span className="max-w-[18rem] text-right text-[11px] leading-snug text-muted">은퇴 시점·생활비·수익률 같은 계획을 바꿨을 때만 누르세요. 자산이 줄었다고 다시 고정하면 가드레일 판정이 의미를 잃습니다.</span>}
+          {p.planBase && <span className="hidden max-w-[18rem] text-right sm:block text-[11px] leading-snug text-muted">은퇴 시점·생활비·수익률 같은 계획을 바꿨을 때만 누르세요. 자산이 줄었다고 다시 고정하면 가드레일 판정이 의미를 잃습니다.</span>}
         </div>
       }
     >
@@ -206,6 +206,8 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
         {p.planBase
           ? `기준선: ${p.planBase.savedAt}에 고정한 계획(평균수익·정액 인출 경로를 물가 ${p.planBase.inflation}%로 환산한 그 해 금액)입니다. 자산을 고쳐도 기준선은 바뀌지 않습니다.`
           : '아직 기준선을 고정하지 않아 지금 계획으로 임시 계산했습니다. 자산을 고칠 때마다 기준선도 바뀌므로, 계획을 확정했으면 ‘기준선으로 고정’을 누르세요.'}
+        {/* 휴대폰에서는 버튼 옆이 좁아 안내를 여기로 */}
+        {p.planBase && <span className="sm:hidden"> ‘기준선 다시 고정’은 은퇴 시점·생활비·수익률 같은 계획을 바꿨을 때만 누르세요.</span>}
       </p>
 
       {last && (
