@@ -3,6 +3,7 @@ import type { Goal, Level, Liability, Profile } from '../types';
 import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
+import type { Retax } from './pensionTaxPlan';
 import type { Prescription } from './prescribe';
 import type { RiskCheck } from './risk';
 
@@ -28,18 +29,19 @@ export interface ReportInput {
   checks: RiskCheck[];
   rx: Prescription[];
   nowYear: number;
+  retax?: Retax; // 수익률 ±2%p 고갈 나이에서 연금 인출 세금을 바뀐 수익률로 다시 계산
 }
 
 /** 고갈 나이 문장: 끝까지 남으면 ‘N세까지 유지’ */
 export const depletionText = (age: number | null, life: number) => (age === null ? `${life}세까지 유지` : `${age}세에 고갈`);
 
 /** 수익률을 delta(%p)만큼 바꾼 평균 수익 경로의 고갈 나이(은퇴 후 수익률을 따로 두었으면 그것도 같이) */
-export function depletionWithReturn(input: PlanInput, delta: number) {
-  return deterministicPath({
+export function depletionWithReturn(input: PlanInput, delta: number, retax: Retax = (x) => x) {
+  return deterministicPath(retax({
     ...input,
     meanReturn: input.meanReturn + delta,
     ...(input.retireMeanReturn !== undefined ? { retireMeanReturn: input.retireMeanReturn + delta } : {}),
-  }).depletedAt;
+  })).depletedAt;
 }
 
 /** 은퇴 후 생활비 방식 한 문장 */
@@ -62,8 +64,8 @@ export function buildReport(x: ReportInput): ReportSection[] {
   const life = p.lifeExpectancy;
   const target = p.criteria.successTarget;
   const base = deterministicPath(inp).depletedAt;
-  const low = depletionWithReturn(inp, -2);
-  const high = depletionWithReturn(inp, 2);
+  const low = depletionWithReturn(inp, -2, x.retax);
+  const high = depletionWithReturn(inp, 2, x.retax);
   const mean = inp.retireMeanReturn ?? inp.meanReturn;
   const rateLevel: Level = sim.successRate >= target ? 'good' : sim.successRate >= 60 ? 'caution' : 'danger';
   const wLevel: Level = start.rate <= p.criteria.withdrawRateMax ? 'good' : start.rate <= p.criteria.withdrawRateMax * 1.25 ? 'caution' : 'danger';
@@ -159,7 +161,9 @@ export function buildReport(x: ReportInput): ReportSection[] {
   const limits: ReportLine[] = [
     { text: `금액은 모두 오늘 물가 기준이며 물가상승률은 연 ${p.inflation}%로 봤습니다. 대출 상환액·보험료처럼 계약 금액이 정해진 지출은 물가만큼 실제 부담이 줄어듭니다.` },
     { text: '고갈 나이는 평균 수익이 해마다 고르게 나는 한 가지 경로입니다. 은퇴 초기에 큰 하락이 오면 같은 평균 수익률이라도 결과가 더 나쁠 수 있어 성공확률을 함께 봅니다.' },
-    { text: '연금계좌 인출 세금은 인출 계획 화면과 같은 방식(가드레일 인출, 평균 수익 경로)으로 나이별 금액을 한 번 구해 모든 몬테카를로 경로에 같게 더했습니다. 수익이 나빠 덜 꺼내는 해에 세금이 줄어드는 효과는 빠집니다.' },
+    p.planPensionTax === false
+      ? { text: '연금계좌 인출 세금은 프로필 설정(‘노후 진단에 연금 인출 세금 반영’: 아니오)에 따라 성공확률·고갈 나이에 넣지 않았습니다(엑셀과 같은 기준). 실제로는 세금만큼 더 꺼내야 하므로 결과가 그만큼 낙관적입니다.', level: 'caution' as Level }
+      : { text: '연금계좌 인출 세금은 인출 계획 화면과 같은 방식(가드레일 인출, 평균 수익 경로)으로 나이별 금액을 한 번 구해 모든 몬테카를로 경로에 같게 더했습니다. 수익이 나빠 덜 꺼내는 해에 세금이 줄어드는 효과는 빠집니다. 수익률·생활비를 바꿔 본 결과(민감도·스트레스 테스트·처방)는 바꾼 계획으로 세금을 다시 계산했습니다.' },
     { text: '세법·국민연금 제도는 지금 기준이며 실제 수령액·세금은 국민연금공단·증권사·세무 전문가에게 확인하세요. 이 보고서는 투자 자문이 아닙니다.' },
   ];
 

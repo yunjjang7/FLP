@@ -21,7 +21,7 @@ function evaluate(input: PlanInput, metric: Metric) {
 }
 
 export function Sensitivity() {
-  const { planInput: inp, profile: p, start, summary } = useFlp();
+  const { planInput: inp, retax, profile: p, start, summary } = useFlp();
   const [metric, setMetric] = useState<Metric>('rate');
   const target = p.criteria.successTarget;
   const baseReturn = inp.retireMeanReturn ?? inp.meanReturn;
@@ -43,7 +43,7 @@ export function Sensitivity() {
     setGrid([]);
     const step = (i: number) => {
       if (cancelled || i >= expenses.length) return;
-      rows.push(returns.map((r) => evaluate({ ...inp, ...(drawMode ? { fixedDraw: expenses[i] * 12 } : { retireExpenseAnnual: expenses[i] * 12 }), retireMeanReturn: r, retireVolatility: vol }, metric)));
+      rows.push(returns.map((r) => evaluate(retax({ ...inp, ...(drawMode ? { fixedDraw: expenses[i] * 12 } : { retireExpenseAnnual: expenses[i] * 12 }), retireMeanReturn: r, retireVolatility: vol }), metric)));
       setGrid([...rows]);
       timer = setTimeout(() => step(i + 1), 0);
     };
@@ -53,7 +53,7 @@ export function Sensitivity() {
       clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inp, metric, baseExpense, baseReturn, vol]);
+  }, [inp, retax, metric, baseExpense, baseReturn, vol]);
 
   // 국민연금 개시 나이: 아직 받기 전일 때만 바꿔 볼 수 있음
   const nps = inp.pensions.find((x) => x.name === '국민연금');
@@ -64,11 +64,11 @@ export function Sensitivity() {
       .filter((a) => a >= Math.max(summary.age, 55))
       .map((a) => {
         const annual = nps.annual * npsFactor(a, normal);
-        const input = { ...inp, pensions: inp.pensions.map((x) => (x === nps ? { ...x, startAge: a, annual } : x)) };
+        const input = retax({ ...inp, pensions: inp.pensions.map((x) => (x === nps ? { ...x, startAge: a, annual } : x)) });
         return { age: a, monthly: annual / 12, rate: simulate(input, RUNS, 7).successRate, depleted: deterministicPath(input).depletedAt };
       });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inp, p.nationalPensionAge, summary.age]);
+  }, [inp, retax, p.nationalPensionAge, summary.age]);
 
   const cell = (v: number | null) => {
     if (metric === 'rate') {
@@ -126,7 +126,7 @@ export function Sensitivity() {
           {metric === 'rate'
             ? `시나리오 ${RUNS}개로 계산한 ${p.lifeExpectancy}세까지 자산 유지 확률입니다(목표 ${target}%).`
             : `매년 평균수익만 났을 때 자산이 바닥나는 나이입니다. ‘유지’는 ${p.lifeExpectancy}세까지 남는다는 뜻입니다. 실제 시장은 오르내리므로 성공확률과 함께 보세요.`}{' '}
-          테두리 칸이 지금 계획입니다{start.retired ? '' : ' (수익률은 은퇴 후 기준)'}.
+          테두리 칸이 지금 계획입니다{start.retired ? '' : ' (수익률은 은퇴 후 기준)'}.{inp.goals.some((g) => g.pensionTax) ? ' 연금 인출 세금은 칸마다 그 생활비·수익률로 다시 계산했습니다.' : ''}
         </p>
       </Card>
 

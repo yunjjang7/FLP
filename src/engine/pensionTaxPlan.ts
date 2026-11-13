@@ -42,14 +42,27 @@ export const PENSION_TAX_STRATEGY: StrategyKey = 'guardrail';
  * 연금 인출 세금(연금소득세 5.5/4.4/3.3%, 1,500만 초과 16.5%, 퇴직소득세)을 노후 진단 지출에 더함.
  * 인출 계획 화면과 같은 계산(가드레일 · 평균 수익 경로)으로 나이별 세금(실질)을 구해 그 해 지출(goals, pensionTax)로 넣음.
  * 몬테카를로 각 경로에서도 나이별 세금은 같은 금액으로 봄. 연금계좌가 없거나 세금이 없으면 그대로 돌려줌.
+ * 기대수명·물가는 계획(inp) 값을 씀(장수·고물가 스트레스처럼 계획만 바꾼 경우도 그에 맞춰 세금을 다시 계산).
+ * 프로필 ‘노후 진단에 연금 인출 세금 반영’이 아니오(planPensionTax === false)면 세금 지출을 빼고 돌려줌.
  */
 export function withPensionTax(profile: Profile, assets: Asset[], inp: PlanInput, nowYear: number): PlanInput {
   const base = { ...inp, goals: inp.goals.filter((g) => !g.pensionTax) };
+  if (profile.planPensionTax === false) return base;
   const start = withdrawStart(base);
-  const wi = withdrawInputOf(base, start, { endAge: profile.lifeExpectancy, inflation: profile.inflation, startBalance: start.balance });
-  const setup = taxSetup(profile, assets, nowYear, wi.startBalance, wi.meanReturn, profile.birthYear + start.age);
+  const wi = withdrawInputOf(base, start, { endAge: inp.lifeExpectancy, inflation: inp.inflation, startBalance: start.balance });
+  const setup = taxSetup({ ...profile, inflation: inp.inflation }, assets, nowYear, wi.startBalance, wi.meanReturn, profile.birthYear + start.age);
   if (!setup) return base;
   const { rows } = pensionTaxSchedule(compareStrategy(PENSION_TAX_STRATEGY, wi, 0).schedule, setup);
   const taxes = rows.filter((r) => r.tax > 0.005).map((r) => ({ age: r.age, amount: r.tax, pensionTax: true as const }));
   return taxes.length ? { ...base, goals: base.goals.concat(taxes) } : base;
+}
+
+/** 계획을 바꿔 다시 계산하는 표(민감도·스트레스 테스트·생활비 가정 비교 등)에서 쓰는, 바뀐 계획에 맞춰 연금 인출 세금을 다시 넣는 함수 */
+export type Retax = (inp: PlanInput) => PlanInput;
+export const makeRetax = (profile: Profile, assets: Asset[], nowYear: number): Retax => (inp) => withPensionTax(profile, assets, inp, nowYear);
+
+/** 계획에 들어 있는 연금 인출 세금 합계(실질)와 나이 범위 */
+export function pensionTaxTotal(inp: PlanInput) {
+  const t = inp.goals.filter((g) => g.pensionTax);
+  return { total: t.reduce((a, g) => a + g.amount, 0), from: t.length ? Math.min(...t.map((g) => g.age)) : null, to: t.length ? Math.max(...t.map((g) => g.age)) : null };
 }

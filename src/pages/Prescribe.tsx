@@ -8,7 +8,6 @@ import { db } from '../db/db';
 import { GOAL_CATEGORY } from '../db/schema';
 import { buildPlanInput, goalPlanSkips, type PlanOverrides } from '../engine/goals';
 import { simulate } from '../engine/montecarlo';
-import { withPensionTax } from '../engine/pensionTaxPlan';
 import { bucketMap, prescriptions } from '../engine/prescribe';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -26,7 +25,7 @@ function PrescribeInner() {
   const d = useFlp();
   // 처방·바구니 기준: 은퇴 후에는 월 지출·소득을 은퇴 후 흐름으로(은퇴 전이면 summary 와 같음)
   const { profile: p, basis: s } = d;
-  const rx = useMemo(() => prescriptions(p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins), [p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins]);
+  const rx = useMemo(() => prescriptions(p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins, d.retax), [p, s, d.planInput, d.sim.successRate, d.goalPlans, d.ins, d.retax]);
   const buckets = useMemo(() => bucketMap(p, s, d.goalPlans), [p, s, d.goalPlans]);
   // 필요 적립액 표에서 빠지는 목표(끝난 반복 지출·지난 목표·은퇴 분류)와 이유
   const skips = goalPlanSkips(d.goals, s.age);
@@ -56,8 +55,8 @@ function PrescribeInner() {
     });
     const full = { ...plan, ...(retired ? { retireMeanReturn: meanReturn, retireVolatility: volatility } : {}), ...(drawMode ? { fixedDraw: retireMonthlyExpense * 12 } : {}) };
     // 바꾼 계획으로 연금 인출 세금도 다시 계산(노후 진단과 같은 기준)
-    return simulate(withPensionTax(p, d.assets, full, p.birthYear + s.age), 1000);
-  }, [changed, d.sim, o, p, d.assets, d.liabilities, d.goals, s, retired, drawMode, baseReturn, baseVol]);
+    return simulate(d.retax(full), 1000);
+  }, [changed, d.sim, o, p, d.assets, d.liabilities, d.goals, s, retired, drawMode, baseReturn, baseVol, d.retax]);
   const delta = whatIf.successRate - d.sim.successRate;
   const lvl = (v: number): Level => (v >= p.criteria.successTarget ? 'good' : v >= 60 ? 'caution' : 'danger');
   // ‘내 계획에 반영’과 같은 필드: 은퇴 나이·생활비(인출액 고정 방식이면 월 고정 인출액)를 바꿨을 때만

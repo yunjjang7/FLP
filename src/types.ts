@@ -230,6 +230,7 @@ export interface Profile {
   retireMinDraw?: number; // 퇴직금 재원이 있는 계좌에서 쓸 일이 없는 해에도 꺼내는 최소 금액(연, 세전 명목 만원): 실수령연차가 끊기지 않게
   slotFill?: boolean; // 1,500만 한도 매년 꽉 채우기: 과세재원을 1인 1,500만까지 꺼내고 남는 돈은 ISA·일반계좌로 재투자
   slotFillFrom?: number; // 꽉 채우기 시작 연도(0이면 올해)
+  planPensionTax?: boolean; // 노후 진단(성공확률·고갈 나이)에 연금 인출 세금 반영(기본 예, false면 엑셀처럼 세금 없이)
   incomeTax?: IncomeTaxSettings; // 종합소득세·건강보험료 추정
   contrib?: ContribPlan; // 연금계좌 추가 납입(세액공제)
   creditCert?: Partial<Record<IncomeOwner, number>>; // 홈택스 소득·세액 공제확인서의 연금계좌 세액공제 대상 금액 누계(사람별, 만원)

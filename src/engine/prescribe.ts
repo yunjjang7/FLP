@@ -3,6 +3,7 @@ import type { Level, Profile } from '../types';
 import { onceGoalPlans, type GoalPlan } from './goals';
 import type { InsuranceGap } from './insurance';
 import { debtAnnualAt, deterministicPath, expenseAt, nominalFactor, solveFor, weakestGuardrail, withdrawStart, type PlanInput } from './montecarlo';
+import type { Retax } from './pensionTaxPlan';
 import { RISK_PROFILES, type Summary } from './portfolio';
 import { emergencyMonths, emergencyRunway, withdrawLevel } from './risk';
 
@@ -213,8 +214,10 @@ export function guardrailPrescription(input: PlanInput, successRate: number, tar
   };
 }
 
-export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap): Prescription[] {
+/** retax: 저축·수익률·은퇴 나이·생활비를 바꿔 역산할 때 연금 인출 세금도 바뀐 계획으로 다시 계산(없으면 지금 세금 그대로) */
+export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap, retax?: Retax): Prescription[] {
   const c = profile.criteria;
+  const rt: Retax = retax ?? ((x) => x);
   const out: Prescription[] = [];
 
   const debts = input.debts ?? [];
@@ -225,15 +228,15 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
   if (successRate < c.successTarget) {
     // 이미 은퇴했으면 저축·은퇴 나이 처방은 의미가 없어 건너뜀
     // 저축 여력이 마이너스(매달 자산에서 꺼내 씀)면 하한도 그만큼 내려, '부족분을 얼마로 줄이면 되는지'까지 찾음
-    const needSavings = retired ? null : solveFor(input, (i, v) => ({ ...i, annualSavings: v * 12 }), Math.min(0, s.savings), Math.max(500, s.income * 2, -s.savings * 2), c.successTarget);
+    const needSavings = retired ? null : solveFor(input, (i, v) => rt({ ...i, annualSavings: v * 12 }), Math.min(0, s.savings), Math.max(500, s.income * 2, -s.savings * 2), c.successTarget);
     if (needSavings !== null && needSavings > s.savings + 1) {
       out.push(savingsPrescription(s, needSavings, c.successTarget, freed));
     }
     // 이미 은퇴했으면 은퇴 후 수익률을, 아니면 은퇴 전 수익률을 역산
     const curReturn = retired ? (input.retireMeanReturn ?? input.meanReturn) : input.meanReturn;
     const needReturn = retired
-      ? solveFor(input, (i, v) => ({ ...i, retireMeanReturn: v, retireVolatility: Math.max(i.retireVolatility ?? i.volatility, v * 2) }), curReturn, 12, c.successTarget)
-      : solveFor(input, (i, v) => ({ ...i, meanReturn: v, volatility: Math.max(i.volatility, v * 2) }), input.meanReturn, 12, c.successTarget);
+      ? solveFor(input, (i, v) => rt({ ...i, retireMeanReturn: v, retireVolatility: Math.max(i.retireVolatility ?? i.volatility, v * 2) }), curReturn, 12, c.successTarget)
+      : solveFor(input, (i, v) => rt({ ...i, meanReturn: v, volatility: Math.max(i.volatility, v * 2) }), input.meanReturn, 12, c.successTarget);
     if (needReturn !== null && needReturn > curReturn + 0.1) {
       out.push({
         area: '투자', level: 'caution',
@@ -243,7 +246,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
           : `저축을 그대로 둘 경우 ${input.retireMeanReturn !== undefined ? "은퇴 전 " : ""}포트폴리오 기대수익률을 ${needReturn.toFixed(1)}%까지 올려야 합니다(변동성도 함께 커집니다). 투자형 비중 확대를 검토하세요.`,
       });
     }
-    const needAge = retired ? null : solveFor(input, (i, v) => ({ ...i, retireAge: Math.round(v) }), input.retireAge, Math.min(75, profile.lifeExpectancy - 1), c.successTarget);
+    const needAge = retired ? null : solveFor(input, (i, v) => rt({ ...i, retireAge: Math.round(v) }), input.retireAge, Math.min(75, profile.lifeExpectancy - 1), c.successTarget);
     if (needAge !== null && Math.round(needAge) > input.retireAge) {
       out.push({
         area: '노후', level: 'caution',
@@ -256,7 +259,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
     if (input.fixedDraw !== undefined) {
       // 인출액 고정 방식은 생활비를 바꿔도 결과가 같으므로 월 고정 인출액을 역산
       const drawNow = input.fixedDraw / 12;
-      const needDraw = solveFor(input, (i, v) => ({ ...i, fixedDraw: v * 12 }), Math.min(50, drawNow), drawNow, c.successTarget, false);
+      const needDraw = solveFor(input, (i, v) => rt({ ...i, fixedDraw: v * 12 }), Math.min(50, drawNow), drawNow, c.successTarget, false);
       if (needDraw !== null && needDraw < drawNow - 1) {
         out.push({
           area: '노후', level: 'caution',
@@ -265,7 +268,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
         });
       }
     } else {
-      const fixedExpense = solveFor(input, (i, v) => ({ ...i, retireExpenseAnnual: v * 12 }), 50, profile.retireMonthlyExpense, c.successTarget, false);
+      const fixedExpense = solveFor(input, (i, v) => rt({ ...i, retireExpenseAnnual: v * 12 }), 50, profile.retireMonthlyExpense, c.successTarget, false);
       if (fixedExpense !== null && fixedExpense < profile.retireMonthlyExpense - 1) {
         out.push({
           area: '노후', level: 'caution',

@@ -21,7 +21,7 @@ interface Row {
 
 /** 은퇴 후 생활비 가정(물가 연동 / 명목 고정 / 인출액 고정)별 결과 비교 */
 export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
-  const { planInput: inp, profile: p, start, summary } = useFlp();
+  const { planInput: inp, retax, profile: p, start, summary } = useFlp();
   const target = p.criteria.successTarget;
   const base = Math.max(inp.currentAge, inp.retireAge);
   const later = Math.min(p.lifeExpectancy - 1, base + 20);
@@ -73,6 +73,8 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
       const pub = publicPensionAt(x, age);
       return (pensionAt(x, age) - pub + Math.max(pub, x.fixedDraw * nominalFactor(0, x.inflation, age - base))) / 12;
     };
+    // 가정마다 인출액이 달라 연금 인출 세금도 그 가정으로 다시 계산
+    for (const r of list) r.input = retax(r.input);
     return list.map((r) => {
       const d = deterministicPath(r.input);
       return {
@@ -85,7 +87,7 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inp, summary, p.fixedDraw, p.expenseMode, p.expenseGrowth, p.retireMonthlyExpense, p.drawIncludes, p.lifeExpectancy]);
+  }, [inp, retax, summary, p.fixedDraw, p.expenseMode, p.expenseGrowth, p.retireMonthlyExpense, p.drawIncludes, p.lifeExpectancy]);
 
   const current = isCurrent;
   // 구간 적용(지금 설정) 대비 일정 행의 성공확률 차이

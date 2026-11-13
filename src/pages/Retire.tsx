@@ -238,6 +238,7 @@ export default function Retire() {
           <Assume k="은퇴 후 생활비" v={expenseNote + (steps.length ? ` · 나이 구간별(${[{ fromAge: inp.retireAge, ratio: expenseRatioAt(inp.expenseSteps, inp.retireAge) }, ...steps].map((x) => `${x.fromAge}세~ ${won((inp.retireExpenseAnnual * x.ratio) / 12)}`).join(' → ')})` : '')} />
           {(inp.inflows ?? []).some((x) => !x.kind) && <Assume k="수령 전 자산(시작 자산에서 제외)" v={(inp.inflows ?? []).filter((x) => !x.kind).map((x) => `${x.name} ${x.age}세`).join(' · ')} />}
           <Assume k={GOAL_KIND_LABEL.goal} v={`${goalItemsFrom(d.goals, inp.currentAge).length}건 · 총 ${won(goalRows.reduce((a, g) => a + g.amount, 0))}`} />
+          {p.planPensionTax === false && <Assume k={GOAL_KIND_LABEL.pensionTax} v="반영 안 함(프로필 설정 · 엑셀과 같은 기준)" />}
           {penTaxRows.length > 0 && <Assume k={GOAL_KIND_LABEL.pensionTax} v={`${penTaxRows[0].age}~${penTaxRows[penTaxRows.length - 1].age}세 · 총 ${won(penTaxRows.reduce((a, g) => a + g.amount, 0))} (인출 계획과 같은 계산 · 가드레일 평균 경로)`} />}
           {npTaxRows.length > 0 && <Assume k={GOAL_KIND_LABEL.npTax} v={`${npTaxRows[0].age}~${npTaxRows[npTaxRows.length - 1].age}세 · 총 ${won(npTaxRows.reduce((a, g) => a + g.amount, 0))}`} />}
           {premiums.length > 0 && <Assume k={GOAL_KIND_LABEL.premium} v={premiums.map((x) => `${x.name} ${x.first.age}~${x.last}세 · 총 ${won(x.total)}`).join(' · ')} />}

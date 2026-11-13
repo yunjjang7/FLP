@@ -13,7 +13,7 @@ import { Card } from './ui';
  * 자산이 끝까지 버티는지. 기본 계산과 같은 1,000가지 시장 경로로 돌림
  */
 export function SurvivorCard() {
-  const { planInput: inp, profile: p, sim, insurance } = useFlp();
+  const { planInput: inp, retax, profile: p, sim, insurance } = useFlp();
   const [living, setLiving] = useState(SURVIVOR_LIVING);
   const [rate, setRate] = useState(60);
   const target = p.criteria.successTarget;
@@ -25,7 +25,7 @@ export function SurvivorCard() {
     }),
     [insurance],
   );
-  const cases = useMemo(() => (hasSpouse ? survivorCases(inp, { livingRatio: living, rate, spouseGap: spouseGap(p) }, benefits) : []), [inp, p, living, rate, benefits, hasSpouse]);
+  const cases = useMemo(() => (hasSpouse ? survivorCases(inp, { livingRatio: living, rate, spouseGap: spouseGap(p) }, benefits).map((c) => ({ ...c, input: retax(c.input) })) : []), [inp, retax, p, living, rate, benefits, hasSpouse]);
 
   // 경우마다 1,000회 시뮬레이션이라 하나씩 나눠 계산
   const [rows, setRows] = useState<StressResult[]>([]);

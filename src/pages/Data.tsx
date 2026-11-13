@@ -233,7 +233,7 @@ function ProfileForm() {
         )}
         <p className="mt-3 text-xs text-muted">권장 범위는 예금 금리(약 3%)를 넘는 초과수익 1%마다 변동성 2.5~5%로 잡은 대략적인 기준입니다(채권 위주 4% → 2.5~5%, 주식·채권 반반 6% → 7.5~15%, 주식 위주 8% → 12.5~25%).</p>
       </Card>
-      <Card title="연금 세금" action={<span className="text-xs text-muted">인출 계획 스케줄의 세금 계산에 사용</span>}>
+      <Card title="연금 세금" action={<span className="text-xs text-muted">인출 계획 · 노후 진단 세금 계산에 사용</span>}>
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           {n('retireTaxRate', '퇴직소득세 실효세율', '%', '감면 전 세율(퇴직소득 원천징수영수증)', 0.01)}
           {n('retireTaxYear1', '퇴직금 연금 실수령 1년차', '년', '11년차부터 감면 30%→40% · 실제로 꺼낸 해만 연차로 셈')}
@@ -242,11 +242,15 @@ function ProfileForm() {
             <SelectField value={p.slotFill ? 'on' : 'off'} onChange={(v) => save({ slotFill: v === 'on' })} options={{ off: '아니오(필요한 만큼만)', on: '예' }} />
           </Labeled>
           {p.slotFill && n('slotFillFrom', '꽉 채우기 시작 연도', '년', '0이면 올해부터')}
+          <Labeled label="노후 진단에 연금 인출 세금 반영" hint="아니오: 엑셀처럼 세금 없이 비교">
+            <SelectField value={p.planPensionTax === false ? 'off' : 'on'} onChange={(v) => save({ planPensionTax: v === 'on' })} options={{ on: '예(기본)', off: '아니오' }} />
+          </Labeled>
         </div>
         <p className="mt-3 text-xs text-muted">
           연금계좌별 과세제외 금액·퇴직금 재원·명의·인출 시작 연도·꺼내는 순서는 ‘자산’ 탭의 각 연금 자산에서 입력합니다. 과세재원 인출은 1인 연 1,500만원까지 연금소득세(70세 미만 5.5%·70대 4.4%·80세 이상 3.3%)를 내고, 넘으면 16.5% 분리과세로 계산합니다.
           ‘꽉 채우기’를 고르면 생활비보다 많아도 해마다 1인 1,500만원까지 과세재원을 꺼내(낮은 세율로 미리 꺼냄) 세후 금액을 ISA·일반계좌에 다시 넣습니다.
           한 계좌 안에서는 법정 순서(과세제외 → 퇴직금 재원 → 과세재원)로만 빠지고, 운용수익은 모두 과세재원으로 쌓입니다. 퇴직소득세 감면이 40%로 커지는 11년차는 퇴직금 계좌에서 실제로 꺼낸 해만 세므로, ‘매년 최소 인출’에 작은 금액(예: 연 12만원)을 넣어 두면 쓸 일이 없는 해에도 연차가 이어집니다(꺼낸 돈은 ISA·일반계좌로).
+          ‘노후 진단에 연금 인출 세금 반영’을 아니오로 하면 노후 진단·요약 보고서·맞춤 처방의 성공확률과 고갈 나이를 세금 없이 계산합니다(엑셀 결과와 맞춰 볼 때). 인출 계획 화면의 세금 계산은 그대로입니다.
         </p>
       </Card>
       <CreditCheckCard />

@@ -13,8 +13,8 @@ export default function Report() {
   const nowYear = d.profile.birthYear + d.summary.age;
   const sections = useMemo(() => {
     if (!d.hasData) return [];
-    const rx = prescriptions(d.profile, d.basis, d.planInput, d.sim.successRate, d.goalPlans, d.ins);
-    return buildReport({ profile: d.profile, summary: d.summary, planInput: d.planInput, sim: d.sim, start: d.start, need: d.need, liabilities: d.liabilities, goals: d.goals, checks: d.checks, rx, nowYear });
+    const rx = prescriptions(d.profile, d.basis, d.planInput, d.sim.successRate, d.goalPlans, d.ins, d.retax);
+    return buildReport({ profile: d.profile, summary: d.summary, planInput: d.planInput, sim: d.sim, start: d.start, need: d.need, liabilities: d.liabilities, goals: d.goals, checks: d.checks, rx, nowYear, retax: d.retax });
   }, [d, nowYear]);
   if (!d.hasData) return <><PageHeader title="요약 보고서" /><EmptyState /></>;
   const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
