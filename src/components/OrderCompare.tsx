@@ -48,7 +48,7 @@ export function OrderCompare({ base, tax, setup }: { base: CompareBase; tax: Tax
     <tr key={r.combo?.key ?? 'now'} className={`border-b border-line text-right last:border-0 ${isNow ? 'italic text-muted' : ''}`}>
       <td className="py-1.5 pr-2 text-left">
         <div className={isNow ? '' : 'font-medium text-ink'}>{isNow ? '지금 계획' : r.combo!.label}</div>
-        {r.combo?.note && <div className="text-xs text-muted">{r.combo.key === '1' ? (cmpOrder ? '비교 기준 순서 · 인출 시작 연도 안 씀' : '입력 순서 · 인출 시작 연도 안 씀') : r.combo.note}</div>}
+        {r.combo?.note && <div className="text-xs text-muted">{r.combo.key === '1' ? (cmpOrder ? '비교 기준 순서 · 인출 시작 연도 안 씀' : '추가한 순서 · 인출 시작 연도 안 씀') : r.combo.note}</div>}
       </td>
       <td>{won(r.totalTax)}</td>
       <td>{r.credit > 0.5 ? won(r.credit) : '-'}</td>

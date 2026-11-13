@@ -85,6 +85,7 @@ export function survivorInput(input: PlanInput, o: SurvivorOptions): PlanInput {
   return {
     ...input,
     lifeExpectancy: life,
+    death: { who: o.dies, age: o.age },
     pensions: survivorIncomes(input.pensions, o),
     // 인출액 고정 방식은 나이 구간별 생활비를 쓰지 않아 생활비 비율을 반영하지 못함
     ...(input.fixedDraw === undefined ? { expenseSteps: survivorSteps(input.expenseSteps, o.age, o.livingRatio / 100) } : {}),

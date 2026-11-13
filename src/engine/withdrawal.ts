@@ -58,7 +58,11 @@ export interface WithdrawInput {
 }
 
 /** share: 그 해가 차지하는 비율(첫해만 1보다 작을 수 있음, 없으면 1). 금액은 그 기간의 실제 금액 */
-export interface ScheduleRow { age: number; pension: number; withdrawal: number; income: number; need: number; endBalance: number; inflow: number; share?: number }
+export interface ScheduleRow {
+  age: number; pension: number; withdrawal: number; income: number; need: number; endBalance: number; inflow: number; share?: number;
+  /** 경로별 세금 계산: 그 해 자산이 몇 배가 되는지(실질, 1 + 수익률). 없으면 평균 수익률 */
+  growth?: number;
+}
 
 export interface StrategyResult {
   key: StrategyKey;

@@ -8,7 +8,7 @@ import { prescriptions } from './prescribe';
 import { buildReport, depletionText, depletionWithReturn, livingText } from './report';
 import { bulletChecks, retiredBasis, riskChecks } from './risk';
 
-describe('요약 보고서', () => {
+describe('요약 보고', () => {
   const d = sampleData(2026);
   const loans = [...d.liabilities, { name: '지인 대출', balance: 30000, rate: 4, monthlyPayment: 100, endAge: 0, repay: 'bullet' as const }];
   const s = summarize(d.profile, d.assets, loans, d.cashflows, 2026, d.insurance);

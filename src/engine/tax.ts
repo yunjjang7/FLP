@@ -55,6 +55,8 @@ export interface TaxSetup {
   retireMinDraw: number; // 퇴직금 재원이 있는 계좌에서 해마다 꼭 꺼내는 최소 금액(세전, 명목 만원, 0 = 안 함)
   slotFillFrom: number; // 1,500만 한도 꽉 채우기 시작 연도(Infinity = 안 함)
   contrib: ContribYear[]; // 추가 납입(세액공제)
+  /** 배우자 사별: 이 해부터 떠난 사람(owner) 명의 연금계좌를 남은 사람이 승계(남은 사람 나이·세율·1,500만 한도 하나로 계산, 떠난 사람 추가 납입은 없음) */
+  death?: { owner: Owner; year: number };
 }
 
 /**
@@ -170,6 +172,9 @@ export function pensionTaxSchedule(schedule: ScheduleRow[], setup: TaxSetup): Ta
     const year = setup.birthYear + r.age;
     const defl = Math.pow(1 + setup.inflation / 100, year - setup.nowYear); // 실질 → 명목
     const slotLeft = { self: PENSION_SLOT / defl, spouse: PENSION_SLOT / defl };
+    const dead = setup.death && year >= setup.death.year ? setup.death.owner : null;
+    // 사별: 떠난 사람 계좌는 남은 사람 명의로(연금수령연차·인출 시작 연도는 계좌 그대로 이어감)
+    if (dead) for (const p of accts) if (p.owner === dead) p.owner = dead === 'self' ? 'spouse' : 'self';
     const ownerAge = (o: Owner) => (o === 'self' ? r.age : r.age - setup.spouseGap);
     const retireNo = retireYears + 1;
     const retireRate = retireRateAt(setup.retireBase, retireNo);
@@ -190,7 +195,7 @@ export function pensionTaxSchedule(schedule: ScheduleRow[], setup: TaxSetup): Ta
     if (cy) {
       for (const owner of ['self', 'spouse'] as const) {
         const amount = (owner === 'self' ? cy.self : cy.spouse) / defl;
-        if (amount <= 0) continue;
+        if (amount <= 0 || owner === dead) continue;
         const mine = accts.filter((p) => p.owner === owner);
         const target = mine.find((p) => p.drawStart > year) ?? mine[0];
         if (!target) continue;
@@ -344,7 +349,7 @@ export function pensionTaxSchedule(schedule: ScheduleRow[], setup: TaxSetup): Ta
     // 손실로 평가액이 남은 원금보다 작아지면 비례해 줄임
     // 첫해가 1년이 안 되면(스케줄의 share) 수익도 그 기간만큼
     const sh = r.share ?? 1;
-    const grow = Math.pow(1 + setup.realReturn, sh);
+    const grow = r.growth ?? Math.pow(1 + setup.realReturn, sh);
     // 명목 환산(defl)은 달력 연도 단위라, 과세제외·퇴직금 재원의 명목 금액이 그대로 유지되도록 첫해가 짧아도 한 해치 물가로 나눔
     const inf = 1 + setup.inflation / 100;
     for (const p of accts) {

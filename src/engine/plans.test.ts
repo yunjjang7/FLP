@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto';
-import { withPensionTax } from './pensionTaxPlan';
+import { makePathTax, withPensionTax } from './pensionTaxPlan';
 import { describe, expect, it } from 'vitest';
 import { db, getProfile, loadPlan } from '../db/db';
 import { sampleData } from '../db/sample';
@@ -31,11 +31,13 @@ describe('저장한 계획 비교', () => {
     expect(makePlan('  ', d, TODAY).name).toBe(`계획 ${TODAY}`);
   });
 
-  it('planMetrics: 화면과 같은 방식(summarize → buildPlanInput → 연금 인출 세금 → simulate)이라 성공확률이 같음', () => {
+  it('planMetrics: 화면과 같은 방식(summarize → buildPlanInput → 연금 인출 세금 → 경로별 세금 simulate)이라 성공확률이 같음', () => {
     const d = sampleData();
     const month = 6;
     const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, undefined, d.insurance, month);
-    const sim = simulate(withPensionTax(d.profile, d.assets, buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s), d.profile.birthYear + s.age), 1000);
+    const now = d.profile.birthYear + s.age;
+    const inp = withPensionTax(d.profile, d.assets, buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s), now);
+    const sim = simulate(inp, 1000, 42, makePathTax(d.profile, d.assets, inp, now));
     const m = planMetrics(d, month);
     expect(m.successRate).toBe(sim.successRate);
     expect(m.endP50).toBe(sim.p50[sim.p50.length - 1]);

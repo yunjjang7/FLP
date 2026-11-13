@@ -8,6 +8,7 @@ import { db } from '../db/db';
 import { GOAL_CATEGORY } from '../db/schema';
 import { buildPlanInput, goalPlanSkips, type PlanOverrides } from '../engine/goals';
 import { simulate } from '../engine/montecarlo';
+import { makePathTax } from '../engine/pensionTaxPlan';
 import { bucketMap, prescriptions } from '../engine/prescribe';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -55,7 +56,9 @@ function PrescribeInner() {
     });
     const full = { ...plan, ...(retired ? { retireMeanReturn: meanReturn, retireVolatility: volatility } : {}), ...(drawMode ? { fixedDraw: retireMonthlyExpense * 12 } : {}) };
     // 바꾼 계획으로 연금 인출 세금도 다시 계산(노후 진단과 같은 기준)
-    return simulate(d.retax(full), 1000);
+    // 노후 진단 기본 결과와 같은 방식(경로별 연금 인출 세금)으로 비교
+    const taxed = d.retax(full);
+    return simulate(taxed, 1000, 42, makePathTax(p, d.assets, taxed, p.birthYear + s.age));
   }, [changed, d.sim, o, p, d.assets, d.liabilities, d.goals, s, retired, drawMode, baseReturn, baseVol, d.retax]);
   const delta = whatIf.successRate - d.sim.successRate;
   const lvl = (v: number): Level => (v >= p.criteria.successTarget ? 'good' : v >= 60 ? 'caution' : 'danger');

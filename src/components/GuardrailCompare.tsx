@@ -12,7 +12,8 @@ import { Badge, Card } from './ui';
  * 같은 시드(42)·같은 횟수로 돌려 두 방식이 같은 시장 경로를 지나므로 차이는 가드레일 효과만 남음
  */
 export function GuardrailCompare() {
-  const { planInput: inp, profile: p, sim, start } = useFlp();
+  // 가드레일 시뮬레이션이 평균 경로 세금이라 비교 기준도 같은 방식(simFlat)
+  const { planInput: inp, profile: p, simFlat: sim, start } = useFlp();
   const { guardrailDrop: drop, guardrailCut: cut, successTarget: target } = p.criteria;
   const on = cut > 0 && drop > 0;
   const gsim = useMemo(() => (on ? guardrailSim(inp, { drop, cut }) : null), [inp, on, drop, cut]);

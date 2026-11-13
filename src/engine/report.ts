@@ -7,7 +7,7 @@ import type { Retax } from './pensionTaxPlan';
 import type { Prescription } from './prescribe';
 import type { RiskCheck } from './risk';
 
-/** 요약 보고서의 한 문장(level 이 있으면 앞에 상태 점) */
+/** 요약 보고의 한 문장(level 이 있으면 앞에 상태 점) */
 export interface ReportLine {
   text: string;
   level?: Level;
@@ -145,7 +145,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
     ...goalLines,
     ...premiumLines,
     ...(npTax.length ? [{ text: `국민연금 때문에 늘어나는 종합소득세·건강보험료를 ${npTax[0].age}세부터 자산에서 더 꺼냅니다(첫해 월 ${won(npTax[0].amount / 12)} → ${npTax[npTax.length - 1].age}세 월 ${won(npTax[npTax.length - 1].amount / 12)}).` }] : []),
-    ...(penTax.length ? [{ text: `연금계좌 인출 세금(연금소득세 5.5·4.4·3.3%, 1,500만 초과분 16.5%, 퇴직소득세)으로 ${penTax[0].age}~${penTax[penTax.length - 1].age}세에 모두 ${won(penTaxSum)}을 더 꺼냅니다(해마다 평균 ${won(penTaxSum / penTax.length)}, 오늘 가치).` }] : []),
+    ...(penTax.length ? [{ text: `연금계좌 인출 세금(연금소득세 5.5·4.4·3.3%, 1,500만 초과분 16.5%, 퇴직소득세)으로 ${penTax[0].age}~${penTax[penTax.length - 1].age}세에 모두 ${won(penTaxSum)}을 더 꺼냅니다(해마다 평균 ${won(penTaxSum / penTax.length)}, 오늘 가치, 평균 수익 경로 기준).` }] : []),
     ...(skipped.length ? [{ text: `목표 나이가 비어 있는 ${skipped.map((g) => g.name).join(', ')}은(는) 계산에 넣지 않았습니다.`, level: 'caution' as Level }] : []),
   ];
 
@@ -163,7 +163,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
     { text: '고갈 나이는 평균 수익이 해마다 고르게 나는 한 가지 경로입니다. 은퇴 초기에 큰 하락이 오면 같은 평균 수익률이라도 결과가 더 나쁠 수 있어 성공확률을 함께 봅니다.' },
     p.planPensionTax === false
       ? { text: '연금계좌 인출 세금은 프로필 설정(‘노후 진단에 연금 인출 세금 반영’: 아니오)에 따라 성공확률·고갈 나이에 넣지 않았습니다(엑셀과 같은 기준). 실제로는 세금만큼 더 꺼내야 하므로 결과가 그만큼 낙관적입니다.', level: 'caution' as Level }
-      : { text: '연금계좌 인출 세금은 인출 계획 화면과 같은 방식(가드레일 인출, 평균 수익 경로)으로 나이별 금액을 한 번 구해 모든 몬테카를로 경로에 같게 더했습니다. 수익이 나빠 덜 꺼내는 해에 세금이 줄어드는 효과는 빠집니다. 수익률·생활비를 바꿔 본 결과(민감도·스트레스 테스트·처방)는 바꾼 계획으로 세금을 다시 계산했습니다.' },
+      : { text: '연금계좌 인출 세금은 인출 계획 화면과 같은 방식(가드레일 인출, 계좌별 과세제외 → 퇴직금 재원 → 과세재원)으로 계산했습니다. 성공확률은 1,000개 경로마다 그 경로의 수익률로 세금을 다시 구했고(수익이 나쁘면 운용수익이 적어 세금이 줄어듦, 인출액은 평균 경로와 같게 봄), 고갈 나이와 세금 합계는 평균 수익 경로 기준입니다. 여러 번 돌려 비교하는 결과(민감도·스트레스 테스트·가드레일·사별 분석·처방 역산)는 바꾼 계획의 평균 경로 세금을 모든 경로에 같게 더해 계산했습니다.' },
     { text: '세법·국민연금 제도는 지금 기준이며 실제 수령액·세금은 국민연금공단·증권사·세무 전문가에게 확인하세요. 이 보고서는 투자 자문이 아닙니다.' },
   ];
 

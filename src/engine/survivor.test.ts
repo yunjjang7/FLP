@@ -81,4 +81,8 @@ describe('배우자 사별 분석', () => {
     const both = deterministicPath({ ...base, currentAge: 66, lifeExpectancy: 100 });
     expect(alone.balances[alone.balances.length - 1]).toBeLessThan(both.balances[both.balances.length - 1]);
   });
+  it('사별 계획에는 누가 몇 세에 떠나는지 남겨 연금 인출 세금에서 계좌를 승계', () => {
+    const c = survivorCases(base, { livingRatio: 70, rate: 60, spouseGap: 3 }, { self: 0, spouse: 0 })[0];
+    expect(c.input.death).toEqual({ who: c.dies, age: c.age });
+  });
 });

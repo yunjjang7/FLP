@@ -3,9 +3,9 @@ import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'r
 import { db, getProfile, recordSnapshot } from '../db/db';
 import { buildPlanInput, planGoals, type GoalPlan } from '../engine/goals';
 import { insuranceGap, type InsuranceGap } from '../engine/insurance';
-import { retirementNeed, simulate, withdrawStart, type PlanInput, type SimResult } from '../engine/montecarlo';
+import { retirementNeed, simulate, withdrawStart, type PathTax, type PlanInput, type SimResult } from '../engine/montecarlo';
 import { summarize, type Summary } from '../engine/portfolio';
-import { makeRetax, type Retax } from '../engine/pensionTaxPlan';
+import { makePathTax, makeRetax, type Retax } from '../engine/pensionTaxPlan';
 import { bulletChecks, financialScore, retiredBasis, riskChecks, type RiskCheck } from '../engine/risk';
 import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd, Draw } from '../types';
 
@@ -25,7 +25,9 @@ export interface FlpData {
   basis: Summary; // 점검·처방 기준: 은퇴 후에는 월소득·월 지출을 은퇴 후 흐름으로 바꾼 값(은퇴 전이면 summary 와 같음)
   planInput: PlanInput;
   retax: Retax; // 계획을 바꿔 다시 계산할 때 연금 인출 세금도 바뀐 계획에 맞춰 다시 넣음(설정이 아니오면 세금을 뺌)
-  sim: SimResult;
+  sim: SimResult; // 노후 진단 기본 결과(연금 인출 세금을 경로마다 계산)
+  simFlat: SimResult; // 같은 계획을 평균 경로 세금으로 돌린 결과: 가드레일·스트레스·사별처럼 여러 번 돌려 비교하는 표의 기준
+  pathTax?: PathTax; // 경로별 세금 함수(연금 인출 세금을 반영할 때만)
   need: ReturnType<typeof retirementNeed>;
   start: ReturnType<typeof withdrawStart>; // 인출 시작 나이·자산·첫해 인출률
   goalPlans: GoalPlan[];
@@ -61,7 +63,10 @@ export function FlpProvider({ children }: { children: ReactNode }) {
     // 연금계좌 인출 세금(인출 계획과 같은 계산)을 나이별 지출로 더해 성공확률·고갈 나이에 반영
     const retax = makeRetax(profile, assets, profile.birthYear + summary.age);
     const planInput = retax(buildPlanInput(profile, assets, liabilities, goals, summary));
-    const sim = simulate(planInput, 1000);
+    // 성공확률은 경로마다 그 경로의 수익률로 연금 인출 세금을 계산(평균 경로 세금보다 정확하지만 약 4배 느려 기본 계산에만)
+    const pathTax = makePathTax(profile, assets, planInput, profile.birthYear + summary.age);
+    const simFlat = simulate(planInput, 1000);
+    const sim = pathTax ? simulate(planInput, 1000, 42, pathTax) : simFlat;
     // 이미 은퇴했으면 비상금·DSR·보험료 부담은 지출 탭·세후 월소득 대신 은퇴 후 흐름 기준
     const basis = retiredBasis(summary, planInput);
     const ins = insuranceGap(profile, basis, insurance, goals);
@@ -70,7 +75,7 @@ export function FlpProvider({ children }: { children: ReactNode }) {
       loading: false,
       hasData: raw.hasProfile || assets.length > 0,
       profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds, draws,
-      summary, basis, planInput, retax, sim,
+      summary, basis, planInput, retax, sim, simFlat, pathTax,
       need: retirementNeed(planInput),
       start,
       goalPlans: planGoals(goals, assets, summary.age),

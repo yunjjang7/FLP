@@ -1,6 +1,6 @@
 import type { Asset, Goal, Liability, Profile } from '../types';
-import { isLocked, isRecurring, lockedInflow } from './goals';
-import { DEFAULT_CONTRIB } from './incomeTax';
+import { isLocked, isRecurring, lockedInflow, needsYuTax } from './goals';
+import { DEFAULT_CONTRIB, incomeTaxSchedule } from './incomeTax';
 import { isFinancial, mergeAccounts } from './portfolio';
 import { HP_OVER_NOTE, hpOverCap, isRealEstate, usesHp, willSell } from './realestate';
 import { PENSION_OPEN_AGE } from './tax';
@@ -113,8 +113,9 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
   }
 
   // 노란우산 등 수령 시점이 정해진 자산
+  const yuRows = needsYuTax(profile, assets, nowYear) ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities) : undefined;
   for (const a of assets.filter((x) => isLocked(x, nowYear))) {
-    const f = lockedInflow(a, profile, nowYear);
+    const f = lockedInflow(a, profile, nowYear, yuRows);
     out.push({ year: f.year, month: 0, kind: 'lump', label: `${a.name || '묶인 자산'} 수령 → ISA·일반계좌에서 운용`, note: `세후 약 ${man(f.nominal)}(그 해 금액)` });
   }
 

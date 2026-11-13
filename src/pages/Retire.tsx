@@ -48,7 +48,7 @@ export default function Retire() {
   const gapMonthly = Math.max(0, -balanceMonthly);
   // 그 해 지출을 홈 카드와 같은 종류로 나눔(보험료는 아래에서 보험별로 따로 보여 줌)
   const fullBy = goalBreakdownAt(inp, fullAge);
-  const extraRows = (['goal', 'loan', 'npTax', 'pensionTax'] as const).map((k) => ({ key: k, label: `− ${GOAL_KIND_LABEL[k]} (${fullAge}세 그 해, 월 환산)`, monthly: fullBy[k] / 12 })).filter((x) => x.monthly > 0.5);
+  const extraRows = (['goal', 'loan', 'npTax', 'pensionTax', 'yuPay'] as const).map((k) => ({ key: k, label: `− ${GOAL_KIND_LABEL[k]} (${fullAge}세 그 해, 월 환산)`, monthly: fullBy[k] / 12 })).filter((x) => x.monthly > 0.5);
   const expenseNote = draw ? `연금 생활비 명목 고정(월 ${won((inp.fixedDraw ?? 0) / 12)})` : inp.expenseGrowth !== undefined ? `생활비 명목 ${inp.expenseGrowth}% 증가` : '물가 연동';
   const wLevel = withdrawLevel(start.rate, p.criteria.withdrawRateMax);
   // 연금 생활비 월 금액에 포함한 대출은 따로 꺼내지 않으므로 '따로 오가는 돈'에서 뺌
@@ -170,7 +170,14 @@ export default function Retire() {
                 {premiums.map((x) => (
                   <Line key={`prem-${x.name}`} label={`− ${GOAL_KIND_LABEL.premium} · ${x.name} (${x.last}세까지, 명목 고정, 월)`} value={won(x.first.amount / 12)} muted />
                 ))}
-                {(inp.inflows ?? []).map((x) => (
+                {(() => {
+                  // 노란우산 소득공제 절세는 해마다 들어와 한 줄로 합침
+                  const yu = (inp.inflows ?? []).filter((x) => x.kind === 'yuSave');
+                  if (!yu.length) return null;
+                  const ages = yu.map((x) => x.age);
+                  return <Line label={`+ 노란우산 소득공제로 줄어든 종소세(${Math.min(...ages)}~${Math.max(...ages)}세 합계)`} value={won(yu.reduce((t, x) => t + x.amount, 0))} muted />;
+                })()}
+                {(inp.inflows ?? []).filter((x) => x.kind !== 'yuSave').map((x) => (
                   <Line key={`${x.name}-${x.age}`} label={x.kind === 'credit' ? `+ 세액공제 환급(${x.age}세, 일시금)` : x.kind === 'sale' ? `+ ${x.name} 매각(${x.age}세, 비용·보증금·새 집 뺀 금액)` : `+ ${x.name} 수령(${x.age}세, 세후 일시금)`} value={won(x.amount)} muted />
                 ))}
               </div>
@@ -239,7 +246,7 @@ export default function Retire() {
           {(inp.inflows ?? []).some((x) => !x.kind) && <Assume k="수령 전 자산(시작 자산에서 제외)" v={(inp.inflows ?? []).filter((x) => !x.kind).map((x) => `${x.name} ${x.age}세`).join(' · ')} />}
           <Assume k={GOAL_KIND_LABEL.goal} v={`${goalItemsFrom(d.goals, inp.currentAge).length}건 · 총 ${won(goalRows.reduce((a, g) => a + g.amount, 0))}`} />
           {p.planPensionTax === false && <Assume k={GOAL_KIND_LABEL.pensionTax} v="반영 안 함(프로필 설정 · 엑셀과 같은 기준)" />}
-          {penTaxRows.length > 0 && <Assume k={GOAL_KIND_LABEL.pensionTax} v={`${penTaxRows[0].age}~${penTaxRows[penTaxRows.length - 1].age}세 · 총 ${won(penTaxRows.reduce((a, g) => a + g.amount, 0))} (인출 계획과 같은 계산 · 가드레일 평균 경로)`} />}
+          {penTaxRows.length > 0 && <Assume k={GOAL_KIND_LABEL.pensionTax} v={`${penTaxRows[0].age}~${penTaxRows[penTaxRows.length - 1].age}세 · 총 ${won(penTaxRows.reduce((a, g) => a + g.amount, 0))} (인출 계획과 같은 계산 · 평균 수익 경로) · 성공확률은 경로마다 세금 다시 계산${d.simFlat !== sim ? `(평균 경로 세금이면 ${pct(d.simFlat.successRate)})` : ''}`} />}
           {npTaxRows.length > 0 && <Assume k={GOAL_KIND_LABEL.npTax} v={`${npTaxRows[0].age}~${npTaxRows[npTaxRows.length - 1].age}세 · 총 ${won(npTaxRows.reduce((a, g) => a + g.amount, 0))}`} />}
           {premiums.length > 0 && <Assume k={GOAL_KIND_LABEL.premium} v={premiums.map((x) => `${x.name} ${x.first.age}~${x.last}세 · 총 ${won(x.total)}`).join(' · ')} />}
           <Assume k="부동산" v={reNote} />

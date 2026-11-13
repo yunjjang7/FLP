@@ -83,3 +83,21 @@ export function Disclaimer() {
 }
 
 export const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)', 'var(--chart-7)'];
+
+/**
+ * 카드 순서 바꾸기: 위·아래로 한 칸씩(휴대폰에서도 누르기 쉬운 크기). 옮긴 뒤 같은 버튼에 초점을 남겨 연달아 누를 수 있음
+ */
+export function MoveButtons({ name, index, count, onMove }: { name: string; index: number; count: number; onMove: (dir: -1 | 1) => void }) {
+  if (count < 2) return null;
+  const cls = 'inline-flex h-9 w-9 items-center justify-center rounded-lg border border-line text-ink transition hover:bg-sunken disabled:cursor-not-allowed disabled:opacity-30';
+  return (
+    <span className="inline-flex items-center gap-1" role="group" aria-label={`${name || '항목'} 순서`}>
+      <button type="button" className={cls} disabled={index === 0} onClick={() => onMove(-1)} aria-label={`${name || '항목'} 위로 옮기기`} title="위로">
+        <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 10l4-4 4 4" /></svg>
+      </button>
+      <button type="button" className={cls} disabled={index === count - 1} onClick={() => onMove(1)} aria-label={`${name || '항목'} 아래로 옮기기`} title="아래로">
+        <svg aria-hidden="true" viewBox="0 0 16 16" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4" /></svg>
+      </button>
+    </span>
+  );
+}

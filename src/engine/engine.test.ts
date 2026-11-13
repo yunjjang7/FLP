@@ -380,7 +380,7 @@ describe('엑셀 반영: 인출 중 은퇴자·소득·가드레일·반복 지�
     // 그해 지출을 종류별로 나눔: 합계는 인출액에 더해진 금액과 같음
     const mixed = { ...retired, goals: [{ age: 66, amount: 100 }, { age: 66, amount: 228, premium: '종신보험' }, { age: 66, amount: 3000, loan: '전세대출' }, { age: 66, amount: 50, npTax: true }, { age: 67, amount: 999 }] };
     const by = goalBreakdownAt(mixed, 66);
-    expect(by).toEqual({ goal: 100, premium: 228, loan: 3000, npTax: 50, pensionTax: 0 });
+    expect(by).toEqual({ goal: 100, premium: 228, loan: 3000, npTax: 50, pensionTax: 0, yuPay: 0 });
     expect(withdrawStart(mixed).outflow).toBeCloseTo(1800 + 100 + 228 + 3000 + 50, 6);
     expect(mixed.goals.map(goalKind)).toEqual(['goal', 'premium', 'loan', 'npTax', 'goal']);
     expect(st.rate).toBeCloseTo(1800 / 50000 * 100, 6);

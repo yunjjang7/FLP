@@ -40,8 +40,13 @@ export interface Asset {
   retirePart?: number; // 연금계좌 중 퇴직금 재원(이연퇴직소득, 만원)
   pensionYear1?: number; // 연금수령 1년차 연도(기산연도). 비우면 명의자가 55세가 되는 해
   drawStartYear?: number; // 이 해부터 인출(그 전에는 꺼내지 않고 추가 납입을 받는 계좌). 0이면 바로
-  drawOrder?: number; // 같은 사람 계좌 중 꺼내는 순서(작을수록 먼저, 0이면 입력 순서)
-  compareOrder?: number; // 인출순서 비교표 ① 조합에서 쓸 기준 순서(작을수록 먼저, 0이면 입력 순서)
+  drawOrder?: number; // 같은 사람 계좌 중 꺼내는 순서(작을수록 먼저, 0이면 추가한 순서 = id 순. 화면 카드 순서 order 와 무관)
+  compareOrder?: number; // 인출순서 비교표 ① 조합에서 쓸 기준 순서(작을수록 먼저, 0이면 추가한 순서)
+  yu?: boolean; // 노란우산공제: 납입액 소득공제(종소세 감소), 수령 때 소득공제 받은 부금·운용수익은 퇴직소득세. taxFree 는 소득공제 안 받은 부금 누계
+  yuPay?: number; // 노란우산 연 납입액(만원, 명목 고정): 올해부터 마지막 납입 연도까지 금융자산에서 옮겨 넣음
+  yuPayTo?: number; // 노란우산 마지막 납입 연도(0·없음이면 명의자 은퇴 전 해, 수령 연도 전 해를 넘지 않음)
+  yuJoin?: number; // 노란우산 가입 연도: 퇴직소득세 근속연수(가입 기간)
+  order?: number; // 기본 정보 화면 카드 순서(작을수록 위, 없으면 id 순). 계산에는 쓰지 않음
   group?: string; // 연금계좌: 같은 계좌 이름(리밸런싱 ‘자산 탭에 반영’으로 나눈 줄). 값이 같은 줄은 한 계좌로 합쳐 세금·한도·인출 순서·이정표를 계산
 }
 
@@ -51,6 +56,7 @@ export interface Liability {
   balance: number;
   rate: number;
   monthlyPayment: number;
+  order?: number; // 기본 정보 화면 카드 순서(작을수록 위, 없으면 id 순). 계산에는 쓰지 않음
   endAge?: number; // 상환 종료 나이(비우거나 0이면 잔액·금리·월상환액으로 자동 계산)
   homeLoan?: 'buy'; // 실거주 주택 구입 대출(건보료 재산 과세표준에서 공제)
   // 상환 방식(비우면 원리금균등). bullet: 만기일시 — 월 상환액은 이자만, 상환 종료 나이(만기)에 남은 원금을 자산에서 한 번에 갚음.
@@ -64,6 +70,7 @@ export interface Cashflow {
   id?: number;
   name: string;
   kind: 'fixed' | 'variable';
+  order?: number; // 기본 정보 화면 카드 순서
   category: string; // 주거/구독료/교육/생활비 등(보험료는 보험 탭, 대출 원리금은 부채에서 자동 반영)
   monthly: number;
 }
@@ -77,6 +84,7 @@ export interface Goal {
   targetAge: number;
   amountPV: number; // 현재가치 기준 필요 금액
   growthRate: number; // 비용 상승률(%), 예: 교육비 4
+  order?: number; // 기본 정보 화면 카드 순서
   endAge?: number; // 반복 종료 나이: targetAge~endAge 매년 지출(0이거나 targetAge 이하면 1회)
   /** 금액 방식: 없으면 물가 반영(비용 상승률만큼 오름), fixed 면 금액 고정(명목 그대로라 오늘 가치로는 해마다 물가만큼 줄어듦) */
   priceMode?: 'fixed';
@@ -89,6 +97,7 @@ export interface Insurance {
   critical: number; // 암·중대질병 진단비
   care: number; // 간병·장기요양 보장
   monthlyPremium: number;
+  order?: number; // 기본 정보 화면 카드 순서
   payEndAge?: number; // 납입 종료 나이(피보험자 나이, 0이면 계속 납입): 이 나이부터 보험료가 지출에서 빠짐
   insured?: InsuredWho; // 피보험자(기본 본인): 납입 종료 나이를 누구 나이로 입력했는지
   insuredBirthYear?: number; // 피보험자가 자녀일 때 자녀 출생연도

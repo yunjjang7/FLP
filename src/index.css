@@ -132,7 +132,7 @@ section.setup-target { border-radius: 1rem; outline-offset: 2px; }
   .setup-target { animation: none; outline-color: var(--c-brand); }
 }
 
-/* 인쇄(요약 보고서 ‘인쇄·PDF 저장’): 메뉴·버튼은 숨기고 흰 바탕 검은 글씨로, 카드는 페이지 사이에서 잘리지 않게 */
+/* 인쇄(요약 보고 ‘인쇄·PDF 저장’): 메뉴·버튼은 숨기고 흰 바탕 검은 글씨로, 카드는 페이지 사이에서 잘리지 않게 */
 @media print {
   @page { margin: 14mm; }
   aside, body header.sticky, body nav.fixed, [role='status'], .no-print { display: none !important; }

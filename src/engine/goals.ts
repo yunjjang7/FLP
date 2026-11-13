@@ -1,9 +1,10 @@
 import type { Asset, DrawInclude, Goal, Liability, Profile } from '../types';
-import { contribSchedule, creditInflows, incomeTaxSchedule, npCostOutflows } from './incomeTax';
+import { contribSchedule, creditInflows, incomeTaxSchedule, npCostOutflows, yuDedFracOf, yuSaveInflows, type IncomeTaxRow } from './incomeTax';
 import { fvLump, monthlyRate, payoffMonths, pmtForTarget, realRate } from './finance';
 import { debtNominalAt, type Debt, type ExpenseStep, type IncomeStream, type PlanInput } from './montecarlo';
 import { isFinancial, type Summary } from './portfolio';
 import { hpStreams, rentStreams, saleInflows } from './realestate';
+import { isYu, yuPayments, yuPayout } from './yellowUmbrella';
 
 export interface GoalPlan {
   goal: Goal;
@@ -270,11 +271,24 @@ export function retirePremiums(s: Summary, retireAge: number, inflation: number,
 /** 아직 수령 전인 묶인 자산(노란우산 등) */
 export const isLocked = (a: Asset, nowYear: number) => isFinancial(a) && (a.lockYear ?? 0) > nowYear;
 
-/** 묶인 자산의 수령액: 기대수익률로 수령 연도까지 불어난 뒤 세금을 뗀 일시금(명목·실질, 본인 나이) */
-export function lockedInflow(a: Asset, profile: Profile, nowYear: number) {
+/**
+ * 묶인 자산의 수령액: 기대수익률로 수령 연도까지 불어난 뒤 세금을 뗀 일시금(명목·실질, 본인 나이).
+ * 노란우산공제로 표시한 자산은 앞으로 낼 부금까지 불리고, 수령 시 세율을 비우면 퇴직소득세를 자동 계산(yuPayout).
+ * taxRows: 종합소득세 추정 행(앞으로 낼 부금 중 소득공제 받는 비율), firstShare: 올해 남은 달 비율
+ */
+export function lockedInflow(a: Asset, profile: Profile, nowYear: number, taxRows?: IncomeTaxRow[], firstShare = 1) {
   const n = Math.max(0, (a.lockYear ?? nowYear) - nowYear);
-  const nominal = a.amount * Math.pow(1 + a.expectedReturn / 100, n) * (1 - (a.lockTax ?? 0) / 100);
-  return { name: a.name, year: a.lockYear ?? nowYear, age: (a.lockYear ?? nowYear) - profile.birthYear, nominal, amount: nominal / Math.pow(1 + profile.inflation / 100, n) };
+  const yu = isYu(a) ? yuPayout(a, profile, nowYear, taxRows ? yuDedFracOf(taxRows) : undefined, firstShare) : undefined;
+  const nominal = yu ? yu.fv - yu.tax : a.amount * Math.pow(1 + a.expectedReturn / 100, n) * (1 - (a.lockTax ?? 0) / 100);
+  return { name: a.name, year: a.lockYear ?? nowYear, age: (a.lockYear ?? nowYear) - profile.birthYear, nominal, amount: nominal / Math.pow(1 + profile.inflation / 100, n), yu };
+}
+
+/** 노란우산 종합소득세 추정이 필요한지: 앞으로 낼 부금이 있으면 */
+export const needsYuTax = (profile: Profile, assets: Asset[], nowYear: number) => yuPayments(assets, profile, nowYear).length > 0;
+
+/** 노란우산 부금 납입(실질, 본인 나이): 꺼내 쓸 수 있는 금융자산에서 노란우산으로 옮겨 감(해마다 나가는 흐름) */
+export function yuPayOutflows(profile: Profile, assets: Asset[], nowYear: number) {
+  return yuPayments(assets, profile, nowYear).map((x) => ({ age: x.year - profile.birthYear, amount: x.amount / Math.pow(1 + profile.inflation / 100, x.year - nowYear), yuPay: x.asset.name || '노란우산', flow: true as const }));
 }
 
 /** 은퇴 후 생활비 방식 → 시뮬레이션 입력 */
@@ -328,12 +342,13 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
   const liqReturn = locked.length && liqTotal > 0 ? liquid.reduce((a, x) => a + (x.amount / liqTotal) * x.expectedReturn, 0) : s.portfolioReturn;
   const liqVol = locked.length && liqTotal > 0 ? liquid.reduce((a, x) => a + (x.amount / liqTotal) * x.volatility, 0) : s.portfolioVol;
   // 종합소득세·건보료 추정과 추가 납입 세액공제: 환급은 다음 해 들어오고, 국민연금 몫 세금은 원하면 지출에 더함
-  const taxRows = profile.incomeTax?.on || profile.contrib ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities) : [];
+  const taxRows = profile.incomeTax?.on || profile.contrib || needsYuTax(profile, assets, nowYear) ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities) : [];
   const credits = creditInflows(profile, nowYear, contribSchedule(profile, taxRows));
   const npCost = profile.incomeTax?.on && profile.incomeTax.addToDraw ? npCostOutflows(taxRows) : [];
   const covered = drawCovers(profile);
   // 매각 예정 부동산은 매각 연도에 순매각대금(비용·보증금·새 집 구입액 차감)이 금융자산으로 들어옴
-  const inflows = [...locked.map((a) => lockedInflow(a, profile, nowYear)).map(({ name, age, amount }) => ({ name, age, amount })), ...saleInflows(assets, profile, nowYear), ...credits];
+  // 노란우산은 앞으로 낼 부금까지 불려 퇴직소득세를 떼고, 소득공제로 줄어든 종소세는 다음 해 들어옴
+  const inflows = [...locked.map((a) => lockedInflow(a, profile, nowYear, taxRows, s.yearShare ?? 1)).map(({ name, age, amount }) => ({ name, age, amount })), ...saleInflows(assets, profile, nowYear), ...credits, ...yuSaveInflows(profile, nowYear, taxRows)];
   return {
     ...expenseRule(profile),
     inflows: inflows.length ? inflows : undefined,
@@ -375,6 +390,7 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
       .concat(bulletRepayments(liabilities, s.age, inflation).map(({ name, age, amount }) => ({ age, amount, loan: name })))
       // 은퇴 뒤까지 내는 보험료는 그 해 자산에서 뺌(연금 생활비 고정액에 포함했으면 따로 빼지 않음)
       .concat(covered.has('premium') ? [] : retirePremiums(s, o.retireAge ?? profile.retireAge, inflation, profile.lifeExpectancy))
-      .concat(npCost),
+      .concat(npCost)
+      .concat(yuPayOutflows(profile, assets, nowYear)),
   };
 }

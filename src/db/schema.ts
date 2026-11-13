@@ -17,6 +17,10 @@ export interface FieldDef {
   reOnly?: boolean;
   /** CSV 선택 열: 연금 계좌 행에만 쓰는 값 */
   penOnly?: boolean;
+  /** CSV 선택 열: 연금 계좌 또는 노란우산 행에만 쓰는 값(과세제외 금액) */
+  penOrYu?: boolean;
+  /** CSV 선택 열: 노란우산 행에만 쓰는 값 */
+  yuOnly?: boolean;
 }
 
 export const GOAL_CATEGORY: Record<string, string> = {
@@ -43,7 +47,7 @@ const assetCsvExtra: FieldDef[] = [
   { key: 'hpRate', label: '주택연금 대출 금리', kind: 'number', unit: '%', reOnly: true },
   { key: 'hpInitFee', label: '주택연금 초기보증료', kind: 'number', unit: '%', reOnly: true },
   { key: 'hpAnnualFee', label: '주택연금 연보증료', kind: 'number', unit: '%', reOnly: true },
-  { key: 'taxFree', label: '과세제외 금액', kind: 'number', unit: '만원', penOnly: true },
+  { key: 'taxFree', label: '과세제외 금액', kind: 'number', unit: '만원', penOrYu: true },
   { key: 'retirePart', label: '퇴직금 재원', kind: 'number', unit: '만원', penOnly: true },
   { key: 'paidIn', label: '개인 입금액', kind: 'number', unit: '만원', penOnly: true },
   { key: 'pensionYear1', label: '연금수령 1년차 연도', kind: 'number', penOnly: true },
@@ -51,7 +55,14 @@ const assetCsvExtra: FieldDef[] = [
   { key: 'drawOrder', label: '꺼내는 순서', kind: 'number', penOnly: true },
   { key: 'compareOrder', label: '비교 기준 순서', kind: 'number', penOnly: true },
   { key: 'group', label: '같은 계좌', kind: 'text', penOnly: true },
+  { key: 'yu', label: '노란우산공제', kind: 'select', options: { true: '예' } },
+  { key: 'yuPay', label: '노란우산 연 납입액', kind: 'number', unit: '만원', yuOnly: true },
+  { key: 'yuPayTo', label: '노란우산 마지막 납입 연도', kind: 'number', yuOnly: true },
+  { key: 'yuJoin', label: '노란우산 가입 연도', kind: 'number', yuOnly: true },
 ];
+
+/** 모든 목록 CSV 의 마지막 열: 기본 정보 화면 카드 순서(작을수록 위, 비우면 추가한 순서대로 뒤에) */
+export const ORDER_FIELD: FieldDef = { key: 'order', label: '화면 순서', kind: 'number' };
 
 /** 보험 피보험자: 납입 종료 나이를 누구 나이로 입력했는지 */
 export const INSURED_WHO: Record<string, string> = { self: '본인', spouse: '배우자', child: '자녀' };

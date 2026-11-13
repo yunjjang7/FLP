@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
@@ -8,15 +8,17 @@ import { JoinAccount, UndoBar } from '../components/JoinAccount';
 import { alignAccount, setAccountKey, setGroupInDb } from '../db/accountOps';
 import { ACCOUNT_KEY_LABEL, ACCOUNT_KEYS, accountMismatch, ASSET_TYPES, groupNames, groupNotes, groupOf, insuredBirthYear, type AccountKey, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
-import { Button, Card, PageHeader } from '../components/ui';
-import { jumpToTarget } from '../components/SetupLink';
+import { Button, Card, MoveButtons, PageHeader } from '../components/ui';
+import { appendOrders, byOrder, moveItem, moveRow, nextOrder } from '../db/order';
+import { jumpToTarget, SetupLink } from '../components/SetupLink';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
 import { won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import { bulletMissingMaturity, equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
 import { creditCheck, CREDIT_CHECK_TAX } from '../engine/creditCheck';
-import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf } from '../engine/incomeTax';
+import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf, incomeTaxSchedule } from '../engine/incomeTax';
+import { isYu, YU_CEO_WAGE, yuPayTo } from '../engine/yellowUmbrella';
 import type { Asset, AssetType, ReUse, ContribPlan, Criteria, DrawInclude, ExpenseBand, ExpenseMode, Goal, IncomeKind, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
@@ -250,7 +252,7 @@ function ProfileForm() {
           연금계좌별 과세제외 금액·퇴직금 재원·명의·인출 시작 연도·꺼내는 순서는 ‘자산’ 탭의 각 연금 자산에서 입력합니다. 과세재원 인출은 1인 연 1,500만원까지 연금소득세(70세 미만 5.5%·70대 4.4%·80세 이상 3.3%)를 내고, 넘으면 16.5% 분리과세로 계산합니다.
           ‘꽉 채우기’를 고르면 생활비보다 많아도 해마다 1인 1,500만원까지 과세재원을 꺼내(낮은 세율로 미리 꺼냄) 세후 금액을 ISA·일반계좌에 다시 넣습니다.
           한 계좌 안에서는 법정 순서(과세제외 → 퇴직금 재원 → 과세재원)로만 빠지고, 운용수익은 모두 과세재원으로 쌓입니다. 퇴직소득세 감면이 40%로 커지는 11년차는 퇴직금 계좌에서 실제로 꺼낸 해만 세므로, ‘매년 최소 인출’에 작은 금액(예: 연 12만원)을 넣어 두면 쓸 일이 없는 해에도 연차가 이어집니다(꺼낸 돈은 ISA·일반계좌로).
-          ‘노후 진단에 연금 인출 세금 반영’을 아니오로 하면 노후 진단·요약 보고서·맞춤 처방의 성공확률과 고갈 나이를 세금 없이 계산합니다(엑셀 결과와 맞춰 볼 때). 인출 계획 화면의 세금 계산은 그대로입니다.
+          ‘노후 진단에 연금 인출 세금 반영’을 아니오로 하면 노후 진단·요약 보고·맞춤 처방의 성공확률과 고갈 나이를 세금 없이 계산합니다(엑셀 결과와 맞춰 볼 때). 인출 계획 화면의 세금 계산은 그대로입니다.
         </p>
       </Card>
       <CreditCheckCard />
@@ -519,7 +521,10 @@ function ExpenseBands() {
             <div key={i} className="flex flex-wrap items-end gap-3">
               <div className="w-32"><Labeled label="시작 나이(세)" hint={`${p.birthYear + x.fromAge}년`}><NumberField value={x.fromAge} onChange={(v) => setAt(i, { fromAge: v })} /></Labeled></div>
               <div className="w-40"><Labeled label="월 생활비(만원)" hint={p.retireMonthlyExpense > 0 ? `기본의 ${Math.round((x.monthly / p.retireMonthlyExpense) * 100)}% · 오늘 물가 기준` : '오늘 물가 기준'}><NumberField value={x.monthly} onChange={(v) => setAt(i, { monthly: v })} /></Labeled></div>
-              <button className="mb-2 text-xs font-medium text-bad hover:underline" onClick={() => save({ expenseSteps: list.filter((_, j) => j !== i) })}>삭제</button>
+              <span className="mb-0.5 flex items-center gap-3">
+                <MoveButtons name={`${x.fromAge}세 구간`} index={i} count={list.length} onMove={(dir) => save({ expenseSteps: moveItem(list, i, dir) })} />
+                <button className="text-xs font-medium text-bad hover:underline" onClick={() => save({ expenseSteps: list.filter((_, j) => j !== i) })}>삭제</button>
+              </span>
             </div>
           ))}
           <p className="rounded-lg bg-sunken px-3 py-2 text-xs text-muted">
@@ -589,7 +594,10 @@ function IncomeList() {
                   </div>
                 )}
               </div>
-              <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${x.name}'을(를) 삭제할까요?`) && save({ incomes: list.filter((_, j) => j !== i) })}>삭제</button>
+              <span className="flex items-center gap-3">
+                <MoveButtons name={x.name} index={i} count={list.length} onMove={(dir) => save({ incomes: moveItem(list, i, dir) })} />
+                <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${x.name}'을(를) 삭제할까요?`) && save({ incomes: list.filter((_, j) => j !== i) })}>삭제</button>
+              </span>
             </div>
             {incomeKindOf(x) === 'rent' && (() => {
               const dup = rentDuplicates(x, assets);
@@ -779,7 +787,8 @@ function Guide({ items }: { items: React.ReactNode[] }) {
 
 function ListEditor({ table }: { table: ListTable }) {
   const data = useFlp();
-  const rows = data[table] as unknown as (Record<string, unknown> & { id?: number })[];
+  // 화면은 카드 순서(order, 없으면 추가한 순서)로 보여 줌. 계산은 이 순서를 쓰지 않음
+  const rows = byOrder(data[table] as unknown as (Record<string, unknown> & { id?: number; order?: number })[]);
   const { label, fields, example } = TABLES[table];
   const tbl = db[table] as unknown as { add: (r: unknown) => Promise<unknown>; update: (id: number, p: unknown) => Promise<unknown>; delete: (id: number) => Promise<void> };
   // 보험은 보장 종류가 여럿이라 합계 한 줄 대신 아래 피보험자별 요약을 씀
@@ -832,7 +841,7 @@ function ListEditor({ table }: { table: ListTable }) {
         <div className="text-sm text-muted">
           {label} {rows.length}건{amountKey && <> · 합계 <b className="text-ink">{won(total)}</b></>}
         </div>
-        <Button onClick={() => tbl.add({ ...example, name: `새 ${label}` })}>+ {label} 추가</Button>
+        <Button onClick={() => tbl.add({ ...example, name: `새 ${label}`, order: nextOrder(rows) })}>+ {label} 추가</Button>
       </div>
       {table === 'assets' && <UndoBar />}
       {table === 'assets' && (
@@ -874,7 +883,7 @@ function ListEditor({ table }: { table: ListTable }) {
         />
       )}
       {rows.length === 0 && <Card><p className="py-6 text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘가져오기·백업’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
-      {rows.map((r) => (
+      {rows.map((r, idx) => (
         <Card key={r.id} className={table === 'liabilities' && bulletMissingMaturity(r as unknown as Liability, data.summary.age) ? 'border-warn! ring-1 ring-warn' : ''}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
             {fieldsOf(r).map((f) => (
@@ -966,9 +975,12 @@ function ListEditor({ table }: { table: ListTable }) {
             ) : (
             <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}{table === 'insurance' && insuranceNote(r as unknown as Insurance, data.profile, data.summary.age, data.profile.retireAge)}</span>
             )}
-            <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
-              삭제
-            </button>
+            <span className="flex shrink-0 items-center gap-3">
+              <MoveButtons name={String(r.name ?? '')} index={idx} count={rows.length} onMove={(dir) => void moveRow(table, r.id!, dir)} />
+              <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
+                삭제
+              </button>
+            </span>
           </div>
         </Card>
       ))}
@@ -1001,8 +1013,8 @@ function GroupNotes({ a, assets, onChange }: { a: Asset; assets: Asset[]; onChan
       )}
       {diff.length > 0 && (
         <p role="alert" className="mt-2 rounded-lg bg-warn-soft px-2 py-1 text-xs text-warn">
-          ‘{g}’ 계좌의 줄끼리 값이 다른 항목이 있습니다({diff.map((k) => ACCOUNT_KEY_LABEL[k]).join('·')}). 계산은 자산 탭에서 먼저 나오는 줄의 값을 씁니다.{' '}
-          <button type="button" className={link} onClick={() => void alignAccount(a)}>먼저 나오는 줄 값으로 맞추기</button>
+          ‘{g}’ 계좌의 줄끼리 값이 다른 항목이 있습니다({diff.map((k) => ACCOUNT_KEY_LABEL[k]).join('·')}). 계산은 먼저 추가한 줄의 값을 씁니다(카드 순서와 무관).{' '}
+          <button type="button" className={link} onClick={() => void alignAccount(a)}>먼저 추가한 줄 값으로 맞추기</button>
         </p>
       )}
     </>
@@ -1011,12 +1023,15 @@ function GroupNotes({ a, assets, onChange }: { a: Asset; assets: Asset[]; onChan
 
 /** 자산 추가 설정: 명의, 수령 전 묶인 자산(노란우산 등), 연금계좌 재원 구성 */
 function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v: unknown) => void }) {
-  const { profile: p, summary, assets } = useFlp();
+  const { profile: p, summary, assets, liabilities } = useFlp();
   const nowYear = p.birthYear + summary.age;
   const hasSpouse = p.spouseBirthYear > 0;
   const pension = a.type === 'pension';
   const locked = (a.lockYear ?? 0) > nowYear;
-  const [open, setOpen] = useState(pension || locked || (a.owner ?? 'self') !== 'self');
+  const yu = isYu(a) && !pension;
+  // 노란우산: 소득공제 비율·절세액은 종합소득세 추정 행에서(사업소득은 프로필 ‘그 밖의 소득’, 법인 대표는 세전 총급여)
+  const taxRows = useMemo(() => (yu ? incomeTaxSchedule(p, nowYear, undefined, assets, liabilities) : undefined), [yu, p, nowYear, assets, liabilities]);
+  const [open, setOpen] = useState(pension || locked || yu || (a.owner ?? 'self') !== 'self');
   if (!open) {
     return (
       <button className="mt-2 text-xs font-medium text-brand hover:underline" onClick={() => setOpen(true)}>
@@ -1024,7 +1039,11 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
       </button>
     );
   }
-  const inflow = locked ? lockedInflow(a, p, nowYear) : null;
+  const inflow = locked ? lockedInflow(a, p, nowYear, taxRows, summary.yearShare ?? 1) : null;
+  const yuWho = a.owner === 'spouse' && hasSpouse ? 'spouse' : 'self';
+  const yuRow = taxRows?.find((r) => (yuWho === 'spouse' ? r.yuPaySpouse : r.yuPaySelf) > 0);
+  const yuDed = yuRow ? (yuWho === 'spouse' ? yuRow.yuDedSpouse : yuRow.yuDedSelf) : 0;
+  const yuPaying = yu && (a.yuPay ?? 0) > 0;
   return (
     <div className="mt-3 rounded-xl bg-sunken p-3">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
@@ -1036,9 +1055,30 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
         <Labeled label="수령 연도" hint={locked ? `${nowYear}~${a.lockYear! - 1}년 인출 불가` : '0이면 지금 인출 가능'}>
           <NumberField plain value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
         </Labeled>
-        <Labeled label="수령 시 세율(%)" hint="일시금 실효세율">
+        <Labeled label="수령 시 세율(%)" hint={yu ? (inflow?.yu?.auto ? `0이면 퇴직소득세 자동(지금 약 ${inflow.yu.rate.toFixed(1)}%)` : '넣으면 적립금 × 세율 · 0이면 퇴직소득세 자동') : '일시금 실효세율'}>
           <NumberField value={a.lockTax ?? 0} step={0.1} onChange={(v) => onChange('lockTax', v)} />
         </Labeled>
+        {!pension && (
+          <Labeled label="노란우산공제" hint="납입액 소득공제 · 수령 때 퇴직소득세">
+            <SelectField value={a.yu ? 'yes' : 'no'} onChange={(v) => onChange('yu', v === 'yes' ? true : undefined)} options={{ no: '아니오', yes: '예' }} />
+          </Labeled>
+        )}
+        {yu && (
+          <>
+            <Labeled label="연 납입액(만원)" hint="월 부금 × 12 · 명목 고정">
+              <NumberField value={a.yuPay ?? 0} min={0} onChange={(v) => onChange('yuPay', v > 0 ? v : undefined)} />
+            </Labeled>
+            <Labeled label="마지막 납입 연도" hint={`0이면 명의자 은퇴 전 해(지금 ${yuPayTo(a, p)}년)`}>
+              <NumberField plain value={a.yuPayTo ?? 0} onChange={(v) => onChange('yuPayTo', v > 0 ? v : undefined)} />
+            </Labeled>
+            <Labeled label="가입 연도" hint="퇴직소득세 근속연수(가입 기간)">
+              <NumberField plain value={a.yuJoin ?? 0} onChange={(v) => onChange('yuJoin', v > 0 ? v : undefined)} />
+            </Labeled>
+            <Labeled label="공제 안 받은 부금(만원)" hint="지금까지 소득공제 못 받은 부금 누계 · 비과세">
+              <NumberField value={a.taxFree ?? 0} onChange={(v) => onChange('taxFree', v > 0 ? v : undefined)} />
+            </Labeled>
+          </>
+        )}
         {pension && (
           <>
             <Labeled label="과세제외(만원)" hint="세액공제 안 받은 원금">
@@ -1059,10 +1099,10 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
             <Labeled label="인출 시작 연도" hint={(a.drawStartYear ?? 0) > nowYear ? `${a.drawStartYear! - 1}년까지 꺼내지 않음 · 추가 납입 계좌` : '0이면 바로(55세부터)'}>
               <NumberField plain value={a.drawStartYear ?? 0} onChange={(v) => onChange('drawStartYear', v)} />
             </Labeled>
-            <Labeled label="꺼내는 순서" hint="같은 명의 안에서 작을수록 먼저 · 0이면 입력 순서">
+            <Labeled label="꺼내는 순서" hint="같은 명의 안에서 작을수록 먼저 · 0이면 추가한 순서(카드 순서와 무관)">
               <NumberField value={a.drawOrder ?? 0} min={0} onChange={(v) => onChange('drawOrder', v)} />
             </Labeled>
-            <Labeled label="비교 기준 순서" hint="인출 순서 비교표 ①에서만 씀 · 0이면 입력 순서">
+            <Labeled label="비교 기준 순서" hint="인출 순서 비교표 ①에서만 씀 · 0이면 추가한 순서">
               <NumberField value={a.compareOrder ?? 0} min={0} onChange={(v) => onChange('compareOrder', v)} />
             </Labeled>
             <Labeled label="같은 계좌" hint="이름이 같은 줄은 한 계좌로 계산 · 비우면 이 줄이 한 계좌">
@@ -1076,6 +1116,22 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
       {pension && (
         <p className="mt-2 text-xs text-muted">
           연금수령 1년차는 55세가 되고 가입 5년이 지난 해입니다(2013년 3월 전 가입 계좌는 55세에 6년차). 10년차까지는 해마다 ‘연초 평가액 ÷ (11 − 연차) × 120%’까지만 연금으로 받을 수 있고, 넘는 금액은 연금외수령으로 세금이 무거워집니다.
+        </p>
+      )}
+      {yu && !locked && (
+        <p role="alert" className="mt-2 rounded-lg bg-warn-soft px-2 py-1 text-xs text-warn">수령 연도를 넣어야 노란우산 납입·소득공제·퇴직소득세를 계산합니다(폐업·노령 등으로 받을 해).</p>
+      )}
+      {yuPaying && locked && yuRow && (
+        <p className="mt-2 text-xs text-muted">
+          {yuRow.year}년 납입 {won(a.yuPay!)} 중 소득공제 {won(yuDed)}
+          {yuRow.yuSave > 0.5 ? ` → 종합소득세 약 ${won(yuRow.yuSave)} 감소(부부 합계, 다음 해 5월에 들어오는 돈으로 계산)` : ''}.
+          {yuDed <= 0 && <> 사업소득이 없어 공제하지 않았습니다. 은퇴 전 사업소득은 <SetupLink tab="profile" card="그 밖의 은퇴 후 소득">프로필 → 그 밖의 소득</SetupLink>에 ‘사업소득’으로 지금 나이부터 넣거나, 법인 대표자면 세전 총급여(연 {won(YU_CEO_WAGE)} 이하)를 넣으세요.</>}
+          {' '}해마다 연 납입액을 꺼내 쓸 수 있는 금융자산에서 이 계좌로 옮기는 것으로 계산합니다(지출 탭에 부금을 또 넣지 마세요).
+        </p>
+      )}
+      {inflow?.yu && (
+        <p className="mt-2 text-xs text-muted">
+          수령 때 적립금 약 {won(inflow.yu.fv)} 중 소득공제 받은 부금과 운용수익 {won(inflow.yu.taxable)}은 퇴직소득(가입 {inflow.yu.years}년을 근속연수로){inflow.yu.auto ? `, 퇴직소득세 약 ${won(inflow.yu.tax)}` : `, 직접 넣은 세율로 세금 ${won(inflow.yu.tax)}`}입니다. 공제 못 받은 부금 {won(inflow.yu.nonDed)}은 과세하지 않습니다. 중도 해지는 기타소득(16.5%)이라 이 계산과 다릅니다.
         </p>
       )}
       {inflow && (
@@ -1249,7 +1305,8 @@ function BackupPanel() {
       return;
     }
     if (mode === 'replace') await tbl.clear();
-    await tbl.bulkAdd(rows);
+    // ‘기존 데이터에 추가’면 가져온 줄을 지금 카드들 아래에 붙임(화면 순서 열이 있으면 그 순서대로)
+    await tbl.bulkAdd(mode === 'append' ? appendOrders(data[table] as { id?: number; order?: number }[], rows) : rows);
     setMsg(`${TABLES[table].label} ${rows.length}건을 가져왔습니다.${errors.length ? `\n확인 필요:\n- ${errors.join('\n- ')}` : ''}`);
   };
 

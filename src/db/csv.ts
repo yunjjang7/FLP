@@ -3,21 +3,25 @@ import { parseMonth } from '../engine/drawLog';
 import { ASSET_TYPES } from '../engine/portfolio';
 import type { Draw } from '../types';
 import type { ListTable } from './db';
-import { TABLES, type FieldDef } from './schema';
+import { ORDER_FIELD, TABLES, type FieldDef } from './schema';
 
 type Row = Record<string, unknown>;
 
 /** 레코드 배열 → CSV 문자열(한글 헤더, 선택값은 한글 라벨) */
-const allFields = (table: ListTable) => [...TABLES[table].fields, ...(TABLES[table].csvExtra ?? [])];
-/** 부동산·연금 계좌 전용 열인데 그 유형이 아닌 행 */
-const notFor = (f: FieldDef, type: unknown) => (f.reOnly && type !== 'realestate') || (f.penOnly && type !== 'pension');
+const extras = (table: ListTable) => [...(TABLES[table].csvExtra ?? []), ORDER_FIELD];
+const allFields = (table: ListTable) => [...TABLES[table].fields, ...extras(table)];
+/** 노란우산공제로 표시한 행(값이 true 또는 CSV 의 ‘예’) */
+const yuRow = (r: Row) => r.yu === true || r.yu === 'true' || r.yu === '예';
+/** 부동산·연금 계좌·노란우산 전용 열인데 그 유형이 아닌 행 */
+const notFor = (f: FieldDef, r: Row) =>
+  (f.reOnly && r.type !== 'realestate') || (f.penOnly && r.type !== 'pension') || (f.yuOnly && !yuRow(r)) || (f.penOrYu && r.type !== 'pension' && !yuRow(r));
 
 /** 레코드 배열 → CSV 문자열(한글 헤더, 선택값은 한글 라벨). 선택 열은 값이 없거나 부동산 전용인데 부동산이 아니면 빈칸 */
 export function toCSV(table: ListTable, rows: Row[]) {
   const fields = allFields(table);
   const cell = (r: Row, f: FieldDef) => {
     const v = r[f.key];
-    if (notFor(f, r.type) || v === undefined || v === null) return '';
+    if (notFor(f, r) || v === undefined || v === null) return '';
     return f.kind === 'select' ? f.options?.[String(v)] ?? v : v;
   };
   return Papa.unparse({ fields: fields.map((f) => f.label), data: rows.map((r) => fields.map((f) => cell(r, f))) });
@@ -53,10 +57,12 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
         } else rec[f.key] = code;
       } else rec[f.key] = String(v ?? '').trim();
     }
-    // 선택 열: 빈칸이면 값 없음, 부동산 전용 열은 부동산 행에서만 읽음
-    for (const f of TABLES[table].csvExtra ?? []) {
+    // 선택 열: 빈칸이면 값 없음, 부동산·연금·노란우산 전용 열은 그 행에서만 읽음
+    const yuCell = String(raw['노란우산공제'] ?? raw.yu ?? '').trim();
+    const kind = { type: rec.type, yu: yuCell === '예' || yuCell === 'true' };
+    for (const f of extras(table)) {
       const s = String(raw[f.label] ?? raw[f.key] ?? '').trim();
-      if (!s || notFor(f, rec.type)) continue;
+      if (!s || notFor(f, kind)) continue;
       if (f.kind === 'number') rec[f.key] = num(s);
       else if (f.kind === 'text') rec[f.key] = s;
       else {
@@ -71,6 +77,8 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
         rec.owner = 'self';
       }
       if (rec.type === 'realestate') rec.reUse ??= 'home';
+      if (rec.yu === 'true') rec.yu = true;
+      if (rec.yu && (rec.type === 'pension' || rec.type === 'realestate')) delete rec.yu;
     }
     if (!rec.name) {
       errors.push(`${i + 2}행: 이름이 비어 있어 건너뜁니다.`);

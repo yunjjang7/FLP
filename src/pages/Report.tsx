@@ -7,7 +7,7 @@ import type { Level } from '../types';
 
 const DOT: Record<Level, string> = { good: 'bg-good', caution: 'bg-warn', danger: 'bg-bad' };
 
-/** 요약 보고서: 계획 전체를 문장으로 정리한 한 장(인쇄용) */
+/** 요약 보고: 계획 전체를 문장으로 정리한 한 장(인쇄용) */
 export default function Report() {
   const d = useFlp();
   const nowYear = d.profile.birthYear + d.summary.age;
@@ -16,13 +16,13 @@ export default function Report() {
     const rx = prescriptions(d.profile, d.basis, d.planInput, d.sim.successRate, d.goalPlans, d.ins, d.retax);
     return buildReport({ profile: d.profile, summary: d.summary, planInput: d.planInput, sim: d.sim, start: d.start, need: d.need, liabilities: d.liabilities, goals: d.goals, checks: d.checks, rx, nowYear, retax: d.retax });
   }, [d, nowYear]);
-  if (!d.hasData) return <><PageHeader title="요약 보고서" /><EmptyState /></>;
+  if (!d.hasData) return <><PageHeader title="요약 보고" /><EmptyState /></>;
   const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
 
   return (
     <div className="report">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0 flex-1"><PageHeader title="요약 보고서" desc={`${d.profile.name ? `${d.profile.name} · ` : ''}${today} 기준 · 화면마다 흩어진 결과를 한 장의 문장으로 모았습니다. 입력을 바꾸면 함께 바뀝니다.`} /></div>
+        <div className="min-w-0 flex-1"><PageHeader title="요약 보고" desc={`${d.profile.name ? `${d.profile.name} · ` : ''}${today} 기준 · 화면마다 흩어진 결과를 한 장의 문장으로 모았습니다. 입력을 바꾸면 함께 바뀝니다.`} /></div>
         <Button variant="ghost" onClick={() => window.print()} className="no-print shrink-0">인쇄·PDF 저장</Button>
       </div>
       <div className="space-y-4">

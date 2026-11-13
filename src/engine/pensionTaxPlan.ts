@@ -1,5 +1,5 @@
 import type { Asset, Profile } from '../types';
-import { withdrawStart, type PlanInput } from './montecarlo';
+import { withdrawStart, type PathTax, type PlanInput } from './montecarlo';
 import { pensionTaxSchedule, taxSetup } from './tax';
 import { compareStrategy, DEFAULT_GUARDRAIL, type StrategyKey, type WithdrawInput } from './withdrawal';
 
@@ -46,15 +46,34 @@ export const PENSION_TAX_STRATEGY: StrategyKey = 'guardrail';
  * 프로필 ‘노후 진단에 연금 인출 세금 반영’이 아니오(planPensionTax === false)면 세금 지출을 빼고 돌려줌.
  */
 export function withPensionTax(profile: Profile, assets: Asset[], inp: PlanInput, nowYear: number): PlanInput {
+  const plan = taxPlan(profile, assets, inp, nowYear);
+  if (!plan.setup) return plan.base;
+  const taxes = toGoals(pensionTaxSchedule(plan.schedule, plan.setup).rows);
+  return taxes.length ? { ...plan.base, goals: plan.base.goals.concat(taxes) } : plan.base;
+}
+
+/** 세금 지출을 뺀 계획과, 세금 계산에 쓰는 인출 스케줄(가드레일 · 평균 수익)·계좌 설정 */
+function taxPlan(profile: Profile, assets: Asset[], inp: PlanInput, nowYear: number) {
   const base = { ...inp, goals: inp.goals.filter((g) => !g.pensionTax) };
-  if (profile.planPensionTax === false) return base;
+  if (profile.planPensionTax === false) return { base, setup: null, schedule: [] };
   const start = withdrawStart(base);
   const wi = withdrawInputOf(base, start, { endAge: inp.lifeExpectancy, inflation: inp.inflation, startBalance: start.balance });
   const setup = taxSetup({ ...profile, inflation: inp.inflation }, assets, nowYear, wi.startBalance, wi.meanReturn, profile.birthYear + start.age);
-  if (!setup) return base;
-  const { rows } = pensionTaxSchedule(compareStrategy(PENSION_TAX_STRATEGY, wi, 0).schedule, setup);
-  const taxes = rows.filter((r) => r.tax > 0.005).map((r) => ({ age: r.age, amount: r.tax, pensionTax: true as const }));
-  return taxes.length ? { ...base, goals: base.goals.concat(taxes) } : base;
+  if (setup && inp.death) setup.death = { owner: inp.death.who, year: profile.birthYear + inp.death.age };
+  return { base, setup, schedule: setup ? compareStrategy(PENSION_TAX_STRATEGY, wi, 0).schedule : [] };
+}
+
+const toGoals = (rows: { age: number; tax: number }[]) => rows.filter((r) => r.tax > 0.005).map((r) => ({ age: r.age, amount: r.tax, pensionTax: true as const }));
+
+/**
+ * 몬테카를로 경로별 연금 인출 세금(simulate 의 pathTax). 인출액은 평균 경로와 같게 두고, 계좌가 불어나는 정도만
+ * 그 경로의 수익률로 바꿔 세금을 다시 구함: 수익이 나쁘면 운용수익(과세재원)이 적어 과세제외 재원 비중이 커지고 세금이 줄어듦.
+ * 1,000개 경로에 약 0.2초가 더 걸려 노후 진단 기본 계산(성공확률)에만 씀. 세금을 반영하지 않으면(설정 아니오·연금계좌 없음) undefined
+ */
+export function makePathTax(profile: Profile, assets: Asset[], inp: PlanInput, nowYear: number): PathTax | undefined {
+  const { setup, schedule } = taxPlan(profile, assets, inp, nowYear);
+  if (!setup || !inp.goals.some((g) => g.pensionTax)) return undefined;
+  return (growthAt) => toGoals(pensionTaxSchedule(schedule.map((r) => ({ ...r, growth: growthAt(r.age) })), setup).rows);
 }
 
 /** 계획을 바꿔 다시 계산하는 표(민감도·스트레스 테스트·생활비 가정 비교 등)에서 쓰는, 바뀐 계획에 맞춰 연금 인출 세금을 다시 넣는 함수 */

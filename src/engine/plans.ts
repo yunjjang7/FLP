@@ -1,6 +1,6 @@
 import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, SavedPlan } from '../types';
 import { buildPlanInput } from './goals';
-import { withPensionTax } from './pensionTaxPlan';
+import { makePathTax, withPensionTax } from './pensionTaxPlan';
 import { deterministicPath, retirementNeed, simulate, withdrawStart, type PlanInput, type SimResult } from './montecarlo';
 import { summarize, type Summary } from './portfolio';
 
@@ -57,8 +57,10 @@ export function makePlan(name: string, data: PlanData, today: string, draft?: Pa
 export function planMetrics(data: PlanData, month: number): PlanMetrics {
   const { profile, assets, liabilities, cashflows, goals, insurance } = data;
   const summary = summarize(profile, assets, liabilities, cashflows, undefined, insurance, month);
-  const input = withPensionTax(profile, assets, buildPlanInput(profile, assets, liabilities, goals, summary), profile.birthYear + summary.age);
-  return metricsFrom(profile, summary, input, simulate(input, 1000));
+  const nowYear = profile.birthYear + summary.age;
+  const input = withPensionTax(profile, assets, buildPlanInput(profile, assets, liabilities, goals, summary), nowYear);
+  // 노후 진단과 같이 연금 인출 세금은 경로마다 계산
+  return metricsFrom(profile, summary, input, simulate(input, 1000, 42, makePathTax(profile, assets, input, nowYear)));
 }
 
 /** 이미 계산해 둔 요약·입력·시뮬레이션에서 지표만 뽑음(지금 계획은 화면에서 돌린 결과를 그대로 씀) */

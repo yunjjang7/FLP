@@ -43,7 +43,7 @@ export interface PlanInput {
   retireExpenseAnnual: number; // 은퇴 후 연 생활비
   pensions: IncomeStream[]; // 국민연금·개인연금·임대료 등 은퇴 후 소득
   /** 해당 나이에 지출되는 목적자금·반복 지출(실질). loan 이 있으면 만기일시 상환 대출의 원금 상환(그 대출 이름) */
-  goals: { age: number; amount: number; loan?: string; premium?: string; npTax?: boolean; pensionTax?: boolean; flow?: boolean }[]; // loan: 만기일시 대출 원금, premium: 은퇴 후 보험료, npTax: 국민연금 몫 세금·건보료, pensionTax: 연금계좌 인출 세금(withPensionTax), flow: 해마다 나가는 지출(첫해는 남은 달만큼)
+  goals: { age: number; amount: number; loan?: string; premium?: string; npTax?: boolean; pensionTax?: boolean; yuPay?: string; flow?: boolean }[]; // loan: 만기일시 대출 원금, premium: 은퇴 후 보험료, npTax: 국민연금 몫 세금·건보료, pensionTax: 연금계좌 인출 세금(withPensionTax), yuPay: 노란우산 부금 납입(자산 이름), flow: 해마다 나가는 지출(첫해는 남은 달만큼)
   /** 은퇴 후 자산 운용(미지정 시 은퇴 전과 동일) */
   retireMeanReturn?: number;
   retireVolatility?: number;
@@ -57,8 +57,8 @@ export interface PlanInput {
   expenseSteps?: ExpenseStep[];
   /** 연금으로 쓰는 금액 명목 고정(연, 인출 시작 시점 금액): 이 금액을 국민·개인연금과 자산 인출로 채우고(연금이 늘면 인출이 줄어듦), 임대료 등 그 밖의 소득은 모두 생활비로 씀 */
   fixedDraw?: number;
-  /** 수령 전 묶인 자산(노란우산 등)·부동산 매각(sale)·세액공제 환급(credit): 해당 나이에 세후 금액(실질)이 들어와 함께 운용됨 */
-  inflows?: { name?: string; age: number; amount: number; kind?: 'credit' | 'sale' }[];
+  /** 수령 전 묶인 자산(노란우산 등)·부동산 매각(sale)·세액공제 환급(credit)·노란우산 소득공제 절세(yuSave): 해당 나이에 세후 금액(실질)이 들어와 함께 운용됨 */
+  inflows?: { name?: string; age: number; amount: number; kind?: 'credit' | 'sale' | 'yuSave' }[];
   /** 하락장 가드레일: 시장(명목 누적수익률)이 직전 최고점보다 drop% 이상 낮은 해에는 은퇴 후 생활비를 cut% 줄임 */
   guardrail?: Guardrail;
   /**
@@ -68,6 +68,8 @@ export interface PlanInput {
   firstYearShare?: number;
   /** 스트레스 테스트: 그 나이 해의 명목 수익률을 ret(%)로 고정(은퇴 직후 폭락·수익 없는 10년). 난수는 그대로 소비해 다른 해의 시장 경로는 기본 계산과 같음 */
   shocks?: { age: number; ret: number }[];
+  /** 배우자 사별 분석: who 가 본인 나이 age 에 먼저 떠남(연금 인출 세금 계산에서 떠난 사람 연금계좌를 남은 사람이 승계) */
+  death?: { who: 'self' | 'spouse'; age: number };
 }
 
 /** 그 나이 해가 차지하는 비율: 첫해만 firstYearShare, 나머지는 1 */
@@ -194,6 +196,22 @@ export function outflowAt(input: PlanInput, age: number, cut = 0, share = 1) {
   return out - inflowAt(input, age);
 }
 
+/** 그 나이 해의 명목·실질 수익률(소수). z: 그 해 표준정규 난수. 첫해가 1년이 안 되면 수익·물가도 그 기간만큼(변동성은 √기간) */
+export function yearReturn(input: PlanInput, age: number, z: number) {
+  const { mean, vol } = returnAt(input, age);
+  const sh = yearShareAt(input, age);
+  const drawn = Math.max(-0.95, (mean / 100) * sh + (vol / 100) * Math.sqrt(sh) * z);
+  const shock = input.shocks?.find((x) => x.age === age);
+  const nominal = shock ? Math.max(-0.95, shock.ret / 100) : drawn;
+  return { nominal, real: (1 + nominal) / Math.pow(1 + input.inflation / 100, sh) - 1 };
+}
+
+/**
+ * 경로별 연금 인출 세금: 그 경로의 나이별 실질 수익(그 해 자산이 몇 배가 되는지, growth)을 받아 나이별 세금 지출을 돌려줌.
+ * 수익이 나빠 계좌가 덜 불면 과세재원(운용수익)이 적어 세금이 줄고, 좋으면 늘어나는 효과를 경로마다 반영(makePathTax)
+ */
+export type PathTax = (growthAt: (age: number) => number) => PlanInput['goals'];
+
 /** 한 경로 계산. z: 표준정규 난수 공급 함수(결정론적 경로는 항상 0) */
 export function runPath(input: PlanInput, z: () => number) {
   const years = Math.max(0, input.lifeExpectancy - input.currentAge);
@@ -208,13 +226,8 @@ export function runPath(input: PlanInput, z: () => number) {
   const cuts: number[] = [];
   for (let i = 0; i < years; i++) {
     const age = input.currentAge + i;
-    const { mean, vol } = returnAt(input, age);
-    // 첫해가 1년이 안 되면 수익·물가도 그 기간만큼(변동성은 √기간)
     const sh = yearShareAt(input, age);
-    const drawn = Math.max(-0.95, (mean / 100) * sh + (vol / 100) * Math.sqrt(sh) * z());
-    const shock = input.shocks?.find((x) => x.age === age);
-    const nominal = shock ? Math.max(-0.95, shock.ret / 100) : drawn;
-    const real = (1 + nominal) / Math.pow(1 + input.inflation / 100, sh) - 1;
+    const { nominal, real } = yearReturn(input, age, z());
     index *= 1 + nominal;
     peak = Math.max(peak, index);
     const bear = g !== undefined && g.cut > 0 && age >= input.retireAge && index < peak * (1 - g.drop / 100);
@@ -241,11 +254,25 @@ export function runPath(input: PlanInput, z: () => number) {
   return { balances, depletedAt, cuts };
 }
 
+/** 경로별 세금: 난수를 먼저 뽑아 그 경로의 수익률로 세금을 구한 뒤, 같은 난수로 경로를 계산 */
+function runTaxedPath(input: PlanInput, gen: () => number, years: number, pathTax: PathTax) {
+  const zs = Array.from({ length: years }, () => gen());
+  const growth = new Map<number, number>();
+  for (let i = 0; i < years; i++) growth.set(input.currentAge + i, 1 + yearReturn(input, input.currentAge + i, zs[i]).real);
+  const goals = input.goals.filter((g) => !g.pensionTax).concat(pathTax((age) => growth.get(age) ?? 1));
+  let k = 0;
+  return runPath({ ...input, goals }, () => zs[k++]);
+}
+
 export function deterministicPath(input: PlanInput) {
   return runPath(input, () => 0);
 }
 
-export function simulate(input: PlanInput, runs = 1000, seed = 42): SimResult {
+/**
+ * 몬테카를로 시뮬레이션. pathTax 가 있으면 경로마다 그 경로의 수익률로 연금 인출 세금을 다시 계산해
+ * 평균 경로에서 구한 세금(goals 의 pensionTax) 대신 씀. 같은 난수를 쓰므로 시장 경로는 pathTax 가 없을 때와 같음
+ */
+export function simulate(input: PlanInput, runs = 1000, seed = 42, pathTax?: PathTax): SimResult {
   const years = Math.max(0, input.lifeExpectancy - input.currentAge);
   const ages = Array.from({ length: years + 1 }, (_, i) => input.currentAge + i);
   const gen = normalGen(seed);
@@ -256,7 +283,7 @@ export function simulate(input: PlanInput, runs = 1000, seed = 42): SimResult {
   const cutFrom = Math.max(input.currentAge, input.retireAge);
   const cutHist = new Map<number, number>();
   for (let r = 0; r < runs; r++) {
-    const run = runPath(input, gen);
+    const run = pathTax ? runTaxedPath(input, gen, years, pathTax) : runPath(input, gen);
     for (let i = 0; i <= years; i++) columns[i][r] = run.balances[i];
     depletionAges.push(run.depletedAt);
     cutYears += run.cuts.length;
@@ -353,15 +380,15 @@ export function solveFor(
 }
 
 /** 그 해 지출(PlanInput.goals) 종류 구분: 목표 탭 지출 · 은퇴 후 보험료 · 만기일시 대출 원금 · 국민연금 몫 세금·건보료 */
-export type GoalKind = 'goal' | 'premium' | 'loan' | 'npTax' | 'pensionTax';
-export const GOAL_KINDS: GoalKind[] = ['goal', 'premium', 'loan', 'npTax', 'pensionTax'];
-export const GOAL_KIND_LABEL: Record<GoalKind, string> = { goal: '목표 탭 지출', premium: '은퇴 후 보험료', loan: '만기일시 대출 원금', npTax: '국민연금 몫 세금·건보료', pensionTax: '연금 인출 세금' };
+export type GoalKind = 'goal' | 'premium' | 'loan' | 'npTax' | 'pensionTax' | 'yuPay';
+export const GOAL_KINDS: GoalKind[] = ['goal', 'premium', 'loan', 'npTax', 'pensionTax', 'yuPay'];
+export const GOAL_KIND_LABEL: Record<GoalKind, string> = { goal: '목표 탭 지출', premium: '은퇴 후 보험료', loan: '만기일시 대출 원금', npTax: '국민연금 몫 세금·건보료', pensionTax: '연금 인출 세금', yuPay: '노란우산 납입' };
 export function goalKind(g: PlanInput['goals'][number]): GoalKind {
-  return g.loan ? 'loan' : g.premium ? 'premium' : g.npTax ? 'npTax' : g.pensionTax ? 'pensionTax' : 'goal';
+  return g.loan ? 'loan' : g.premium ? 'premium' : g.npTax ? 'npTax' : g.pensionTax ? 'pensionTax' : g.yuPay ? 'yuPay' : 'goal';
 }
 /** 그 나이 지출을 종류별로 나눈 연 금액(실질) */
 export function goalBreakdownAt(input: PlanInput, age: number): Record<GoalKind, number> {
-  const out: Record<GoalKind, number> = { goal: 0, premium: 0, loan: 0, npTax: 0, pensionTax: 0 };
+  const out: Record<GoalKind, number> = { goal: 0, premium: 0, loan: 0, npTax: 0, pensionTax: 0, yuPay: 0 };
   for (const g of input.goals) if (g.age === age) out[goalKind(g)] += g.amount;
   return out;
 }

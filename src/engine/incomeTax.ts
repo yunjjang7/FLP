@@ -2,6 +2,7 @@ import type { Asset, ContribPlan, IncomeKind, IncomeTaxSettings, Liability, Prof
 import { loanBalanceAt, npTerms, spouseRetireSelfAge, spouseToSelf } from './goals';
 import { incomeValue, type IncomeStream } from './montecarlo';
 import { rentStreams, reUseOf, selfShare, usesHp, type RentStream } from './realestate';
+import { YU_CEO_WAGE, yuLimit, yuPayments } from './yellowUmbrella';
 
 /** 종합소득세·건보료 기본값(2026년 기준 요율) */
 export const DEFAULT_INCOME_TAX: IncomeTaxSettings = {
@@ -246,6 +247,11 @@ export interface IncomeTaxRow {
   baseYear: number; // 비교 기준 해: 첫해. 은퇴 전 급여가 있으면 급여가 모두 끝난 해부터는 그 해(은퇴 후 구간)
   npPart: number; // 그중 국민연금 몫
   rentPart: number; // 그중 임대료 인상 몫
+  yuPaySelf: number; // 노란우산 납입액(본인, 명목)
+  yuPaySpouse: number;
+  yuDedSelf: number; // 노란우산 소득공제(본인, 명목): 사업소득금액(임대 제외) 구간별 한도, 법인 대표자는 근로소득금액
+  yuDedSpouse: number;
+  yuSave: number; // 노란우산 소득공제로 줄어든 종합소득세(부부, 지방세 포함, 명목): 다음 해 5월에 돌려받는 돈으로 봄
 }
 
 /**
@@ -265,6 +271,7 @@ export interface IncomeTaxRow {
  * slotByYear: 사적연금도 건보료에 반영할 때 연도별 과세재원 인출액(명목). [본인, 배우자]로 주면 사람별, 숫자 하나면 본인 몫으로 봄.
  * hiPrivate 이면 급여가 있는 해에도 사적연금을 사람별로 넣음: 직장가입자 급여 외 소득(× 반영률), 피부양자 판정 합산소득(전액), 지역가입자 본인 소득(× 반영률).
  * liabilities: 자산별 추정에서 주택 구입 대출 공제(hiLoanDeduct)를 켰을 때 쓰는 부채 목록.
+ * 노란우산공제(자산에서 표시하고 연 납입액을 넣은 것)는 납입하는 해에 소득공제로 종합소득세를 줄임(건보료는 소득공제 전 소득이라 그대로).
  */
 export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number | [number, number]>, assets: Asset[] = [], liabilities: Liability[] = []): IncomeTaxRow[] {
   const s = { ...DEFAULT_INCOME_TAX, ...(profile.incomeTax ?? {}) };
@@ -297,6 +304,13 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
   const rate = s.hiRate / 100;
   const pub = s.hiPublic / 100;
   const rows: IncomeTaxRow[] = [];
+  // 노란우산 납입액(연도별 [본인, 배우자], 명목)
+  const yuPay = new Map<number, [number, number]>();
+  for (const x of yuPayments(assets, profile, nowYear)) {
+    const v = yuPay.get(x.year) ?? [0, 0];
+    v[x.owner === 'spouse' ? 1 : 0] += x.amount;
+    yuPay.set(x.year, v);
+  }
   let prop = 0;
   let prevP = 0;
   let prevNP = 0;
@@ -345,8 +359,19 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
       rentK + wageIncomeAmount(wage[k]) + by.business[k] + pensionIncomeAmount(npK * (s.npTaxable / 100) + by.publicPension[k]);
     const incomeSelf = incomeOf(0, rentSelf, npSelf);
     const incomeSpouse = incomeOf(1, rentSpouse, npSpouse);
-    const taxSelf = personIncomeTax(incomeSelf, s.dedSelf, wage[0]);
-    const taxSpouse = personIncomeTax(incomeSpouse, s.dedSpouse, wage[1]);
+    // 노란우산 소득공제: 사업소득금액(임대 제외)이 있으면 그 금액 기준 한도, 없고 총급여 8,000만 이하면 법인 대표자로 보고 근로소득금액 기준
+    const pay = yuPay.get(year) ?? [0, 0];
+    const yuDedOf = (k: 0 | 1) => {
+      if (!(pay[k] > 0)) return 0;
+      const base = by.business[k] > 0 ? by.business[k] : wage[k] > 0 && wage[k] <= YU_CEO_WAGE ? wageIncomeAmount(wage[k]) : 0;
+      return Math.min(pay[k], yuLimit(base), base);
+    };
+    const yuDed: [number, number] = [yuDedOf(0), hasSpouse ? yuDedOf(1) : 0];
+    const dedSelf = s.dedSelf + yuDed[0];
+    const dedSpouse = s.dedSpouse + yuDed[1];
+    const taxSelf = personIncomeTax(incomeSelf, dedSelf, wage[0]);
+    const taxSpouse = personIncomeTax(incomeSpouse, dedSpouse, wage[1]);
+    const yuSave = yuDed[0] + yuDed[1] > 0 ? personIncomeTax(incomeSelf, s.dedSelf, wage[0]) + personIncomeTax(incomeSpouse, s.dedSpouse, wage[1]) - taxSelf - taxSpouse : 0;
     const np = npSelf + npSpouse;
     const wageWithheld = wageWithholding(wage[0], s.dedSelf) + wageWithholding(wage[1], s.dedSpouse);
     const withheld = np * (1 - net) + wageWithheld;
@@ -413,7 +438,7 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
     }
     const increase = total - base.total;
     // 국민연금이 없을 때 5월 납부액(근로 원천징수는 그대로 빠짐)
-    const taxNoNP = personIncomeTax(incomeOf(0, rentSelf, 0), s.dedSelf, wage[0]) + personIncomeTax(incomeOf(1, rentSpouse, 0), s.dedSpouse, wage[1]) - wageWithheld;
+    const taxNoNP = personIncomeTax(incomeOf(0, rentSelf, 0), dedSelf, wage[0]) + personIncomeTax(incomeOf(1, rentSpouse, 0), dedSpouse, wage[1]) - wageWithheld;
     // 건보료 중 국민연금 몫: 지역은 전년도 국민연금 × 반영률 × 요율, 직장가입자가 있는 해는 국민연금을 뺐을 때와의 차이
     let npHi = prevNP * pub * rate * ltc;
     if (anyWork) {
@@ -421,7 +446,7 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
       npHi = hiYear - (no.work + no.Q + no.R + no.Z) * ltc * 12;
     }
     const npPart = due - taxNoNP + npHi;
-    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, salary, hiMode: hi.mode, hiDepWhy: 'depWhy' in hi ? hi.depWhy : undefined, hiWork: hi.work * ltc, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, baseYear: base.year, npPart, rentPart: increase - npPart });
+    rows.push({ year, age, defl, rent, rentSelf, rentSpouse, npSelf, npSpouse, other, salary, hiMode: hi.mode, hiDepWhy: 'depWhy' in hi ? hi.depWhy : undefined, hiWork: hi.work * ltc, incomeSelf, incomeSpouse, taxSelf, taxSpouse, withheld, wageWithheld, due, propBase, loanDed, hiProp: R * ltc, hiMonth, hiYear, total, increase, baseYear: base.year, npPart, rentPart: increase - npPart, yuPaySelf: pay[0], yuPaySpouse: hasSpouse ? pay[1] : 0, yuDedSelf: yuDed[0], yuDedSpouse: yuDed[1], yuSave });
     prevP = P;
     prevNP = np;
     prevSlot = slotOf(year)[0] + slotOf(year)[1];
@@ -488,6 +513,25 @@ export function creditInflows(profile: Profile, nowYear: number, contrib: Contri
       age: c.year + 1 - profile.birthYear,
       amount: (c.creditSelf + c.creditSpouse) / Math.pow(1 + profile.inflation / 100, c.year + 1 - nowYear),
     }));
+}
+
+/** 노란우산 소득공제로 줄어든 종합소득세(다음 해 들어오는 실질 금액, 본인 나이) */
+export function yuSaveInflows(profile: Profile, nowYear: number, rows: IncomeTaxRow[]) {
+  return rows
+    .filter((r) => r.yuSave > 0)
+    .map((r) => ({ name: '노란우산 소득공제 절세', kind: 'yuSave' as const, age: r.year + 1 - profile.birthYear, amount: r.yuSave / Math.pow(1 + profile.inflation / 100, r.year + 1 - nowYear) }));
+}
+
+/** 그 해 그 사람 노란우산 납입액 중 소득공제 받은 비율(종소세 추정 행 기준). 그 해 행이 없으면 모두 공제받는다고 봄 */
+export function yuDedFracOf(rows: IncomeTaxRow[]) {
+  const by = new Map(rows.map((r) => [r.year, r]));
+  return (year: number, owner: 'self' | 'spouse') => {
+    const r = by.get(year);
+    if (!r) return 1;
+    const pay = owner === 'spouse' ? r.yuPaySpouse : r.yuPaySelf;
+    const ded = owner === 'spouse' ? r.yuDedSpouse : r.yuDedSelf;
+    return pay > 0 ? ded / pay : 1;
+  };
 }
 
 /** 국민연금 때문에 늘어나는 종소세·건보료(실질, 본인 나이별) — ‘인출에 더하기’를 켰을 때 지출로 반영 */

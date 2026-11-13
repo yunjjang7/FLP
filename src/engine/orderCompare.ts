@@ -26,7 +26,7 @@ export interface OrderCombo {
 /** 엑셀 ‘인출순서비교’ 시트의 조합 5가지(① 기준 → ② 순서·시작 연도 → ③~⑤ 추가 납입) */
 export function orderCombos(hasSpouse: boolean): OrderCombo[] {
   const list: OrderCombo[] = [
-    { key: '1', label: '① 기준 순서 · 모든 계좌 바로 인출 · 납입 없음', note: '비교 기준 순서(없으면 입력 순서) · 인출 시작 연도 안 씀', keepOrder: false, keepStart: false, self: false, spouse: false },
+    { key: '1', label: '① 기준 순서 · 모든 계좌 바로 인출 · 납입 없음', note: '비교 기준 순서(없으면 추가한 순서) · 인출 시작 연도 안 씀', keepOrder: false, keepStart: false, self: false, spouse: false },
     { key: '2', label: '② 지금 순서 · 인출 시작 연도 · 납입 없음', note: '계좌별 꺼내는 순서와 인출 시작 연도 적용', keepOrder: true, keepStart: true, self: false, spouse: false },
     { key: '3', label: '③ ② + 본인 추가 납입', note: '인출 시작 전 본인 계좌로 납입', keepOrder: true, keepStart: true, self: true, spouse: false },
     { key: '4', label: hasSpouse ? '④ ② + 본인·배우자 추가 납입' : '', note: '', keepOrder: true, keepStart: true, self: true, spouse: true },
