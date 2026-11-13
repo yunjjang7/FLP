@@ -302,7 +302,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
       title: endless ? `${x.name ?? '대출'} 상환이 끝나지 않음` : `${x.name ?? '대출'} 은퇴 후 ${x.endAge - 1}세까지 상환`,
       detail: endless
         ? `월 상환액이 이자보다 적습니다. 은퇴 후에도 월 ${fmt(x.annual / 12)}원이 계속 나가는 것으로 계산했습니다. 상환액을 늘리거나 상환 종료 나이를 입력하세요.`
-        : `은퇴 후에도 월 ${fmt(debtAnnualAt(x, input.retireAge) / 12)}원${x.decline ? '(원금균등이라 해마다 줄어듦)' : ''}을 자산에서 꺼내 갚아야 합니다. 은퇴 전 중도상환이나 상환 기간 단축을 검토하세요.`,
+        : `은퇴 후에도 월 ${fmt(debtAnnualAt(x, input.retireAge) / 12)}원${x.decline ? '(원금균등이라 해마다 줄어듦)' : ''}을 ${x.inDraw ? '연금 생활비 월 금액에서' : '자산에서 꺼내'} 갚아야 합니다. 은퇴 전 중도상환이나 상환 기간 단축을 검토하세요.`,
     });
   }
   // 은퇴 전 상환이 끝나는 대출: 늘어나는 저축을 노후자금으로 돌리도록 안내

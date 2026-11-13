@@ -17,6 +17,9 @@ export const NAV: { to: string; label: string; icon: ReactNode }[] = [
   { to: '/withdraw', label: '인출 계획', icon: <I d="M3 7h18v10H3zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 7V5h10v2" /> },
 ];
 
+/** 요약 보고서: PC 사이드바는 인출 계획 아래, 휴대폰은 상단 버튼(하단 탭바는 5칸 유지) */
+const ReportIcon = <I d="M7 3h7l5 5v13H7zM14 3v5h5M10 13h6M10 17h6" />;
+
 const SettingsIcon = <I d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />;
 
 /** 새 버전이 받아졌을 때 새로고침 안내(모바일은 하단 탭바 위, PC는 오른쪽 아래) */
@@ -51,7 +54,7 @@ export function Layout() {
         </div>
         <nav className="flex flex-1 flex-col gap-1">
           {/* 기본 정보는 인출 계획 바로 아래 */}
-          {[...NAV, { to: '/data', label: '기본 정보', icon: SettingsIcon }].map((n) => (
+          {[...NAV, { to: '/report', label: '요약 보고서', icon: ReportIcon }, { to: '/data', label: '기본 정보', icon: SettingsIcon }].map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${isActive ? 'bg-brand-soft text-brand' : 'text-muted hover:bg-sunken hover:text-ink'}`}>
               {n.icon}
               {n.label}
@@ -67,9 +70,14 @@ export function Layout() {
             <img src="./icon.svg" alt="" className="h-7 w-7" />
             <span className="font-bold">Financial Life Planning</span>
           </div>
-          <NavLink to="/data" aria-label="기본 정보" className={({ isActive }) => `rounded-lg p-1.5 ${isActive ? 'text-brand' : 'text-muted'}`}>
-            {SettingsIcon}
-          </NavLink>
+          <div className="flex items-center gap-1">
+            <NavLink to="/report" aria-label="요약 보고서" className={({ isActive }) => `rounded-lg p-1.5 ${isActive ? 'text-brand' : 'text-muted'}`}>
+              {ReportIcon}
+            </NavLink>
+            <NavLink to="/data" aria-label="기본 정보" className={({ isActive }) => `rounded-lg p-1.5 ${isActive ? 'text-brand' : 'text-muted'}`}>
+              {SettingsIcon}
+            </NavLink>
+          </div>
         </header>
 
         <main className="mx-auto w-full max-w-5xl px-4 pb-28 pt-5 md:px-8 md:pb-10 md:pt-8">

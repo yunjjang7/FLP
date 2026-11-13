@@ -51,7 +51,8 @@ export default function Retire() {
   const extraRows = (['goal', 'loan', 'npTax'] as const).map((k) => ({ key: k, label: `− ${GOAL_KIND_LABEL[k]} (${fullAge}세 그 해, 월 환산)`, monthly: fullBy[k] / 12 })).filter((x) => x.monthly > 0.5);
   const expenseNote = draw ? `연금 생활비 명목 고정(월 ${won((inp.fixedDraw ?? 0) / 12)})` : inp.expenseGrowth !== undefined ? `생활비 명목 ${inp.expenseGrowth}% 증가` : '물가 연동';
   const wLevel = withdrawLevel(start.rate, p.criteria.withdrawRateMax);
-  const lateDebts = (inp.debts ?? []).filter((x) => x.endAge > inp.retireAge);
+  // 연금 생활비 월 금액에 포함한 대출은 따로 꺼내지 않으므로 '따로 오가는 돈'에서 뺌
+  const lateDebts = (inp.debts ?? []).filter((x) => x.endAge > inp.retireAge && !(draw && x.inDraw));
   // 은퇴 뒤까지 내는 보험료: 보험별 첫해 금액(실질)과 마지막 납입 나이
   const premiumRows = inp.goals.filter((g) => g.premium);
   const premiums = [...new Set(premiumRows.map((g) => g.premium!))].map((name) => {
@@ -229,7 +230,7 @@ export default function Retire() {
             <Assume
               key={x.name}
               k={`대출 상환 · ${x.name}`}
-              v={(x.decline ? '원금균등 · ' : '') + (!Number.isFinite(x.endAge) ? `월 ${won(x.annual / 12)} · 상환 미종료` : x.endAge === inp.retireAge ? `${x.endAge}세(은퇴 시점) 상환 종료` : x.endAge < inp.retireAge ? `${x.endAge}세부터 월 ${won(x.annual / 12)} 저축 증가` : `은퇴 후 ${x.endAge - 1}세까지 월 ${won(debtAnnualAt(x, inp.retireAge) / 12)} 지출`)}
+              v={(x.decline ? '원금균등 · ' : '') + (!Number.isFinite(x.endAge) ? `월 ${won(x.annual / 12)} · 상환 미종료` : x.endAge === inp.retireAge ? `${x.endAge}세(은퇴 시점) 상환 종료` : x.endAge < inp.retireAge ? `${x.endAge}세부터 월 ${won(x.annual / 12)} 저축 증가` : `은퇴 후 ${x.endAge - 1}세까지 월 ${won(debtAnnualAt(x, inp.retireAge) / 12)} 지출`) + (draw && x.inDraw ? ' · 연금 생활비 월 금액에 포함' : '')}
             />
           ))}
           <Assume k="물가상승률" v={`${inp.inflation}%`} />

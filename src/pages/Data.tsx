@@ -16,7 +16,7 @@ import { useFlp } from '../store/FlpContext';
 import { bulletNoMaturity, equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
 import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf } from '../engine/incomeTax';
-import type { Asset, AssetType, ReUse, ContribPlan, Criteria, ExpenseBand, ExpenseMode, Goal, IncomeKind, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
+import type { Asset, AssetType, ReUse, ContribPlan, Criteria, DrawInclude, ExpenseBand, ExpenseMode, Goal, IncomeKind, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
 const EXPENSE_HINT: Record<ExpenseMode, string> = {
@@ -24,6 +24,12 @@ const EXPENSE_HINT: Record<ExpenseMode, string> = {
   growth: '생활비가 정한 비율로만 오름',
   draw: '연금계좌+국민연금은 같은 금액, 임대료 등은 모두 씀',
 };
+
+/** 연금 생활비 고정액에 이미 들어 있는 지출: 예이면 은퇴 후 따로 더 꺼내지 않음 */
+const DRAW_INCLUDES: [DrawInclude, string, string][] = [
+  ['debt', '월 금액에 대출 상환액 포함', '예: 은퇴 후 대출 월 상환액(이자)을 따로 꺼내지 않음 · 만기 원금은 따로'],
+  ['premium', '월 금액에 보험료 포함', '예: 은퇴 뒤까지 내는 보험료를 따로 꺼내지 않음'],
+];
 
 type Tab = 'profile' | ListTable | 'criteria' | 'backup';
 const TABS: { key: Tab; label: string }[] = [
@@ -143,6 +149,16 @@ function ProfileForm() {
           </Labeled>
           {p.expenseMode === 'growth' && n('expenseGrowth', '생활비 명목 증가율', '%', `0이면 금액 고정 · 물가 ${p.inflation}%`, 0.1)}
           {p.expenseMode === 'draw' && n('fixedDraw', '연금으로 쓰는 월 금액(세후)', '만원', '국민연금이 나오면 그만큼 계좌 인출 감소')}
+          {p.expenseMode === 'draw' &&
+            DRAW_INCLUDES.map(([k, label, hint]) => (
+              <Labeled key={k} label={label} hint={hint}>
+                <SelectField
+                  value={p.drawIncludes?.includes(k) ? 'in' : 'out'}
+                  onChange={(v) => save({ drawIncludes: [...(p.drawIncludes ?? []).filter((x) => x !== k), ...(v === 'in' ? [k] : [])] })}
+                  options={{ out: '아니오(따로 더 인출)', in: '예(월 금액에 포함)' }}
+                />
+              </Labeled>
+            ))}
         </div>
         <ExpenseBands />
       </Card>
@@ -502,8 +518,9 @@ function IncomeList() {
 
 /** 재무목표 카드 아래 안내: 반복 지출 */
 function goalNote(g: Goal) {
-  if (!isRecurring(g)) return `${g.targetAge}세에 한 번 지출`;
-  return `${g.targetAge}~${g.endAge}세 매년 ${won(g.amountPV)} 지출(${g.endAge! - g.targetAge + 1}회) — 노후 진단·인출에 반영, 목적자금 적립 계산에서는 제외`;
+  const fixed = g.priceMode === 'fixed' ? ', 금액 고정' : '';
+  if (!isRecurring(g)) return `${g.targetAge}세에 한 번 지출${fixed}`;
+  return `${g.targetAge}~${g.endAge}세 매년 ${won(g.amountPV)} 지출(${g.endAge! - g.targetAge + 1}회${fixed}) — 노후 진단·인출에 반영, 목적자금 적립 계산에서는 제외`;
 }
 
 /** 대출 카드 아래 안내: 상환 종료 나이와 그 이후 효과 */
@@ -759,6 +776,7 @@ function ListEditor({ table }: { table: ListTable }) {
             <><b>지금 이미 매달 내는 비용</b>(올해 학원비 등)은 지출에만 넣고, 같은 비용을 반복 목표로 또 넣지 마세요.</>,
             <>목표를 위해 붓는 적금 납입액은 지출도 목표도 아닙니다. 쌓인 잔액만 자산(중기·목적자금)으로 넣으세요. 대출 원금 상환과 은퇴 후 생활비에 이미 든 비용도 넣지 않습니다.</>,
             <>필요 금액은 오늘 물가 기준 금액입니다. 비용 상승률이 물가보다 높으면 그 차이만큼 커집니다.</>,
+            <><b>금액 방식</b>을 ‘금액 고정’으로 바꾸면 해마다 같은 금액(명목)이 나가고, 오늘 가치로는 물가만큼 줄어듭니다. 계약으로 금액이 정해진 지출에만 쓰고, 세금처럼 오를 수 있는 지출은 ‘물가 반영’으로 두세요.</>,
           ]}
         />
       )}
@@ -809,6 +827,26 @@ function ListEditor({ table }: { table: ListTable }) {
                   </p>
                 )}
               </div>
+            </div>
+          )}
+          {table === 'goals' && (
+            <div className="mt-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-muted">
+              <label className="flex items-center gap-2">
+                금액 방식
+                <select
+                  className="rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink"
+                  value={r.priceMode === 'fixed' ? 'fixed' : 'price'}
+                  onChange={(e) => tbl.update(r.id!, { priceMode: e.target.value === 'fixed' ? 'fixed' : undefined })}
+                >
+                  <option value="price">물가 반영(비용 상승률만큼 오름)</option>
+                  <option value="fixed">금액 고정(해마다 같은 금액)</option>
+                </select>
+              </label>
+              <span>
+                {r.priceMode === 'fixed'
+                  ? '실제로 내는 금액이 필요 금액 그대로라 오늘 가치로는 해마다 물가만큼 줄어듭니다. 비용 상승률은 쓰지 않습니다.'
+                  : '세금·학비처럼 물가와 함께 오르는 지출은 물가 반영으로 두세요.'}
+              </span>
             </div>
           )}
           <div className="mt-3 flex items-center justify-between gap-3">

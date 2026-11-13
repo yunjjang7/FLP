@@ -133,14 +133,32 @@ export interface Debt {
   bullet?: boolean;
   decline?: number;
   fromAge?: number;
+  /**
+   * 명목 고정(계약 금액): 물가(%)를 주면 실제로 내는 금액은 annual(원금균등이면 decline 만큼 감소) 그대로이고,
+   * 오늘 가치로는 baseAge 부터 해마다 물가만큼 줄어듦. 없으면 오늘 가치 고정
+   */
+  inflation?: number;
+  baseAge?: number;
+  /** 연금 생활비 고정액(fixedDraw) 안에 이 대출의 월 상환액이 이미 들어 있음: 고정액 방식에서는 은퇴 후 따로 더 꺼내지 않음(만기 원금은 그대로) */
+  inDraw?: boolean;
 }
 
-/** 해당 나이의 대출 상환액(연): 원금균등이면 해마다 줄고, 상환 종료 나이부터 0 */
-export const debtAnnualAt = (d: Debt, age: number) =>
+/** 해당 나이에 실제로 내는 대출 상환액(연, 명목 계약 금액): 원금균등이면 해마다 줄고, 상환 종료 나이부터 0 */
+export const debtNominalAt = (d: Debt, age: number) =>
   age >= d.endAge ? 0 : Math.max(0, d.annual - (d.decline ?? 0) * Math.max(0, age - (d.fromAge ?? age)));
+
+/** 해당 나이의 대출 상환액(연, 오늘 가치): 계약 금액은 그대로라 물가만큼 줄어듦 */
+export const debtAnnualAt = (d: Debt, age: number) => {
+  const v = debtNominalAt(d, age);
+  return d.inflation === undefined || v === 0 ? v : v / Math.pow(1 + d.inflation / 100, Math.max(0, age - (d.baseAge ?? age)));
+};
 
 /** 해당 나이에 아직 남아 있는 대출 상환액(연) */
 export const debtPaymentAt = (input: { debts?: Debt[] }, age: number) => (input.debts ?? []).reduce((a, d) => a + debtAnnualAt(d, age), 0);
+
+/** 은퇴 후 자산에서 따로 꺼내는 대출 상환액(연): 고정액 방식이면 고정액에 포함된 대출은 뺌 */
+export const retireDebtAt = (input: { debts?: Debt[]; fixedDraw?: number }, age: number) =>
+  debtPaymentAt(input.fixedDraw === undefined ? input : { debts: input.debts?.filter((d) => !d.inDraw) }, age);
 
 /** 은퇴 전 연 저축액: 기본 저축 + 지금보다 줄어든 대출 상환액(상환 종료·원금균등 감소분) */
 export const savingsAt = (input: PlanInput, age: number) =>
@@ -154,7 +172,7 @@ export const savingsAt = (input: PlanInput, age: number) =>
  */
 export const retireOutflowAt = (input: PlanInput, age: number, cut = 0) =>
   input.fixedDraw !== undefined
-    ? Math.max(0, input.fixedDraw * (1 - cut) * nominalFactor(0, input.inflation, age - expenseBaseAge(input)) - publicPensionAt(input, age)) + debtPaymentAt(input, age)
+    ? Math.max(0, input.fixedDraw * (1 - cut) * nominalFactor(0, input.inflation, age - expenseBaseAge(input)) - publicPensionAt(input, age)) + retireDebtAt(input, age)
     : expenseAt(input, age) * (1 - cut) - pensionAt(input, age) + debtPaymentAt(input, age);
 
 /** 해당 나이의 기대수익률·변동성(%) */

@@ -114,6 +114,7 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
       { key: 'endAge', label: '반복 종료 나이', kind: 'number', unit: '세', hint: '0이면 1회, 입력하면 매년 지출' },
     ],
     example: { name: '자녀 대학 등록금', category: 'education', targetAge: 55, amountPV: 4000, growthRate: 4, endAge: 0 },
+    csvExtra: [{ key: 'priceMode', label: '금액 방식', kind: 'select', options: { fixed: '금액 고정' } }],
   },
   insurance: {
     label: '보험',

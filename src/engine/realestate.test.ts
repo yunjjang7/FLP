@@ -4,7 +4,8 @@ import type { Asset } from '../types';
 import { buildPlanInput, bulletNoMaturity, bulletRepayments, equalMonthlyDecline, loanSchedule, retirePremiums, equalPrincipal, loanBalanceAt, loanEndAge, planGoals } from './goals';
 import { bulletChecks } from './risk';
 import { hiLoanDeduct, hiPropBase, hiPropScore, incomeTaxSchedule } from './incomeTax';
-import { debtAnnualAt, debtPaymentAt, incomeValue, inflowAt, savingsAt } from './montecarlo';
+import { debtAnnualAt, debtNominalAt, debtPaymentAt, incomeValue, inflowAt, nominalFactor, publicPensionAt, retireDebtAt, retireOutflowAt, savingsAt } from './montecarlo';
+import { needAt } from './withdrawal';
 import { summarize } from './portfolio';
 import { bucketMap, bulletPrescriptions } from './prescribe';
 import { HP_LOAN, HP_MARKET_CAP, HP_OVER_NOTE, hpEstate, hpEstimate, hpLoanOf, hpOverCap, housePension, rentStreams, rentYield, saleInflow, selfShare, willSell } from './realestate';
@@ -307,12 +308,117 @@ describe('원금균등 상환 대출', () => {
     const debt = plan.debts!.find((x) => x.name === '원금균등')!;
     expect(debt).toMatchObject({ endAge: s.age + 10, annual: 1920, fromAge: s.age });
     expect(debt.decline).toBeCloseTo(72, 9);
+    // 실제로 내는 금액(명목)은 원금만큼 줄고, 오늘 가치로는 물가만큼 더 줄어듦
+    const f3 = Math.pow(1 + d.profile.inflation / 100, 3);
+    expect(debtNominalAt(debt, s.age)).toBe(1920);
+    expect(debtNominalAt(debt, s.age + 3)).toBeCloseTo(1920 - 216, 9);
     expect(debtAnnualAt(debt, s.age)).toBe(1920);
-    expect(debtAnnualAt(debt, s.age + 3)).toBeCloseTo(1920 - 216, 9);
+    expect(debtAnnualAt(debt, s.age + 3)).toBeCloseTo((1920 - 216) / f3, 9);
     expect(debtAnnualAt(debt, s.age + 10)).toBe(0);
     const base = buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s);
-    expect(savingsAt(plan, s.age + 3) - savingsAt(base, s.age + 3)).toBeCloseTo(216, 9);
-    expect(debtPaymentAt(plan, s.age + 3) - debtPaymentAt(base, s.age + 3)).toBeCloseTo(1920 - 216, 9);
+    expect(savingsAt(plan, s.age + 3) - savingsAt(base, s.age + 3)).toBeCloseTo(1920 - (1920 - 216) / f3, 9);
+    expect(debtPaymentAt(plan, s.age + 3) - debtPaymentAt(base, s.age + 3)).toBeCloseTo((1920 - 216) / f3, 9);
+  });
+});
+
+describe('대출 상환액은 계약 금액(명목) 그대로', () => {
+  const d = sampleData(Y);
+  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance);
+  const inf = d.profile.inflation;
+  const loans = [
+    { name: '만기일시', balance: 30000, rate: 4, monthlyPayment: 100, endAge: 0, repay: 'bullet' as const },
+    { name: '원리금균등', balance: 20000, rate: 4, monthlyPayment: 150, endAge: s.age + 20 },
+    { name: '원금균등', balance: 12000, rate: 6, monthlyPayment: 160, endAge: 0, repay: 'equal' as const },
+  ];
+  const plan = buildPlanInput(d.profile, d.assets, [...d.liabilities, ...loans], d.goals, s);
+  const debtOf = (n: string) => plan.debts!.find((x) => x.name === n)!;
+  it('물가 반영 기준 나이·물가가 들어감', () => {
+    for (const l of loans) expect(debtOf(l.name)).toMatchObject({ inflation: inf, baseAge: s.age });
+  });
+  it('만기일시 이자·원리금균등: 실제 내는 금액은 그대로, 오늘 가치로는 해마다 물가만큼 줄어듦', () => {
+    for (const n of ['만기일시', '원리금균등']) {
+      const x = debtOf(n);
+      for (const t of [0, 5, 19]) {
+        expect(debtNominalAt(x, s.age + t)).toBe(x.annual);
+        expect(debtAnnualAt(x, s.age + t)).toBeCloseTo(x.annual / Math.pow(1 + inf / 100, t), 9);
+      }
+      // 한 해 뒤 오늘 가치 = 그 전 해 ÷ (1 + 물가)
+      expect(debtAnnualAt(x, s.age + 6) / debtAnnualAt(x, s.age + 5)).toBeCloseTo(1 / (1 + inf / 100), 12);
+    }
+    expect(debtAnnualAt(debtOf('원리금균등'), s.age + 20)).toBe(0);
+  });
+  it('원금균등: 실제 내는 금액이 원금 감소만큼 줄고, 오늘 가치로는 그 금액을 다시 물가로 나눔', () => {
+    const x = debtOf('원금균등');
+    expect(debtAnnualAt(x, s.age + 4)).toBeCloseTo((1920 - 72 * 4) / Math.pow(1 + inf / 100, 4), 9);
+  });
+  it('물가가 없으면(예전 입력) 오늘 가치 고정', () => {
+    const { inflation: _i, baseAge: _b, ...old } = debtOf('만기일시');
+    expect(debtAnnualAt(old, s.age + 10)).toBe(old.annual);
+  });
+  it('상환표는 실제로 내는 금액(명목)', () => {
+    const t = loanSchedule(loans[1], s.age, s.age + 10);
+    expect(t[10].payment).toBe(1800);
+  });
+});
+
+describe('재무목표 금액 방식', () => {
+  const d = sampleData(Y);
+  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance);
+  const inf = d.profile.inflation;
+  const g = { name: '보유세', category: 'other' as const, targetAge: s.age + 1, amountPV: 800, growthRate: 4, endAge: s.age + 10 };
+  const rows = (goal: typeof g & { priceMode?: 'fixed' }) => buildPlanInput(d.profile, d.assets, d.liabilities, [goal], s).goals.filter((x) => !x.loan && !x.premium && !x.npTax);
+  it('기본은 물가 반영: 비용 상승률 중 물가 초과분만 오늘 가치로 늘어남', () => {
+    const r = rows(g);
+    expect(r[4].amount).toBeCloseTo(800 * Math.pow(1.04 / (1 + inf / 100), 5), 6);
+  });
+  it('금액 고정: 실제 금액은 그대로, 오늘 가치로는 해마다 물가만큼 줄어듦(비용 상승률 무시)', () => {
+    const r = rows({ ...g, priceMode: 'fixed' });
+    expect(r).toHaveLength(10);
+    for (const x of r) expect(x.amount * Math.pow(1 + inf / 100, x.age - s.age)).toBeCloseTo(800, 6);
+  });
+  it('필요 적립액 계산도 금액 고정이면 명목 그대로', () => {
+    const once = { ...g, endAge: 0, targetAge: s.age + 5, priceMode: 'fixed' as const };
+    expect(planGoals([once], d.assets, s.age)[0].futureValue).toBeCloseTo(800, 6);
+    expect(planGoals([{ ...once, priceMode: undefined }], d.assets, s.age)[0].futureValue).toBeCloseTo(800 * Math.pow(1.04, 5), 6);
+  });
+});
+
+describe('연금 생활비 고정액에 포함된 지출', () => {
+  const d = sampleData(Y);
+  const ins = [{ name: '종신', death: 10000, critical: 0, care: 0, monthlyPremium: 20, payEndAge: 0 }];
+  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, ins);
+  const loans = [{ name: '주담대', balance: 30000, rate: 4, monthlyPayment: 100, endAge: 0, repay: 'bullet' as const }];
+  const draw = { ...d.profile, retireAge: s.age, expenseMode: 'draw' as const, fixedDraw: 450 };
+  const build = (p: typeof draw & { drawIncludes?: ('debt' | 'premium')[] }) => buildPlanInput(p, d.assets, loans, [], s);
+  const age = s.age + 1;
+  it('기본(포함 안 함): 대출 이자·보험료를 고정액과 따로 더 꺼냄', () => {
+    const x = build(draw);
+    expect(retireOutflowAt(x, age)).toBeCloseTo(Math.max(0, 5400 * nominalFactor(0, x.inflation, 1) - publicPensionAt(x, age)) + debtPaymentAt(x, age), 6);
+    expect(debtPaymentAt(x, age)).toBeGreaterThan(0);
+    expect(x.goals.some((g) => g.premium)).toBe(true);
+  });
+  it('대출 포함: 은퇴 후 이자는 따로 꺼내지 않고, 은퇴 전 저축 계산과 만기 대출 점검은 그대로', () => {
+    const x = build({ ...draw, drawIncludes: ['debt'] });
+    expect(retireDebtAt(x, age)).toBe(0);
+    expect(retireOutflowAt(x, age)).toBeCloseTo(Math.max(0, 5400 * nominalFactor(0, x.inflation, 1) - publicPensionAt(x, age)), 6);
+    expect(debtPaymentAt(x, age)).toBeGreaterThan(0); // 대출 자체는 남아 있음
+    expect(bulletPrescriptions(x).length).toBeGreaterThan(0); // 만기 없는 만기일시 경고 유지
+    // 고정액 방식이 아니면 포함 표시가 있어도 따로 꺼냄
+    expect(retireDebtAt({ ...x, fixedDraw: undefined }, age)).toBe(debtPaymentAt(x, age));
+  });
+  it('보험료 포함: 은퇴 후 보험료를 지출에서 뺌', () => {
+    expect(build({ ...draw, drawIncludes: ['premium'] }).goals.some((g) => g.premium)).toBe(false);
+  });
+  it('물가 연동 방식에서는 포함 설정을 무시', () => {
+    const x = build({ ...draw, expenseMode: 'real' as never, drawIncludes: ['debt', 'premium'] });
+    expect(x.debts?.some((dd) => dd.inDraw)).toBe(false);
+    expect(x.goals.some((g) => g.premium)).toBe(true);
+  });
+  it('인출 계획 계산도 포함한 대출은 따로 꺼내지 않음', () => {
+    const x = build({ ...draw, drawIncludes: ['debt'] });
+    const w = { startAge: age, endAge: 100, startBalance: 50000, expenseAnnual: 0, fixedDraw: x.fixedDraw, pensions: [], meanReturn: 5, volatility: 8, inflation: x.inflation, percentRate: 4, debts: x.debts };
+    expect(needAt(w, age)).toBeCloseTo(needAt({ ...w, debts: [] }, age), 6);
+    expect(needAt({ ...w, debts: build(draw).debts }, age)).toBeGreaterThan(needAt(w, age));
   });
 });
 
@@ -390,7 +496,7 @@ describe('만기일시 상환 대출', () => {
     expect(added[0].age).toBe(s.age + 5);
     expect(added[0].amount).toBeCloseTo(real, 6);
     expect(added[0].loan).toBe('만기 대출');
-    expect(plan.debts?.find((x) => x.name === '만기 대출')).toEqual({ name: '만기 대출', endAge: s.age + 5, annual: 33 * 12, bullet: true });
+    expect(plan.debts?.find((x) => x.name === '만기 대출')).toEqual({ name: '만기 대출', endAge: s.age + 5, annual: 33 * 12, bullet: true, inflation: d.profile.inflation, baseAge: s.age });
   });
   it('처방: 만기 나이가 없으면 입력 경고, 있으면 만기 원금 상환 가능 여부', () => {
     const noEnd = buildPlanInput(d.profile, d.assets, [...d.liabilities, { ...bullet, endAge: 0 }], d.goals, s);

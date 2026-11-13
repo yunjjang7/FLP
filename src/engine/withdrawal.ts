@@ -1,5 +1,5 @@
 import type { PlanBase, YearEnd } from '../types';
-import { debtPaymentAt, expenseRatioAt, incomeValue, nominalFactor, publicPensionAt, type Debt, type ExpenseStep, type IncomeStream } from './montecarlo';
+import { expenseRatioAt, incomeValue, nominalFactor, publicPensionAt, retireDebtAt, type Debt, type ExpenseStep, type IncomeStream } from './montecarlo';
 import { normalGen, percentile } from './random';
 
 export type StrategyKey = 'fixed' | 'percent' | 'bucket' | 'guardrail';
@@ -77,7 +77,8 @@ export interface StrategyResult {
 }
 
 const pensionAt = (inp: WithdrawInput, age: number) => inp.pensions.reduce((a, p) => a + incomeValue(p, age, inp.inflation), 0);
-const debtAt = (inp: WithdrawInput, age: number) => debtPaymentAt(inp, age);
+// 고정액 방식이면 고정액에 포함된 대출은 따로 꺼내지 않음
+const debtAt = (inp: WithdrawInput, age: number) => retireDebtAt(inp, age);
 /** 그 해 목적자금·반복 지출: 해마다 나가는 흐름(flow)은 share 만큼, 한 번 쓰는 지출은 그대로 */
 const extraAt = (inp: WithdrawInput, age: number, share = 1) => (inp.extras ?? []).filter((e) => e.age === age).reduce((a, e) => a + e.amount * (e.flow ? share : 1), 0);
 /** 그 나이 해가 차지하는 비율: 첫해만 firstYearShare */

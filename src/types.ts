@@ -75,6 +75,8 @@ export interface Goal {
   amountPV: number; // 현재가치 기준 필요 금액
   growthRate: number; // 비용 상승률(%), 예: 교육비 4
   endAge?: number; // 반복 종료 나이: targetAge~endAge 매년 지출(0이거나 targetAge 이하면 1회)
+  /** 금액 방식: 없으면 물가 반영(비용 상승률만큼 오름), fixed 면 금액 고정(명목 그대로라 오늘 가치로는 해마다 물가만큼 줄어듦) */
+  priceMode?: 'fixed';
 }
 
 export interface Insurance {
@@ -219,6 +221,7 @@ export interface Profile {
   expenseGrowth?: number; // expenseMode='growth': 생활비 명목 증가율(%)
   expenseSteps?: ExpenseBand[]; // 나이 구간별 은퇴 후 생활비(인출액 고정 방식에서는 쓰지 않음)
   fixedDraw?: number; // expenseMode='draw': 자산에서 꺼내는 월 금액(세후, 명목 고정, 만원)
+  drawIncludes?: DrawInclude[]; // expenseMode='draw': 위 월 금액 안에 이미 들어 있는 지출(따로 더 꺼내지 않음)
   retireTaxRate?: number; // 퇴직소득세 실효세율(감면 전, %): 연금계좌 퇴직금 재원 인출 세금
   retireTaxYear1?: number; // 퇴직금 연금 실수령 1년차 연도(11년차부터 감면 30%→40%, 실제로 꺼낸 해만 연차로 셈)
   retireMinDraw?: number; // 퇴직금 재원이 있는 계좌에서 쓸 일이 없는 해에도 꺼내는 최소 금액(연, 세전 명목 만원): 실수령연차가 끊기지 않게
@@ -283,5 +286,7 @@ export interface ContribPlan {
 
 /** real: 물가만큼 오름(실질 유지) · growth: 명목 증가율 지정(0이면 금액 고정) · draw: 자산 인출액을 명목 금액으로 고정하고 연금·임대료 등 소득은 모두 생활비로 씀 */
 export type ExpenseMode = 'real' | 'growth' | 'draw';
+/** 연금 생활비 고정액에 이미 들어 있는 지출: debt 은퇴 후 대출 월 상환액(만기 원금은 제외), premium 은퇴 후 보험료 */
+export type DrawInclude = 'debt' | 'premium';
 
 export type Level = 'good' | 'caution' | 'danger';

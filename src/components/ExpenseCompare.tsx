@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { debtPaymentAt, deterministicPath, expenseAt, nominalFactor, pensionAt, publicPensionAt, retireOutflowAt, simulate, type PlanInput } from '../engine/montecarlo';
 import { pct, won } from '../lib/format';
+import { drawCovers, retirePremiums } from '../engine/goals';
 import { useFlp } from '../store/FlpContext';
 import type { ExpenseMode } from '../types';
 import { SetupLink } from './SetupLink';
@@ -20,7 +21,7 @@ interface Row {
 
 /** 은퇴 후 생활비 가정(물가 연동 / 명목 고정 / 인출액 고정)별 결과 비교 */
 export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
-  const { planInput: inp, profile: p, start } = useFlp();
+  const { planInput: inp, profile: p, start, summary } = useFlp();
   const target = p.criteria.successTarget;
   const base = Math.max(inp.currentAge, inp.retireAge);
   const later = Math.min(p.lifeExpectancy - 1, base + 20);
@@ -29,13 +30,23 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
     !r.noSteps && (p.expenseMode ?? 'real') === r.mode && (r.mode !== 'growth' || (r.key === 'flat' ? (p.expenseGrowth ?? 0) === 0 : true));
 
   const rows = useMemo<(Row & { rate: number; depleted: number | null; firstDraw: number; livingNow: number; livingLater: number })[]>(() => {
-    const real: PlanInput = { ...inp, expenseGrowth: undefined, fixedDraw: undefined };
+    // 고정액 방식에서 월 금액에 포함해 뺀 보험료·대출 상환은 다른 행에서는 다시 따로 지출
+    const cur = drawCovers(p);
+    const premiums = cur.has('premium') ? retirePremiums(summary, inp.retireAge, inp.inflation, p.lifeExpectancy) : [];
+    const real: PlanInput = { ...inp, expenseGrowth: undefined, fixedDraw: undefined, goals: inp.goals.concat(premiums), debts: inp.debts?.map(({ inDraw: _, ...x }) => x) };
+    // 엑셀 방식 행은 지금 생활비 방식과 상관없이 '월 금액에 포함' 설정을 따름
+    const cov = drawCovers({ expenseMode: 'draw', drawIncludes: p.drawIncludes });
+    const drawPart: Partial<PlanInput> = {
+      ...(cov.has('premium') ? { goals: real.goals.filter((g) => !g.premium) } : {}),
+      ...(cov.has('debt') ? { debts: real.debts?.map((x) => ({ ...x, inDraw: true })) } : {}),
+    };
+    const covNote = [cov.has('debt') && '대출 상환', cov.has('premium') && '보험료'].filter(Boolean).join('·');
     // 연금으로 쓰는 금액 고정: 직접 넣은 금액, 없으면 물가 연동 첫해 (자산 인출 + 국민·개인연금)
     const draw = p.fixedDraw && p.fixedDraw > 0 ? p.fixedDraw * 12 : Math.max(0, retireOutflowAt(real, base)) + publicPensionAt(real, base);
     const list: Row[] = [
       { key: 'real', mode: 'real', label: '물가 연동', desc: '생활비가 물가만큼 올라 생활 수준 유지', input: real },
       { key: 'flat', mode: 'growth', label: '생활비 명목 고정', desc: `생활비 월 ${won(p.retireMonthlyExpense)}을 금액 그대로 유지`, input: { ...real, expenseGrowth: 0 } },
-      { key: 'draw', mode: 'draw', label: '연금 생활비 명목 고정(엑셀 방식)', desc: `연금계좌 + 국민연금으로 월 ${won(draw / 12)}을 금액 그대로 쓰고, 임대료 등은 따로 모두 씀`, input: { ...real, fixedDraw: draw } },
+      { key: 'draw', mode: 'draw', label: '연금 생활비 명목 고정(엑셀 방식)', desc: `연금계좌 + 국민연금으로 월 ${won(draw / 12)}을 금액 그대로 쓰고, 임대료 등은 따로 모두 씀${covNote ? ` · 이 금액에 ${covNote} 포함` : ''}`, input: { ...real, ...drawPart, fixedDraw: draw } },
     ];
     if (p.expenseMode === 'growth' && (p.expenseGrowth ?? 0) !== 0) {
       list.splice(1, 0, { key: 'growth', mode: 'growth', label: `생활비 명목 ${p.expenseGrowth}% 증가`, desc: '지금 설정', input: { ...real, expenseGrowth: p.expenseGrowth } });
@@ -74,7 +85,7 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
       };
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inp, p.fixedDraw, p.expenseMode, p.expenseGrowth, p.retireMonthlyExpense]);
+  }, [inp, summary, p.fixedDraw, p.expenseMode, p.expenseGrowth, p.retireMonthlyExpense, p.drawIncludes, p.lifeExpectancy]);
 
   const current = isCurrent;
   // 구간 적용(지금 설정) 대비 일정 행의 성공확률 차이
@@ -130,7 +141,7 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
         <li><b className="font-medium text-ink">고갈 나이</b>: 해마다 평균 수익만 난다고 볼 때 자산이 바닥나는 나이입니다.</li>
         <li>
           <b className="font-medium text-ink">첫해 자산 인출</b>: 연금계좌·투자 자산에서 꺼내는 돈입니다.
-          {debtNow > 0 && ` 남은 대출 상환액(월 ${won(debtNow / 12)})이 들어 있습니다.`}
+          {debtNow > 0 && ` 남은 대출 상환액(월 ${won(debtNow / 12)})이 들어 있습니다${p.drawIncludes?.includes('debt') ? '(연금 생활비 명목 고정 행은 월 금액에 포함해 따로 더하지 않음)' : ''}.`}
         </li>
         <li>
           <b className="font-medium text-ink">오른쪽 두 열</b>: 월 생활비를 오늘 돈 가치로 바꾼 금액입니다. 금액을 그대로 두면(명목 고정) 물가가 연 {inp.inflation}% 오를 때 20년 뒤 같은 돈으로 살 수 있는 것이 약 {cut20.toFixed(0)}% 줄어, {later}세 열이 작아집니다.
@@ -141,6 +152,7 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
             <b className="font-medium text-ink">연금 생활비 명목 고정</b>: 연금계좌·국민연금에서 월 {won(drawRow.livingNow - otherNow)}을 금액 그대로 꺼내고, 임대료 등 다른 소득(월 {won(otherNow)})은 저축하지 않고 모두 씁니다.
             그래서 {base}세 생활비가 {won(drawRow.livingNow)}입니다.
             {realRow && drawRow.firstDraw > realRow.firstDraw && ` 물가 연동보다 자산에서 월 ${won(drawRow.firstDraw - realRow.firstDraw)}을 더 꺼내 성공확률이 낮아집니다.`}
+            {' '}대출 상환액·보험료는 <SetupLink tab="profile" card="노후 계획" field="월 금액에 대출 상환액 포함">‘월 금액에 … 포함’</SetupLink>을 ‘예’로 하면 이 월 금액 안에서 내는 것으로 보고 따로 꺼내지 않습니다(지금: 대출 {p.drawIncludes?.includes('debt') ? '포함' : '따로'} · 보험료 {p.drawIncludes?.includes('premium') ? '포함' : '따로'}).
             {' '}꺼내는 금액은 그대로라 물가가 오를수록 실제 가치가 줄고, {later}세 열에는 줄어든 연금 몫과 오른 임대료가 함께 들어갑니다.
           </li>
         )}

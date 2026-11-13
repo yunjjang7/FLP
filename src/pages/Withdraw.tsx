@@ -183,8 +183,8 @@ function WithdrawInner() {
         {npTaxes.length > 0 && (
           <p className="mt-1 text-xs text-muted">{GOAL_KIND_LABEL.npTax} {npTaxes[0].age}~{npTaxes[npTaxes.length - 1].age}세(합계 {won(npTaxes.reduce((a, g) => a + g.amount, 0))})를 그 해 인출액에 더했습니다(프로필 종합소득세의 ‘인출에 더하기’ 설정 · 스케줄의 ‘{GOAL_KIND_LABEL.npTax}’ 표시).</p>
         )}
-        {lateDebts.length > 0 && (
-          <p className="mt-1 text-xs text-warn">은퇴 후에도 남는 대출 상환 {lateDebts.map((x) => `${x.name} 월 ${won(debtAnnualAt(x, startAge) / 12)}${x.decline ? '부터 점점 줄어듦' : ''}(${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '상환 미종료'})`).join(', ')}을 인출액에 포함했습니다.</p>
+        {lateDebts.some((x) => !(planInput.fixedDraw !== undefined && x.inDraw)) && (
+          <p className="mt-1 text-xs text-warn">은퇴 후에도 남는 대출 상환 {lateDebts.filter((x) => !(planInput.fixedDraw !== undefined && x.inDraw)).map((x) => `${x.name} 월 ${won(debtAnnualAt(x, startAge) / 12)}${x.decline ? '부터 점점 줄어듦' : ''}(${Number.isFinite(x.endAge) ? `${x.endAge - 1}세까지` : '상환 미종료'})`).join(', ')}을 인출액에 포함했습니다.</p>
         )}
       </Card>
 

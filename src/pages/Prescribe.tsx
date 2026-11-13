@@ -145,7 +145,7 @@ function PrescribeInner() {
                       ) : (
                         <div className="whitespace-nowrap font-medium">{g.goal.name}</div>
                       )}
-                      <div className="whitespace-nowrap text-xs text-muted">{g.recurring && <span className="mr-1 rounded bg-brand-soft px-1.5 font-medium text-brand">매년 반복</span>}{GOAL_CATEGORY[g.goal.category]} · 상승률 {g.goal.growthRate}%</div>
+                      <div className="whitespace-nowrap text-xs text-muted">{g.recurring && <span className="mr-1 rounded bg-brand-soft px-1.5 font-medium text-brand">매년 반복</span>}{GOAL_CATEGORY[g.goal.category]} · {g.goal.priceMode === 'fixed' ? '금액 고정' : `상승률 ${g.goal.growthRate}%`}</div>
                     </td>
                     <td className="whitespace-nowrap">
                       {g.recurring ? (

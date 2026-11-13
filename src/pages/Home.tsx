@@ -5,7 +5,7 @@ import { Donut } from '../components/Donut';
 import { SetupLink } from '../components/SetupLink';
 import { Badge, Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
-import { debtPaymentAt, GOAL_KIND_LABEL, GOAL_KINDS, goalBreakdownAt, pensionAt, retireOutflowAt } from '../engine/montecarlo';
+import { GOAL_KIND_LABEL, retireDebtAt, GOAL_KINDS, goalBreakdownAt, pensionAt, retireOutflowAt } from '../engine/montecarlo';
 import { withdrawLevel } from '../engine/risk';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
@@ -22,7 +22,7 @@ export default function Home() {
   const retiredFlow = d.start.retired
     ? (() => {
         const draw = retireOutflowAt(d.planInput, d.start.age);
-        const debt = debtPaymentAt(d.planInput, d.start.age);
+        const debt = retireDebtAt(d.planInput, d.start.age);
         const pension = pensionAt(d.planInput, d.start.age);
         // 인출률과 같은 기준: 그해 목표 지출까지 더한 금액(withdrawStart.outflow)
         // 그해 지출은 목표 탭 지출·은퇴 후 보험료·만기일시 대출 원금·국민연금 몫 세금으로 나눠 보여 줌

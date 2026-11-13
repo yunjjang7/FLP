@@ -8,6 +8,7 @@ import Data from './pages/Data';
 import Home from './pages/Home';
 import Invest from './pages/Invest';
 import Prescribe from './pages/Prescribe';
+import Report from './pages/Report';
 import Retire from './pages/Retire';
 import Withdraw from './pages/Withdraw';
 import { FlpProvider } from './store/FlpContext';
@@ -25,6 +26,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="retire" element={<Retire />} />
             <Route path="prescribe" element={<Prescribe />} />
             <Route path="withdraw" element={<Withdraw />} />
+            <Route path="report" element={<Report />} />
             <Route path="data" element={<Data />} />
           </Route>
         </Routes>

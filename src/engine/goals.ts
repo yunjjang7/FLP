@@ -1,7 +1,7 @@
-import type { Asset, Goal, Liability, Profile } from '../types';
+import type { Asset, DrawInclude, Goal, Liability, Profile } from '../types';
 import { contribSchedule, creditInflows, incomeTaxSchedule, npCostOutflows } from './incomeTax';
 import { fvLump, monthlyRate, payoffMonths, pmtForTarget, realRate } from './finance';
-import { debtAnnualAt, type Debt, type ExpenseStep, type IncomeStream, type PlanInput } from './montecarlo';
+import { debtNominalAt, type Debt, type ExpenseStep, type IncomeStream, type PlanInput } from './montecarlo';
 import { isFinancial, type Summary } from './portfolio';
 import { hpStreams, rentStreams, saleInflows } from './realestate';
 
@@ -39,11 +39,11 @@ export function planGoals(goals: Goal[], assets: Asset[], currentAge: number): G
   const plan = (goal: Goal): GoalPlan => {
     const from = startAge(goal);
     const years = from - currentAge;
-    let futureValue = fvLump(goal.amountPV, goal.growthRate / 100, years);
+    let futureValue = fvLump(goal.amountPV, goalGrowth(goal) / 100, years);
     let recurring: GoalPlan['recurring'];
     if (isRecurring(goal)) {
       // 해마다 그해 초에 내고, 남은 돈은 계속 중기 자산 수익률로 굴린다고 봄
-      const payAt = (age: number) => fvLump(goal.amountPV, goal.growthRate / 100, age - currentAge);
+      const payAt = (age: number) => fvLump(goal.amountPV, goalGrowth(goal) / 100, age - currentAge);
       futureValue = 0;
       for (let age = from; age <= goal.endAge!; age++) futureValue += payAt(age) / Math.pow(1 + midReturn / 100, age - from);
       const schedule: { age: number; payment: number; balance: number }[] = [];
@@ -88,6 +88,9 @@ export function goalPlanSkips(goals: Goal[], currentAge: number) {
     return reason ? [{ goal: g, reason }] : [];
   });
 }
+
+/** 목표 금액의 명목 상승률(%): 금액 고정이면 0(실제로 내는 금액 그대로), 물가 반영이면 비용 상승률 */
+export const goalGrowth = (g: Goal) => (g.priceMode === 'fixed' ? 0 : g.growthRate);
 
 /** 매년 반복되는 지출인지 */
 export const isRecurring = (g: Goal) => (g.endAge ?? 0) > g.targetAge;
@@ -202,12 +205,16 @@ export function bulletRepayments(liabilities: Liability[], currentAge: number, i
     .filter((l) => l.repay === 'bullet' && l.balance > 0 && (l.endAge ?? 0) > currentAge)
     .map((l) => ({ name: l.name, age: l.endAge!, nominal: l.balance, amount: l.balance / Math.pow(1 + inflation / 100, l.endAge! - currentAge) }));
 }
-/** 대출 → 시뮬레이션 상환 흐름(지금 월 상환액 기준, 원금균등은 해마다 줄어듦) */
-export function loanDebt(l: Liability, currentAge: number): Debt {
+/**
+ * 대출 → 시뮬레이션 상환 흐름(지금 월 상환액 기준, 원금균등은 해마다 줄어듦).
+ * inflation 을 주면 계약 금액(명목) 그대로 내므로 오늘 가치로는 해마다 물가만큼 줄어듦
+ */
+export function loanDebt(l: Liability, currentAge: number, inflation?: number): Debt {
   return {
     name: l.name,
     endAge: loanEndAge(l, currentAge).age,
     annual: l.monthlyPayment * 12,
+    ...(inflation !== undefined ? { inflation, baseAge: currentAge } : {}),
     ...(l.repay === 'bullet' ? { bullet: true } : {}),
     // 원금균등은 잔액이 줄어 상환액이 해마다 줄고, 줄어든 만큼 저축이 늘어남
     ...(l.repay === 'equal' ? { decline: equalMonthlyDecline(l, currentAge) * 12, fromAge: currentAge } : {}),
@@ -232,7 +239,7 @@ export function loanSchedule(l: Liability, currentAge: number, lastAge: number):
     const principal = l.repay === 'bullet' && age === d.endAge ? l.balance : 0;
     // 마지막 해는 남은 잔액 + 이자까지만 냄(만기일시는 이자만 내므로 그대로)
     const start = loanBalanceAt(l, currentAge, age - currentAge);
-    const due = debtAnnualAt(d, age);
+    const due = debtNominalAt(d, age);
     const payment = l.repay === 'bullet' || !Number.isFinite(d.endAge) || age < d.endAge - 1 ? due : Math.min(due, start * (1 + l.rate / 100));
     out.push({ age, payment, principal, balance: loanBalanceAt(l, currentAge, age - currentAge + 1) });
   }
@@ -273,6 +280,10 @@ export function expenseSteps(profile: Profile): ExpenseStep[] | undefined {
   if (profile.expenseMode === 'draw' || !(base > 0) || !list.length) return undefined;
   return [...list].sort((a, b) => a.fromAge - b.fromAge).map((x) => ({ fromAge: x.fromAge, ratio: x.monthly / base }));
 }
+
+/** 연금 생활비 고정액에 이미 들어 있는 지출(고정액 방식일 때만): 은퇴 후 대출 월 상환액·보험료 */
+export const drawCovers = (profile: Pick<Profile, 'expenseMode' | 'drawIncludes'>) =>
+  new Set<DrawInclude>(profile.expenseMode === 'draw' ? (profile.drawIncludes ?? []) : []);
 
 export function expenseRule(profile: Profile): Pick<PlanInput, 'expenseGrowth' | 'fixedDraw'> {
   if (profile.expenseMode === 'growth') return { expenseGrowth: profile.expenseGrowth ?? 0 };
@@ -315,6 +326,7 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
   const taxRows = profile.incomeTax?.on || profile.contrib ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities) : [];
   const credits = creditInflows(profile, nowYear, contribSchedule(profile, taxRows));
   const npCost = profile.incomeTax?.on && profile.incomeTax.addToDraw ? npCostOutflows(taxRows) : [];
+  const covered = drawCovers(profile);
   // 매각 예정 부동산은 매각 연도에 순매각대금(비용·보증금·새 집 구입액 차감)이 금융자산으로 들어옴
   const inflows = [...locked.map((a) => lockedInflow(a, profile, nowYear)).map(({ name, age, amount }) => ({ name, age, amount })), ...saleInflows(assets, profile, nowYear), ...credits];
   return {
@@ -322,10 +334,10 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
     inflows: inflows.length ? inflows : undefined,
     retireMeanReturn: profile.retireSeparate ? profile.retireReturn : undefined,
     retireVolatility: profile.retireSeparate ? profile.retireVolatility : undefined,
-    // 월상환액은 현재 금액 그대로(실질 일정) 가정
+    // 대출 상환액은 계약 금액(명목) 그대로 → 오늘 가치로는 해마다 물가만큼 줄어듦
     debts: liabilities
       .filter((l) => l.monthlyPayment > 0 || l.repay === 'bullet') // 만기일시는 이자가 0이어도 만기 점검용으로 남김
-      .map((l) => loanDebt(l, s.age)),
+      .map((l) => ({ ...loanDebt(l, s.age, inflation), ...(covered.has('debt') ? { inDraw: true } : {}) })),
     savingsChanges: savingsChanges(profile, s, o.retireAge ?? profile.retireAge),
     currentAge: s.age,
     // 올해는 남은 달만큼만 계산(1월이면 1년 전체)
@@ -346,8 +358,8 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
     goals: goals
       .filter((g) => g.category !== 'retirement')
       .flatMap((g) => {
-        // 비용 상승률 중 물가 초과분만 실질 증가로 반영. 반복 지출은 시작~종료 나이까지 매년
-        const extra = realRate(g.growthRate, inflation);
+        // 비용 상승률 중 물가 초과분만 실질 증가로 반영(금액 고정이면 명목 그대로라 물가만큼 줄어듦). 반복 지출은 시작~종료 나이까지 매년
+        const extra = realRate(goalGrowth(g), inflation);
         const last = isRecurring(g) ? g.endAge! : g.targetAge;
         const out: { age: number; amount: number; flow?: boolean }[] = [];
         // 매년 반복 지출은 해마다 나가는 흐름(flow): 첫해는 올해 남은 달만큼만 셈
@@ -356,8 +368,8 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
       })
       // 만기일시 상환 대출은 만기 나이에 원금을 한 번에 갚음
       .concat(bulletRepayments(liabilities, s.age, inflation).map(({ name, age, amount }) => ({ age, amount, loan: name })))
-      // 은퇴 뒤까지 내는 보험료는 그 해 자산에서 뺌
-      .concat(retirePremiums(s, o.retireAge ?? profile.retireAge, inflation, profile.lifeExpectancy))
+      // 은퇴 뒤까지 내는 보험료는 그 해 자산에서 뺌(연금 생활비 고정액에 포함했으면 따로 빼지 않음)
+      .concat(covered.has('premium') ? [] : retirePremiums(s, o.retireAge ?? profile.retireAge, inflation, profile.lifeExpectancy))
       .concat(npCost),
   };
 }

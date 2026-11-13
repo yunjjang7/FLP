@@ -1,4 +1,4 @@
-import { debtPaymentAt, GOAL_KIND_LABEL, GOAL_KINDS, goalBreakdownAt, incomeValue, pensionAt, retireOutflowAt, savingsAt, type PlanInput } from './montecarlo';
+import { debtPaymentAt, GOAL_KIND_LABEL, retireDebtAt, GOAL_KINDS, goalBreakdownAt, incomeValue, pensionAt, retireOutflowAt, savingsAt, type PlanInput } from './montecarlo';
 
 /** 연간 현금흐름 흐름도의 한 줄(연 금액, 오늘 물가) */
 export interface FlowItem {
@@ -34,7 +34,8 @@ export function yearFlow(input: PlanInput, age: number, annualIncome: number, sp
   const retired = age >= input.retireAge;
   const sources: FlowItem[] = [];
   const uses: FlowItem[] = [];
-  const debt = debtPaymentAt(input, age);
+  // 연금 생활비 고정액에 포함한 대출은 은퇴 후 따로 나가지 않음
+  const debt = retired ? retireDebtAt(input, age) : debtPaymentAt(input, age);
   const by = goalBreakdownAt(input, age);
   let save = 0; // 은퇴 전 연 저축(엔진의 savingsAt)
 

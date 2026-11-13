@@ -57,6 +57,17 @@ describe('CSV 입출력', () => {
     expect(errors).toEqual([]);
     expect(rows).toEqual(loans);
   });
+  it('재무목표 금액 방식 열 왕복, 비어 있으면 물가 반영', () => {
+    const goals = [
+      { name: '보유세', category: 'other', targetAge: 59, amountPV: 800, growthRate: 2.5, endAge: 100 },
+      { name: '약정 기부', category: 'other', targetAge: 60, amountPV: 100, growthRate: 0, endAge: 70, priceMode: 'fixed' },
+    ];
+    const csv = toCSV('goals', goals);
+    expect(csv.slice(0, csv.indexOf(String.fromCharCode(10)))).toContain('금액 방식');
+    const { rows, errors } = fromCSV('goals', csv);
+    expect(errors).toEqual([]);
+    expect(rows).toEqual(goals);
+  });
   it('보험 납입 종료 나이 왕복, 열이 없는 예전 파일은 0', () => {
     const ins = [{ name: '종신보험', death: 10000, critical: 0, care: 0, monthlyPremium: 20, payEndAge: 60 }];
     const csv = toCSV('insurance', ins);
