@@ -1,7 +1,7 @@
-import type { Asset } from '../types';
+import type { Asset, Nature } from '../types';
 import { IRP_RISK_CAP, isRiskCapped } from './buckets';
 import { isLocked } from './goals';
-import { isFinancial } from './portfolio';
+import { ASSET_TYPES, isFinancial, NATURE_LABEL } from './portfolio';
 
 /** 목표와 이만큼(%p) 안쪽이면 그대로 둠: 작은 차이로 사고팔지 않게 */
 export const REBALANCE_BAND = 5;
@@ -16,6 +16,7 @@ export interface RebalanceMove {
 
 /** 연금계좌 한 곳: 계좌 안에서 상품만 바꿈(돈이 계좌 밖으로 나가지 않아 세금 없음) */
 export interface RebalanceSwitch {
+  id?: number; // 자산 id: 이름이 같은 계좌가 여럿이어도 ‘자산 탭에 반영’이 그 줄을 찾게
   name: string;
   amount: number; // 지금 평가액
   move: number; // 계좌 안에서 바꿀 금액(팔아서 반대 성격 상품을 삼)
@@ -112,9 +113,67 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
       size > 0
         ? from
             .filter((a) => a.type === 'pension')
-            .map((a) => ({ name: a.name || '연금계좌', amount: a.amount, move: part(a), keep: a.amount - part(a), limit: limit(a), capped: hits(a) }))
+            .map((a) => ({ ...(a.id !== undefined ? { id: a.id } : {}), name: a.name || '연금계좌', amount: a.amount, move: part(a), keep: a.amount - part(a), limit: limit(a), capped: hits(a) }))
         : [],
     outside,
     short: rest - outside,
   };
+}
+
+/**
+ * 성격별 기본 기대수익률·변동성(%): 같은 성격의 다른 금융자산이 없을 때만 씀.
+ * 안전형은 연금계좌의 원리금보장 상품(정기예금형)으로 보고 자산 유형 ‘예금’ 기본값(3% · 0.5%),
+ * 투자형은 자산 유형 ‘연금’ 기본값(5% · 10%, 연금계좌 안 펀드·ETF 혼합 가정)을 따름.
+ */
+export const NATURE_DEFAULTS: Record<Nature, { ret: number; vol: number }> = {
+  safe: { ret: ASSET_TYPES.deposit.ret, vol: ASSET_TYPES.deposit.vol },
+  invest: { ret: ASSET_TYPES.pension.ret, vol: ASSET_TYPES.pension.vol },
+};
+
+/** 금액(만원)은 만원 단위, 비율·세금 재원은 0.1만원 단위로 맞춤 */
+const round1 = (v: number) => Math.round(v * 10) / 10;
+
+/**
+ * 성격 nature 의 기대수익률·변동성: 같은 성격의 금융자산(평가액 > 0)이 있으면 그 금액가중 평균,
+ * 없으면 NATURE_DEFAULTS. 계좌 안에서 새로 산 상품도 그 사람이 이미 가진 같은 성격 자산과 비슷하게 운용한다고 봄.
+ */
+export function natureReturn(assets: Asset[], nature: Nature): { ret: number; vol: number } {
+  const same = assets.filter((a) => isFinancial(a) && a.amount > 0 && a.nature === nature);
+  const sum = same.reduce((s, a) => s + a.amount, 0);
+  if (sum <= 0) return NATURE_DEFAULTS[nature];
+  return {
+    ret: round1(same.reduce((s, a) => s + a.amount * (a.expectedReturn || 0), 0) / sum),
+    vol: round1(same.reduce((s, a) => s + a.amount * (a.volatility || 0), 0) / sum),
+  };
+}
+
+/**
+ * 연금계좌 안에서 상품을 바꾼 뒤 자산 탭 한 줄을 투자형·안전형 두 줄로 나눔(리밸런싱 카드 ‘자산 탭에 반영’).
+ * - 반환 [남는 줄, 새 줄]: 남는 줄은 원래 자산 그대로 amount 만 move 를 뺀 금액, 새 줄은 반대 성격으로 move 만큼.
+ * - 과세제외(taxFree)·퇴직금 재원(retirePart)은 금액 비례로 나누고(두 줄 합계 = 원래 값),
+ *   명의·지분·연금수령 1년차·인출 시작 연도·꺼내는 순서·비교 순서·유형·용도·수령 연도 등 계좌 속성은 두 줄에 같게 둠.
+ * - 새 줄은 id 없이(새로 추가), 이름은 ‘원래 이름 (안전형|투자형)’: 원래 이름을 그대로 품어 IRP·DC·퇴직 판단(isRiskCapped)이 유지됨.
+ * - 새 줄의 기대수익률·변동성은 natureReturn(assets 가운데 같은 성격 자산의 금액가중 평균, 없으면 기본값).
+ * - 경계: move 를 만원 단위로 맞춘 값이 0 이하면 [원래 줄] 하나(바꿀 것 없음), 평가액 이상이면 줄을 나누지 않고
+ *   원래 줄(id·이름 유지)의 성격·기대수익률·변동성만 바꾼 [한 줄].
+ */
+export function splitAccount(asset: Asset, move: number, assets: Asset[] = []): Asset[] {
+  const to: Nature = asset.nature === 'invest' ? 'safe' : 'invest';
+  const m = Math.round(move);
+  if (!(m > 0) || !(asset.amount > 0)) return [asset];
+  const { ret, vol } = natureReturn(assets, to);
+  if (m >= asset.amount) return [{ ...asset, nature: to, expectedReturn: ret, volatility: vol }];
+  const share = m / asset.amount;
+  const keep: Asset = { ...asset, amount: asset.amount - m };
+  const { id: _id, ...rest } = asset;
+  void _id;
+  const add: Asset = { ...rest, name: `${asset.name || '연금계좌'} (${NATURE_LABEL[to]})`, amount: m, nature: to, expectedReturn: ret, volatility: vol };
+  for (const key of ['taxFree', 'retirePart'] as const) {
+    const v = asset[key];
+    if (v === undefined) continue;
+    const part = round1(v * share);
+    add[key] = part;
+    keep[key] = round1(v - part);
+  }
+  return [keep, add];
 }

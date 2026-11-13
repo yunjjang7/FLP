@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { yearFlow, type FlowItem } from '../engine/flow';
+import { spouseWork } from '../engine/goals';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import { Card } from './ui';
@@ -56,15 +57,19 @@ export function CashflowFlow() {
   const last = Math.max(first, inp.lifeExpectancy - 1);
   const [age, setAge] = useState(Math.min(last, Math.max(first, inp.retireAge)));
   const a = Math.min(last, Math.max(first, age));
-  const flow = useMemo(() => yearFlow(inp, a, s.income * 12), [inp, a, s.income]);
-  // 눈금으로 건너뛸 나이: 은퇴, 소득이 시작·끝나는 해, 일시금·목표가 있는 해
+  // 배우자가 본인보다 먼저 은퇴하면 그 해부터 소득에서 배우자 몫을 뺌(엔진이 저축을 줄이는 것과 같은 나이·금액)
+  const sw = useMemo(() => spouseWork(p), [p]);
+  const flow = useMemo(() => yearFlow(inp, a, s.income * 12, sw), [inp, a, s.income, sw]);
+  const spouseStops = sw !== undefined && sw.fromAge > first && sw.fromAge < inp.retireAge;
+  // 눈금으로 건너뛸 나이: 은퇴, 배우자 은퇴, 소득이 시작·끝나는 해, 일시금·목표가 있는 해
   const marks = useMemo(() => {
     const set = new Set<number>([first, inp.retireAge]);
+    if (spouseStops) set.add(sw.fromAge);
     for (const x of inp.pensions) { set.add(x.startAge); if (x.endAge) set.add(x.endAge + 1); }
     for (const x of inp.inflows ?? []) set.add(x.age);
     for (const d of inp.debts ?? []) if (Number.isFinite(d.endAge)) set.add(d.endAge);
     return [...set].filter((v) => v >= first && v <= last).sort((x, y) => x - y);
-  }, [inp, first, last]);
+  }, [inp, first, last, spouseStops, sw]);
 
   const scale = flow.total > 0 ? 200 / flow.total : 0;
   const left = layout(flow.sources, scale);
@@ -95,7 +100,7 @@ export function CashflowFlow() {
       <div className="mb-3 flex flex-wrap gap-1.5">
         {marks.map((m) => (
           <button key={m} type="button" onClick={() => setAge(m)} className={`rounded-full px-2.5 py-1 text-xs font-medium ${m === a ? 'bg-brand text-white' : 'bg-sunken text-muted hover:text-ink'}`}>
-            {m}세{m === inp.retireAge && m > inp.currentAge ? ' 은퇴' : ''}
+            {m}세{m === inp.retireAge && m > inp.currentAge ? ' 은퇴' : spouseStops && m === sw.fromAge ? ' 배우자 은퇴' : ''}
           </button>
         ))}
       </div>
@@ -135,7 +140,7 @@ export function CashflowFlow() {
       <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted">
         <li>금액은 1년 전체 기준의 오늘 물가 금액입니다. 한 번 쓰는 목표·만기에 갚는 대출 원금·일시금 수령은 그 해에만 나타납니다.</li>
         <li>연금계좌에서 꺼낼 때 떼는 연금소득세·퇴직소득세는 여기 들어 있지 않습니다. ‘인출 계획 → 연금 세금 점검’에서 확인하세요.</li>
-        {!flow.retired && <li>은퇴 전 생활 지출은 세후 소득에서 대출 상환과 저축을 뺀 금액이라 보험료가 함께 들어 있습니다. 소득이 대출 상환과 저축보다 적은 해에는 0으로 둡니다.</li>}
+        {!flow.retired && <li>은퇴 전 생활 지출은 세후 소득에서 대출 상환과 저축을 뺀 금액이라 보험료가 함께 들어 있습니다. 소득이 대출 상환과 저축보다 적은 해에는 0으로 둡니다.{spouseStops ? ` 배우자가 은퇴하는 ${sw.fromAge}세부터는 세후 소득에서 배우자 소득을 빼고, 저축도 그만큼 줄어든 것으로 계산합니다.` : ''}</li>}
         <li>금융자산에서 꺼내는 돈과 저축·투자는 서로 상계해 그 해의 순증감만 한쪽에 표시합니다(시뮬레이션의 수익 전 잔액 변화와 같음).</li>
       </ul>
     </Card>

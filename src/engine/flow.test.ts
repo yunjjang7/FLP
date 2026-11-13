@@ -139,6 +139,46 @@ describe('연간 현금흐름 흐름도', () => {
     }
   });
 
+  it('배우자가 먼저 은퇴하면 그 해부터 소득에서 배우자 몫을 빼 생활 지출이 은퇴 전후로 이어짐', () => {
+    // 가구 소득 6,000 중 배우자 1,800, 본인 52세에 배우자 은퇴 → 엔진은 52세부터 저축을 1,800 줄임(buildPlanInput 의 savingsChanges)
+    const sw = { annual: 1800, fromAge: 52 };
+    const inp: PlanInput = { ...input, savingsChanges: [{ fromAge: 52, annual: -1800, name: '배우자 은퇴' }] };
+    const before = yearFlow(inp, 51, 6000, sw);
+    const after = yearFlow(inp, 52, 6000, sw);
+    expect(before.sources).toEqual([
+      { key: 'income', label: '본인 세후 소득', amount: 4200, tone: 'income' },
+      { key: 'income-spouse', label: '배우자 세후 소득', amount: 1800, tone: 'income' },
+    ]);
+    expect(after.sources.filter((x) => x.tone === 'income')).toEqual([{ key: 'income', label: '본인 세후 소득', amount: 4200, tone: 'income' }]);
+    const living = (f: ReturnType<typeof yearFlow>) => f.uses.find((x) => x.key === 'living')?.amount;
+    expect(living(before)).toBeCloseTo(4200, 6); // 6,000 − 대출 600 − 저축 1,200
+    expect(living(after)).toBeCloseTo(living(before)!, 6); // 예전에는 소득을 6,000 그대로 둬 6,000으로 부풀었음
+    expect(after.uses.find((x) => x.key === 'save')).toBeUndefined(); // 저축 1,200 − 1,800 = −600 → 저축 줄 없이 부족분 600 인출
+    expect(after.sources.find((x) => x.key === 'draw')?.amount).toBeCloseTo(600, 6);
+    balanced(before);
+    balanced(after);
+    // 금융자산 순증감은 그대로 엔진과 같음
+    const flat: PlanInput = { ...inp, meanReturn: 0, volatility: 0, inflation: 0 };
+    const bal = deterministicPath(flat).balances;
+    for (let age = flat.currentAge; age < flat.retireAge; age++) {
+      const f = yearFlow(flat, age, 6000, sw);
+      const net = f.uses.filter((x) => x.tone === 'save').reduce((a, x) => a + x.amount, 0) - (f.sources.find((x) => x.key === 'draw')?.amount ?? 0);
+      expect(net).toBeCloseTo(bal[age - flat.currentAge + 1] - bal[age - flat.currentAge], 6);
+      balanced(f);
+    }
+  });
+
+  it('배우자 소득이 없거나 0이면 기존처럼 세후 소득 한 줄', () => {
+    for (const sw of [undefined, { annual: 0, fromAge: 45 }]) {
+      for (let age = 40; age <= 90; age++) expect(yearFlow(input, age, 6000, sw)).toEqual(yearFlow(input, age, 6000));
+    }
+    expect(yearFlow(input, 50, 6000, { annual: 0, fromAge: 45 }).sources).toEqual([{ key: 'income', label: '세후 소득', amount: 6000, tone: 'income' }]);
+    // 배우자가 본인 은퇴 뒤에 은퇴하면 은퇴 전 소득 합계는 그대로(본인·배우자 줄로만 나눔)
+    const f = yearFlow(input, 59, 6000, { annual: 1800, fromAge: 63 });
+    expect(sum(f.sources)).toBe(6000);
+    expect(f.uses).toEqual(yearFlow(input, 59, 6000).uses);
+  });
+
   it('일시금이 들어와 남는 해: 남는 돈은 금융자산에 더함', () => {
     const inp: PlanInput = {
       ...input,

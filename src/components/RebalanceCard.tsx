@@ -1,7 +1,7 @@
 import { db } from '../db/db';
 import { IRP_RISK_CAP } from '../engine/buckets';
 import { RISK_PROFILES } from '../engine/portfolio';
-import { rebalance, REBALANCE_BAND, type RebalanceMode, type RebalanceMove } from '../engine/rebalance';
+import { rebalance, REBALANCE_BAND, splitAccount, type RebalanceMode, type RebalanceMove, type RebalanceSwitch } from '../engine/rebalance';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import { Labeled, NumberField, SelectField } from './fields';
@@ -11,6 +11,31 @@ const MODE_LABELS: Record<RebalanceMode, string> = {
   pensionFirst: '연금계좌부터 먼저',
 };
 import { Badge, Card } from './ui';
+
+/**
+ * 연금계좌 한 줄을 남는 줄 + 반대 성격 새 줄로 나눠 저장(한 트랜잭션).
+ * 계산한 뒤 자산 탭에서 금액·성격을 고쳤으면(계산 때와 다르면) 저장하지 않고 다시 보게 함.
+ */
+async function applySwitch(x: RebalanceSwitch, fromLabel: string, toLabel: string) {
+  const ok = window.confirm(
+    `‘${x.name}’을 자산 탭에서 두 줄로 나눠 저장할까요?\n${fromLabel} ${won(x.keep)} + ${toLabel} ${won(x.move)}\n\n실제로 계좌에서 상품을 바꾼 뒤 누르세요. 되돌리려면 자산 탭에서 직접 고쳐야 합니다.`,
+  );
+  if (!ok) return;
+  try {
+    const done = await db.transaction('rw', db.assets, async () => {
+      const all = await db.assets.toArray();
+      const a = x.id !== undefined ? all.find((v) => v.id === x.id) : undefined;
+      if (!a || a.type !== 'pension' || Math.abs(a.amount - x.amount) > 0.5 || (a.nature === 'invest') !== (fromLabel === '투자형')) return false;
+      const [keep, add] = splitAccount(a, x.move, all);
+      await db.assets.put(keep);
+      if (add) await db.assets.add(add);
+      return true;
+    });
+    if (!done) window.alert('자산 탭의 그 계좌가 계산할 때와 달라 저장하지 않았습니다. 화면을 다시 확인하세요.');
+  } catch (e) {
+    window.alert(`저장하지 못했습니다: ${e instanceof Error ? e.message : e}`);
+  }
+}
 
 /** 투자 점검: 목표 투자형 비중에 맞추려면 어느 자산을 얼마나 사고팔지 */
 export function RebalanceCard() {
@@ -102,7 +127,12 @@ export function RebalanceCard() {
                           {x.capped && ` · 위험자산 ${IRP_RISK_CAP * 100}% 한도(${won(x.limit)}까지)`}
                         </div>
                       </td>
-                      <td className="whitespace-nowrap py-1.5 text-right font-semibold">{won(x.move)} 교체</td>
+                      <td className="whitespace-nowrap py-1.5 text-right align-top">
+                        <div className="font-semibold">{won(x.move)} 교체</div>
+                        <button type="button" className="mt-1 rounded-lg border border-line px-2 py-1 text-xs font-semibold text-ink transition hover:bg-sunken" onClick={() => void applySwitch(x, fromLabel, toLabel)}>
+                          자산 탭에 반영
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -139,7 +169,7 @@ export function RebalanceCard() {
             ? '넘치는 쪽 자산 가운데 세금 없는 연금계좌부터 바꿀 수 있는 만큼 먼저 바꾸고(연금계좌끼리는 바꿀 수 있는 금액에 비례), 모자란 만큼만 일반계좌에서 비례해 파는 계산입니다.'
             : '넘치는 쪽 자산을 바꿀 수 있는 금액에 비례해 줄이는 계산입니다.'}{' '}
           어느 상품을 사고팔지는 직접 정하면 되고, 상품 추천이 아닙니다.</li>
-        <li>연금계좌는 자산 탭의 한 줄을 계좌 하나로 보고, 판 돈으로 <b>같은 계좌 안에서</b> 반대 성격 상품을 사는 것으로 계산합니다. 바꾼 뒤에는 자산 탭에서 그 계좌를 투자형·안전형 두 줄로 나눠 적어야 비중이 맞게 나옵니다.</li>
+        <li>연금계좌는 자산 탭의 한 줄을 계좌 하나로 보고, 판 돈으로 <b>같은 계좌 안에서</b> 반대 성격 상품을 사는 것으로 계산합니다. 계좌에서 실제로 바꾼 뒤 ‘자산 탭에 반영’을 누르면 그 계좌를 투자형·안전형 두 줄로 나눠 저장합니다(새 줄 이름은 ‘계좌 이름 (안전형|투자형)’, 과세제외·퇴직금 재원은 금액 비례로 나누고 명의·연금수령 1년차·인출 순서 등은 그대로 복사, 새 줄의 기대수익률·변동성은 가진 같은 성격 자산의 평균).</li>
         <li>이름에 IRP·DC·퇴직이 들어간 계좌는 퇴직연금으로 보고 위험자산 {IRP_RISK_CAP * 100}% 한도를 적용합니다. 일반계좌는 새로 넣는 돈이나 인출할 돈으로 먼저 맞추면 팔 때 드는 세금·수수료를 줄일 수 있습니다.</li>
         <li>수령 연도 전이라 묶인 자산(노란우산 등)은 비중에는 넣되 사고팔 목록에서는 뺐습니다. 안전형·투자형 구분은 자산 탭의 ‘성격’을 따릅니다.</li>
       </ul>

@@ -281,6 +281,13 @@ export function expenseRule(profile: Profile): Pick<PlanInput, 'expenseGrowth' |
 }
 
 /**
+ * 가구 세후 소득 중 배우자 근로소득(연)과 그 소득이 끊기는 본인 나이. 배우자 소득이 없으면 undefined.
+ * savingsChanges 의 ‘배우자 은퇴’와 같은 필드·같은 나이(이 나이부터 저축이 이만큼 줄어듦)
+ */
+export const spouseWork = (p: Profile): { annual: number; fromAge: number } | undefined =>
+  (p.spouseIncome ?? 0) > 0 ? { annual: p.spouseIncome * 12, fromAge: spouseRetireSelfAge(p) } : undefined;
+
+/**
  * 은퇴 전 저축 변화
  * - 배우자가 본인보다 먼저 은퇴하면 그때부터 가구 저축이 배우자 소득만큼 줄어듦
  * - 보험 납입이 끝나면 그 나이부터 월 보험료만큼 저축이 늘어남(보험 탭 보험료를 지출에 자동으로 더한 경우만)

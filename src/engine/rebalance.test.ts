@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Asset } from '../types';
-import { rebalance, REBALANCE_BAND } from './rebalance';
+import { isRiskCapped } from './buckets';
+import { NATURE_DEFAULTS, natureReturn, rebalance, REBALANCE_BAND, splitAccount } from './rebalance';
 
 const Y = 2026;
 const asset = (name: string, type: Asset['type'], nature: Asset['nature'], amount: number, over: Partial<Asset> = {}): Asset => ({
@@ -202,5 +203,98 @@ describe('리밸런싱 금액 계산', () => {
     expect(rebalance(assets, -10, Y).target).toBe(0);
     const none = rebalance([asset('아파트', 'realestate', 'invest', 50000)], 50, Y);
     expect(none).toMatchObject({ total: 0, current: 0, needed: false, shift: 0, pensions: [], outside: 0, short: 0 });
+  });
+
+  it('연금계좌 줄에 자산 id 를 실어 보냄(없으면 id 필드 없음)', () => {
+    const list = [asset('연금저축', 'pension', 'invest', 2000, { id: 7 }), asset('연금저축', 'pension', 'invest', 2000, { id: 9 }), asset('예금', 'deposit', 'safe', 1000, { id: 3 })];
+    expect(rebalance(list, 40, Y).pensions.map((x) => x.id)).toEqual([7, 9]);
+    expect('id' in rebalance(assets, 50, Y).pensions[0]).toBe(false);
+  });
+});
+
+describe('연금계좌 두 줄로 나누기(splitAccount)', () => {
+  const irp = asset('퇴직 IRP', 'pension', 'invest', 10000, {
+    id: 5, expectedReturn: 6, volatility: 12, owner: 'spouse', taxFree: 1000, retirePart: 3001,
+    pensionYear1: 2030, drawStartYear: 2032, drawOrder: 2, compareOrder: 1, lockYear: 2029,
+  });
+
+  it('남는 줄은 원래 자산 그대로 금액만 줄고, 새 줄은 반대 성격 · 금액 = move · id 없음', () => {
+    const [keep, add, ...more] = splitAccount(irp, 3000);
+    expect(more).toEqual([]);
+    expect(keep).toEqual({ ...irp, amount: 7000, taxFree: 700, retirePart: 2100.7 });
+    expect(add).not.toHaveProperty('id');
+    expect(add).toMatchObject({ amount: 3000, nature: 'safe', name: '퇴직 IRP (안전형)' });
+    expect(keep.amount + add.amount).toBe(irp.amount);
+  });
+
+  it('과세제외·퇴직금 재원은 금액 비례로 나누고 합계 보존, 계좌 속성은 두 줄에 같게', () => {
+    const [keep, add] = splitAccount(irp, 3333);
+    expect(add.taxFree).toBeCloseTo(333.3, 9);
+    expect(keep.taxFree! + add.taxFree!).toBeCloseTo(1000, 9);
+    expect(keep.retirePart! + add.retirePart!).toBeCloseTo(3001, 9);
+    expect(add.retirePart).toBeCloseTo(1000.2, 9);
+    for (const k of ['type', 'owner', 'pensionYear1', 'drawStartYear', 'drawOrder', 'compareOrder', 'purpose', 'lockYear'] as const) {
+      expect(add[k]).toBe(irp[k]);
+      expect(keep[k]).toBe(irp[k]);
+    }
+    // 원래 없던 세금 재원은 두 줄 모두 없음, 공동명의 지분도 그대로
+    const [k2, a2] = splitAccount(asset('연금저축', 'pension', 'safe', 1000, { ownerShare: 40 }), 400);
+    expect(k2).not.toHaveProperty('taxFree');
+    expect(a2).not.toHaveProperty('retirePart');
+    expect([k2.ownerShare, a2.ownerShare]).toEqual([40, 40]);
+    expect(a2).toMatchObject({ name: '연금저축 (투자형)', nature: 'invest', amount: 400 });
+    expect(k2).toMatchObject({ name: '연금저축', nature: 'safe', amount: 600 });
+  });
+
+  it('새 줄 이름이 원래 이름을 품어 퇴직연금(IRP·DC·퇴직) 판단이 유지됨', () => {
+    for (const name of ['IRP', '퇴직연금(DC)', '회사 퇴직금']) {
+      const [keep, add] = splitAccount(asset(name, 'pension', 'safe', 5000), 2000);
+      expect(isRiskCapped(keep.name)).toBe(true);
+      expect(isRiskCapped(add.name)).toBe(true);
+      expect(add.name.startsWith(name)).toBe(true);
+    }
+    expect(isRiskCapped(splitAccount(asset('연금저축', 'pension', 'safe', 5000), 2000)[1].name)).toBe(false);
+    expect(splitAccount(asset('', 'pension', 'safe', 5000), 2000)[1].name).toBe('연금계좌 (투자형)');
+  });
+
+  it('새 줄 기대수익률·변동성: 같은 성격 금융자산의 금액가중 평균, 없으면 기본값', () => {
+    // 안전형: 예금 3,000(3%·0.5) + 채권 1,000(4%·5) → 3.25% · 1.625 → 0.1 단위
+    const others = [asset('예금', 'deposit', 'safe', 3000, { expectedReturn: 3, volatility: 0.5 }), asset('채권', 'bond', 'safe', 1000, { expectedReturn: 4, volatility: 5 }), asset('아파트', 'realestate', 'invest', 50000, { expectedReturn: 2 })];
+    expect(natureReturn(others, 'safe')).toEqual({ ret: 3.3, vol: 1.6 });
+    const [, add] = splitAccount(irp, 3000, [irp, ...others]);
+    expect(add).toMatchObject({ expectedReturn: 3.3, volatility: 1.6 });
+    // 부동산은 금융자산이 아니라 투자형 평균에서 빠짐 → 다른 투자형은 IRP 자신뿐
+    expect(natureReturn(others, 'invest')).toEqual(NATURE_DEFAULTS.invest);
+    expect(splitAccount(irp, 3000)[1]).toMatchObject({ expectedReturn: NATURE_DEFAULTS.safe.ret, volatility: NATURE_DEFAULTS.safe.vol });
+    expect(NATURE_DEFAULTS).toEqual({ safe: { ret: 3, vol: 0.5 }, invest: { ret: 5, vol: 10 } });
+    // 남는 줄은 원래 값 그대로
+    expect(splitAccount(irp, 3000, others)[0]).toMatchObject({ expectedReturn: 6, volatility: 12 });
+  });
+
+  it('경계: move 가 0 이하면 그대로, 평가액 이상이면 나누지 않고 성격만 바꿈(id·이름 유지), 만원 단위로 맞춤', () => {
+    expect(splitAccount(irp, 0)).toEqual([irp]);
+    expect(splitAccount(irp, -5)).toEqual([irp]);
+    expect(splitAccount(irp, 0.4)).toEqual([irp]);
+    for (const m of [10000, 12000, 9999.6]) {
+      const out = splitAccount(irp, m);
+      expect(out).toHaveLength(1);
+      expect(out[0]).toEqual({ ...irp, nature: 'safe', expectedReturn: NATURE_DEFAULTS.safe.ret, volatility: NATURE_DEFAULTS.safe.vol });
+    }
+    const [keep, add] = splitAccount(irp, 1249.6);
+    expect([keep.amount, add.amount]).toEqual([8750, 1250]);
+    expect(splitAccount(asset('빈 계좌', 'pension', 'invest', 0), 100)).toHaveLength(1);
+  });
+
+  it('리밸런싱 결과대로 나누면 목표 비중이 됨', () => {
+    const r = rebalance(assets, 50, Y, REBALANCE_BAND, 'pensionFirst');
+    const pen = assets.find((a) => a.name === '연금저축')!;
+    const split = splitAccount(pen, r.pensions[0].move, assets);
+    const general = assets.filter((a) => a !== pen).map((a) => {
+      const m = [...r.general.sell, ...r.general.buy].find((x) => x.name === a.name);
+      return m ? { ...a, amount: m.after } : a;
+    });
+    const after = rebalance([...general, ...split], 50, Y);
+    expect(after.current).toBeCloseTo(50, 9);
+    expect(after.needed).toBe(false);
   });
 });

@@ -25,9 +25,12 @@ const EPS = 0.5;
  * 인출과 저축은 상계해 금융자산 순증감(시뮬레이션의 수익 전 잔액 변화)만 한쪽에 표시: 같은 해에 둘이 함께 나오지 않음.
  * 은퇴 전 생활 지출은 세후 소득 − 대출 상환 − 저축(보험료 포함), 은퇴 후는 노후 진단과 같은 생활비.
  * 은퇴 전 소득이 대출 상환 + 저축보다 적으면 시뮬레이션은 그래도 저축액이 쌓인다고 보므로 그 차이를 ‘소득 초과 저축’으로 표시.
- * annualIncome: 은퇴 전 세후 연 소득
+ * annualIncome: 지금 가구 세후 연 소득(배우자 몫 포함)
+ * spouse: 그 가운데 배우자 근로소득(연)과 끊기는 본인 나이(goals.ts spouseWork). 엔진은 이 나이부터 저축을 배우자 소득만큼
+ *   줄이므로(savingsChanges ‘배우자 은퇴’) 소득도 같은 나이부터 같은 만큼 빼야 생활 지출이 배우자 은퇴 전후로 이어짐.
+ *   주면 소득을 본인·배우자 줄로 나눠 표시
  */
-export function yearFlow(input: PlanInput, age: number, annualIncome: number): YearFlow {
+export function yearFlow(input: PlanInput, age: number, annualIncome: number, spouse?: { annual: number; fromAge: number }): YearFlow {
   const retired = age >= input.retireAge;
   const sources: FlowItem[] = [];
   const uses: FlowItem[] = [];
@@ -43,10 +46,19 @@ export function yearFlow(input: PlanInput, age: number, annualIncome: number): Y
     const living = Math.max(0, retireOutflowAt(input, age) - debt + pensionAt(input, age));
     if (living > EPS) uses.push({ key: 'living', label: '생활비', amount: living, tone: 'living' });
   } else {
-    if (annualIncome > EPS) sources.push({ key: 'income', label: '세후 소득', amount: annualIncome, tone: 'income' });
+    let income = annualIncome;
+    if (spouse && spouse.annual > EPS) {
+      // 배우자 몫이 가구 소득보다 크게 잘못 들어와도 본인 줄은 0 아래로 내리지 않음
+      const sp = Math.min(spouse.annual, Math.max(0, annualIncome));
+      const self = Math.max(0, annualIncome) - sp;
+      const spNow = age >= spouse.fromAge ? 0 : sp;
+      income = self + spNow;
+      if (self > EPS) sources.push({ key: 'income', label: '본인 세후 소득', amount: self, tone: 'income' });
+      if (spNow > EPS) sources.push({ key: 'income-spouse', label: '배우자 세후 소득', amount: spNow, tone: 'income' });
+    } else if (annualIncome > EPS) sources.push({ key: 'income', label: '세후 소득', amount: annualIncome, tone: 'income' });
     // 저축은 엔진(runPath)과 같이 savingsAt 그대로: 음수(저축 여력 마이너스)면 그만큼 생활 지출이 소득보다 많은 것
     save = savingsAt(input, age);
-    const living = annualIncome - debt - save;
+    const living = income - debt - save;
     if (living > EPS) uses.push({ key: 'living', label: '생활 지출(보험료 포함)', amount: living, tone: 'living' });
     // 소득이 대출 상환 + 저축보다 적어도 시뮬레이션은 저축액이 그대로 쌓인다고 계산하므로, 소득으로 못 대는 몫을 따로 표시
     else if (living < -EPS) sources.push({ key: 'short', label: '소득 초과 저축', amount: -living, tone: 'short' });
