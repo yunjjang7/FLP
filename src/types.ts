@@ -36,6 +36,7 @@ export interface Asset {
   hpInitFee?: number; // 주택연금 초기보증료(주택가격 대비 %, 비우면 1.0)
   hpAnnualFee?: number; // 주택연금 연보증료(대출 잔액 대비 %, 비우면 0.95)
   taxFree?: number; // 연금계좌 중 과세제외 금액(비과세 원금, 만원)
+  paidIn?: number; // 연금계좌에 본인이 넣은 개인 입금액 누계(퇴직금 제외, 만원) — 세액공제 확인 대조표용
   retirePart?: number; // 연금계좌 중 퇴직금 재원(이연퇴직소득, 만원)
   pensionYear1?: number; // 연금수령 1년차 연도(기산연도). 비우면 명의자가 55세가 되는 해
   drawStartYear?: number; // 이 해부터 인출(그 전에는 꺼내지 않고 추가 납입을 받는 계좌). 0이면 바로
@@ -55,6 +56,8 @@ export interface Liability {
   // 상환 방식(비우면 원리금균등). bullet: 만기일시 — 월 상환액은 이자만, 상환 종료 나이(만기)에 남은 원금을 자산에서 한 번에 갚음.
   // equal: 원금균등 — 월 상환액은 이번 달 원금 + 이자, 잔액이 줄면서 이자만큼 상환액이 해마다 줄어듦
   repay?: 'bullet' | 'equal';
+  // 만기 미정(만기일시 상환과 함께): 지인 대출처럼 일부러 만기를 정하지 않고 이자만 내는 대출. 원금 상환은 계산에 넣지 않고 경고 대신 참고로 안내
+  maturity?: 'open';
 }
 
 export interface Cashflow {
@@ -229,6 +232,7 @@ export interface Profile {
   slotFillFrom?: number; // 꽉 채우기 시작 연도(0이면 올해)
   incomeTax?: IncomeTaxSettings; // 종합소득세·건강보험료 추정
   contrib?: ContribPlan; // 연금계좌 추가 납입(세액공제)
+  creditCert?: Partial<Record<IncomeOwner, number>>; // 홈택스 소득·세액 공제확인서의 연금계좌 세액공제 대상 금액 누계(사람별, 만원)
   plans?: SavedPlan[]; // 저장한 계획(나란히 비교·불러오기용, 최대 5개)
 }
 

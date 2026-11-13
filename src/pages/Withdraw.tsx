@@ -20,6 +20,7 @@ import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
 import { debtAnnualAt, GOAL_KIND_LABEL, goalKind, incomeValue } from '../engine/montecarlo';
 import { goalItemsFrom } from '../engine/goals';
+import { withdrawInputOf } from '../engine/pensionTaxPlan';
 import { pensionOpenMonth } from '../engine/milestones';
 
 type Basis = 'avg' | 'p50' | 'p10' | 'custom';
@@ -54,24 +55,12 @@ function WithdrawInner() {
   // 이미 은퇴했으면 지금 금융자산에서 바로 시작
   const startBalance = basis === 'custom' ? custom : basis === 'avg' ? start.balance : sim.balanceAtRetire[basis];
   const input: WithdrawInput = useMemo(
-    () => ({
-      startAge,
+    // 노후 진단에 더한 연금 인출 세금은 여기서 직접 계산하므로 지출에서 뺌(withdrawInputOf)
+    () => withdrawInputOf(planInput, { age: startAge, retired }, {
       endAge: p.lifeExpectancy,
       startBalance,
-      expenseAnnual: planInput.retireExpenseAnnual,
-      expenseGrowth: planInput.expenseGrowth,
-      expenseSteps: planInput.expenseSteps,
-      fixedDraw: planInput.fixedDraw,
-      inflows: planInput.inflows?.filter((x) => x.age >= startAge),
-      // 이미 인출 중이면 올해는 남은 달만큼만(은퇴 전이면 인출 첫해는 1년 전체)
-      firstYearShare: retired ? planInput.firstYearShare : undefined,
-      pensions: planInput.pensions,
-      meanReturn: retMean,
-      volatility: retVol,
       inflation: p.inflation,
       percentRate: rate,
-      debts: lateDebts,
-      extras: planInput.goals.filter((g) => g.age >= startAge),
       guardrail: { ...DEFAULT_GUARDRAIL, band: band / 100, cut: cut / 100, raise: cut / 100, cutOnly },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps

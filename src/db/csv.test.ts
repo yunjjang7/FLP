@@ -50,6 +50,7 @@ describe('CSV 입출력', () => {
       { name: '신용대출', balance: 1000, rate: 6, monthlyPayment: 30, endAge: 0 },
       { name: '만기 대출', balance: 5000, rate: 4, monthlyPayment: 17, endAge: 55, repay: 'bullet' },
       { name: '원금균등 대출', balance: 12000, rate: 5, monthlyPayment: 150, endAge: 0, repay: 'equal' },
+      { name: '지인 대출', balance: 30000, rate: 4, monthlyPayment: 100, endAge: 0, repay: 'bullet', maturity: 'open' },
     ];
     const csv = toCSV('liabilities', loans);
     expect(csv.split(/\r?\n/)[0]).toContain('건보 대출 공제');

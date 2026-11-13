@@ -43,7 +43,7 @@ export interface PlanInput {
   retireExpenseAnnual: number; // 은퇴 후 연 생활비
   pensions: IncomeStream[]; // 국민연금·개인연금·임대료 등 은퇴 후 소득
   /** 해당 나이에 지출되는 목적자금·반복 지출(실질). loan 이 있으면 만기일시 상환 대출의 원금 상환(그 대출 이름) */
-  goals: { age: number; amount: number; loan?: string; premium?: string; npTax?: boolean; flow?: boolean }[]; // loan: 만기일시 대출 원금, premium: 은퇴 후 보험료, npTax: 국민연금 몫 세금·건보료, flow: 해마다 나가는 지출(첫해는 남은 달만큼)
+  goals: { age: number; amount: number; loan?: string; premium?: string; npTax?: boolean; pensionTax?: boolean; flow?: boolean }[]; // loan: 만기일시 대출 원금, premium: 은퇴 후 보험료, npTax: 국민연금 몫 세금·건보료, pensionTax: 연금계좌 인출 세금(withPensionTax), flow: 해마다 나가는 지출(첫해는 남은 달만큼)
   /** 은퇴 후 자산 운용(미지정 시 은퇴 전과 동일) */
   retireMeanReturn?: number;
   retireVolatility?: number;
@@ -131,6 +131,9 @@ export interface Debt {
   endAge: number;
   annual: number;
   bullet?: boolean;
+  /** 만기 미정(이자만 납입): 원금 principal 은 계산에 없음 */
+  openEnded?: boolean;
+  principal?: number;
   decline?: number;
   fromAge?: number;
   /**
@@ -350,15 +353,15 @@ export function solveFor(
 }
 
 /** 그 해 지출(PlanInput.goals) 종류 구분: 목표 탭 지출 · 은퇴 후 보험료 · 만기일시 대출 원금 · 국민연금 몫 세금·건보료 */
-export type GoalKind = 'goal' | 'premium' | 'loan' | 'npTax';
-export const GOAL_KINDS: GoalKind[] = ['goal', 'premium', 'loan', 'npTax'];
-export const GOAL_KIND_LABEL: Record<GoalKind, string> = { goal: '목표 탭 지출', premium: '은퇴 후 보험료', loan: '만기일시 대출 원금', npTax: '국민연금 몫 세금·건보료' };
+export type GoalKind = 'goal' | 'premium' | 'loan' | 'npTax' | 'pensionTax';
+export const GOAL_KINDS: GoalKind[] = ['goal', 'premium', 'loan', 'npTax', 'pensionTax'];
+export const GOAL_KIND_LABEL: Record<GoalKind, string> = { goal: '목표 탭 지출', premium: '은퇴 후 보험료', loan: '만기일시 대출 원금', npTax: '국민연금 몫 세금·건보료', pensionTax: '연금 인출 세금' };
 export function goalKind(g: PlanInput['goals'][number]): GoalKind {
-  return g.loan ? 'loan' : g.premium ? 'premium' : g.npTax ? 'npTax' : 'goal';
+  return g.loan ? 'loan' : g.premium ? 'premium' : g.npTax ? 'npTax' : g.pensionTax ? 'pensionTax' : 'goal';
 }
 /** 그 나이 지출을 종류별로 나눈 연 금액(실질) */
 export function goalBreakdownAt(input: PlanInput, age: number): Record<GoalKind, number> {
-  const out: Record<GoalKind, number> = { goal: 0, premium: 0, loan: 0, npTax: 0 };
+  const out: Record<GoalKind, number> = { goal: 0, premium: 0, loan: 0, npTax: 0, pensionTax: 0 };
   for (const g of input.goals) if (g.age === age) out[goalKind(g)] += g.amount;
   return out;
 }

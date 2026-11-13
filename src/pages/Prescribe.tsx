@@ -8,6 +8,7 @@ import { db } from '../db/db';
 import { GOAL_CATEGORY } from '../db/schema';
 import { buildPlanInput, goalPlanSkips, type PlanOverrides } from '../engine/goals';
 import { simulate } from '../engine/montecarlo';
+import { withPensionTax } from '../engine/pensionTaxPlan';
 import { bucketMap, prescriptions } from '../engine/prescribe';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -53,7 +54,9 @@ function PrescribeInner() {
       ...(retired ? {} : { meanReturn, volatility }),
       ...(drawMode ? {} : { retireMonthlyExpense }),
     });
-    return simulate({ ...plan, ...(retired ? { retireMeanReturn: meanReturn, retireVolatility: volatility } : {}), ...(drawMode ? { fixedDraw: retireMonthlyExpense * 12 } : {}) }, 1000);
+    const full = { ...plan, ...(retired ? { retireMeanReturn: meanReturn, retireVolatility: volatility } : {}), ...(drawMode ? { fixedDraw: retireMonthlyExpense * 12 } : {}) };
+    // 바꾼 계획으로 연금 인출 세금도 다시 계산(노후 진단과 같은 기준)
+    return simulate(withPensionTax(p, d.assets, full, p.birthYear + s.age), 1000);
   }, [changed, d.sim, o, p, d.assets, d.liabilities, d.goals, s, retired, drawMode, baseReturn, baseVol]);
   const delta = whatIf.successRate - d.sim.successRate;
   const lvl = (v: number): Level => (v >= p.criteria.successTarget ? 'good' : v >= 60 ? 'caution' : 'danger');

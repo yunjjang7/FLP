@@ -1,5 +1,6 @@
 import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, SavedPlan } from '../types';
 import { buildPlanInput } from './goals';
+import { withPensionTax } from './pensionTaxPlan';
 import { deterministicPath, retirementNeed, simulate, withdrawStart, type PlanInput, type SimResult } from './montecarlo';
 import { summarize, type Summary } from './portfolio';
 
@@ -56,7 +57,7 @@ export function makePlan(name: string, data: PlanData, today: string, draft?: Pa
 export function planMetrics(data: PlanData, month: number): PlanMetrics {
   const { profile, assets, liabilities, cashflows, goals, insurance } = data;
   const summary = summarize(profile, assets, liabilities, cashflows, undefined, insurance, month);
-  const input = buildPlanInput(profile, assets, liabilities, goals, summary);
+  const input = withPensionTax(profile, assets, buildPlanInput(profile, assets, liabilities, goals, summary), profile.birthYear + summary.age);
   return metricsFrom(profile, summary, input, simulate(input, 1000));
 }
 

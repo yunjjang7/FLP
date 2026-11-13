@@ -1,6 +1,6 @@
 import { won, pct } from '../lib/format';
 import type { Goal, Level, Liability, Profile } from '../types';
-import { bulletNoMaturity, isRecurring } from './goals';
+import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
 import type { Prescription } from './prescribe';
@@ -97,8 +97,12 @@ export function buildReport(x: ReportInput): ReportSection[] {
     .filter((l) => l.balance > 0)
     .map((l) => {
       const noEnd = bulletNoMaturity(l, s.age);
-      const how = l.repay === 'bullet' ? (noEnd ? '만기 미정, 이자만 계속 내는 것으로 계산(원금 상환은 계산에 없음)' : `${l.endAge}세 만기에 원금 상환`) : (l.endAge ?? 0) > 0 ? `${l.endAge}세에 상환 종료` : '상환 종료 나이 자동 계산';
-      return { text: `${l.name}: 잔액 ${won(l.balance)}, 금리 ${l.rate}%, 월 ${won(l.monthlyPayment)} · ${how}.`, level: noEnd ? ('caution' as Level) : undefined };
+      const open = bulletOpenEnded(l, s.age);
+      const how = l.repay === 'bullet'
+        ? open ? '만기 미정(이자만 납입), 이자만 기대수명까지 내는 것으로 계산(원금은 갚는 시점이 없어 계산에 없음)'
+          : noEnd ? '만기 나이가 비어 이자만 계속 내는 것으로 계산(원금 상환이 계산에 빠짐)' : `${l.endAge}세 만기에 원금 상환`
+        : (l.endAge ?? 0) > 0 ? `${l.endAge}세에 상환 종료` : '상환 종료 나이 자동 계산';
+      return { text: `${l.name}: 잔액 ${won(l.balance)}, 금리 ${l.rate}%, 월 ${won(l.monthlyPayment)} · ${how}.`, level: noEnd && !open ? ('caution' as Level) : undefined };
     });
   const assetLines: ReportLine[] = [
     { text: `총자산 ${won(s.totalAssets)}, 부채 ${won(s.totalDebt)}, 순자산 ${won(s.netWorth)}입니다. 금융자산 ${won(s.financialAssets)}, 부동산 ${won(s.realEstate)}입니다.` },
@@ -132,11 +136,14 @@ export function buildReport(x: ReportInput): ReportSection[] {
     }));
   const skipped = x.goals.filter((g) => g.category !== 'retirement' && !(g.targetAge > 0));
   const npTax = inp.goals.filter((g) => g.npTax);
+  const penTax = inp.goals.filter((g) => g.pensionTax);
+  const penTaxSum = penTax.reduce((a, g) => a + g.amount, 0);
   const flowLines: ReportLine[] = [
     ...incomes,
     ...goalLines,
     ...premiumLines,
     ...(npTax.length ? [{ text: `국민연금 때문에 늘어나는 종합소득세·건강보험료를 ${npTax[0].age}세부터 자산에서 더 꺼냅니다(첫해 월 ${won(npTax[0].amount / 12)} → ${npTax[npTax.length - 1].age}세 월 ${won(npTax[npTax.length - 1].amount / 12)}).` }] : []),
+    ...(penTax.length ? [{ text: `연금계좌 인출 세금(연금소득세 5.5·4.4·3.3%, 1,500만 초과분 16.5%, 퇴직소득세)으로 ${penTax[0].age}~${penTax[penTax.length - 1].age}세에 모두 ${won(penTaxSum)}을 더 꺼냅니다(해마다 평균 ${won(penTaxSum / penTax.length)}, 오늘 가치).` }] : []),
     ...(skipped.length ? [{ text: `목표 나이가 비어 있는 ${skipped.map((g) => g.name).join(', ')}은(는) 계산에 넣지 않았습니다.`, level: 'caution' as Level }] : []),
   ];
 
@@ -152,7 +159,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
   const limits: ReportLine[] = [
     { text: `금액은 모두 오늘 물가 기준이며 물가상승률은 연 ${p.inflation}%로 봤습니다. 대출 상환액·보험료처럼 계약 금액이 정해진 지출은 물가만큼 실제 부담이 줄어듭니다.` },
     { text: '고갈 나이는 평균 수익이 해마다 고르게 나는 한 가지 경로입니다. 은퇴 초기에 큰 하락이 오면 같은 평균 수익률이라도 결과가 더 나쁠 수 있어 성공확률을 함께 봅니다.' },
-    { text: '성공확률과 고갈 나이에는 연금계좌 인출 세금(연금소득세·1,500만 초과분)이 들어가지 않습니다. 계좌별 세금은 인출 계획 화면에서 따로 계산합니다.' },
+    { text: '연금계좌 인출 세금은 인출 계획 화면과 같은 방식(가드레일 인출, 평균 수익 경로)으로 나이별 금액을 한 번 구해 모든 몬테카를로 경로에 같게 더했습니다. 수익이 나빠 덜 꺼내는 해에 세금이 줄어드는 효과는 빠집니다.' },
     { text: '세법·국민연금 제도는 지금 기준이며 실제 수령액·세금은 국민연금공단·증권사·세무 전문가에게 확인하세요. 이 보고서는 투자 자문이 아닙니다.' },
   ];
 

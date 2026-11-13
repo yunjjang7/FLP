@@ -45,6 +45,7 @@ const assetCsvExtra: FieldDef[] = [
   { key: 'hpAnnualFee', label: '주택연금 연보증료', kind: 'number', unit: '%', reOnly: true },
   { key: 'taxFree', label: '과세제외 금액', kind: 'number', unit: '만원', penOnly: true },
   { key: 'retirePart', label: '퇴직금 재원', kind: 'number', unit: '만원', penOnly: true },
+  { key: 'paidIn', label: '개인 입금액', kind: 'number', unit: '만원', penOnly: true },
   { key: 'pensionYear1', label: '연금수령 1년차 연도', kind: 'number', penOnly: true },
   { key: 'drawStartYear', label: '인출 시작 연도', kind: 'number', penOnly: true },
   { key: 'drawOrder', label: '꺼내는 순서', kind: 'number', penOnly: true },
@@ -91,6 +92,7 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
     csvExtra: [
       { key: 'repay', label: '상환 방식', kind: 'select', options: { bullet: '만기일시', equal: '원금균등' } },
       { key: 'homeLoan', label: '건보 대출 공제', kind: 'select', options: { buy: '주택 구입' } },
+      { key: 'maturity', label: '만기', kind: 'select', options: { open: '만기 미정(이자만 납입)' } },
     ],
   },
   cashflows: {

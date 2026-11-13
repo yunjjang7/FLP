@@ -5,6 +5,7 @@ import { buildPlanInput, planGoals, type GoalPlan } from '../engine/goals';
 import { insuranceGap, type InsuranceGap } from '../engine/insurance';
 import { retirementNeed, simulate, withdrawStart, type PlanInput, type SimResult } from '../engine/montecarlo';
 import { summarize, type Summary } from '../engine/portfolio';
+import { withPensionTax } from '../engine/pensionTaxPlan';
 import { bulletChecks, financialScore, retiredBasis, riskChecks, type RiskCheck } from '../engine/risk';
 import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd, Draw } from '../types';
 
@@ -56,7 +57,8 @@ export function FlpProvider({ children }: { children: ReactNode }) {
     const { profile, assets, liabilities, cashflows, goals, insurance, snapshots, yearEnds, draws } = raw;
     // 올해는 남은 달(이번 달 포함)만큼만 노후 계산에 넣음
     const summary = summarize(profile, assets, liabilities, cashflows, undefined, insurance, new Date().getMonth() + 1);
-    const planInput = buildPlanInput(profile, assets, liabilities, goals, summary);
+    // 연금계좌 인출 세금(인출 계획과 같은 계산)을 나이별 지출로 더해 성공확률·고갈 나이에 반영
+    const planInput = withPensionTax(profile, assets, buildPlanInput(profile, assets, liabilities, goals, summary), profile.birthYear + summary.age);
     const sim = simulate(planInput, 1000);
     // 이미 은퇴했으면 비상금·DSR·보험료 부담은 지출 탭·세후 월소득 대신 은퇴 후 흐름 기준
     const basis = retiredBasis(summary, planInput);

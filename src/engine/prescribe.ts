@@ -25,6 +25,15 @@ const fmt = (v: number) => won(v, false);
 export function bulletPrescriptions(input: PlanInput): Prescription[] {
   const out: Prescription[] = [];
   for (const d of (input.debts ?? []).filter((x) => x.bullet && !Number.isFinite(x.endAge))) {
+    if (d.openEnded) {
+      // 일부러 만기를 정하지 않은 대출(지인 대출 등): 경고가 아니라 계산 방식을 알려 주는 참고
+      out.push({
+        area: '부채', level: 'good', badge: '참고',
+        title: `${d.name ?? '대출'} 만기 미정(이자만 납입)`,
+        detail: `만기를 정하지 않은 대출로 보고${d.annual > 0 ? ` 이자 월 ${fmt(d.annual / 12)}원을 기대수명까지 계속 내는 것으로` : ' 이자만 내는 것으로'} 계산했습니다. 원금${d.principal ? ` ${fmt(d.principal)}원` : ''}은 갚는 시점이 없어 노후 계산에 넣지 않았습니다(기대수명 때도 빚으로 남음). 갚을 시기가 정해지면 ‘기본 정보 → 부채’에서 상환 방식을 ‘만기일시 상환’으로 바꾸고 상환 종료 나이에 그 나이를 넣으세요.`,
+      });
+      continue;
+    }
     out.push({
       area: '부채', level: 'danger',
       title: `${d.name ?? '대출'} 만기 나이 입력 필요`,

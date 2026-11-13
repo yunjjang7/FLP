@@ -48,7 +48,7 @@ export default function Retire() {
   const gapMonthly = Math.max(0, -balanceMonthly);
   // 그 해 지출을 홈 카드와 같은 종류로 나눔(보험료는 아래에서 보험별로 따로 보여 줌)
   const fullBy = goalBreakdownAt(inp, fullAge);
-  const extraRows = (['goal', 'loan', 'npTax'] as const).map((k) => ({ key: k, label: `− ${GOAL_KIND_LABEL[k]} (${fullAge}세 그 해, 월 환산)`, monthly: fullBy[k] / 12 })).filter((x) => x.monthly > 0.5);
+  const extraRows = (['goal', 'loan', 'npTax', 'pensionTax'] as const).map((k) => ({ key: k, label: `− ${GOAL_KIND_LABEL[k]} (${fullAge}세 그 해, 월 환산)`, monthly: fullBy[k] / 12 })).filter((x) => x.monthly > 0.5);
   const expenseNote = draw ? `연금 생활비 명목 고정(월 ${won((inp.fixedDraw ?? 0) / 12)})` : inp.expenseGrowth !== undefined ? `생활비 명목 ${inp.expenseGrowth}% 증가` : '물가 연동';
   const wLevel = withdrawLevel(start.rate, p.criteria.withdrawRateMax);
   // 연금 생활비 월 금액에 포함한 대출은 따로 꺼내지 않으므로 '따로 오가는 돈'에서 뺌
@@ -64,6 +64,7 @@ export default function Retire() {
   });
   const goalRows = inp.goals.filter((g) => goalKind(g) === 'goal');
   const npTaxRows = inp.goals.filter((g) => goalKind(g) === 'npTax');
+  const penTaxRows = inp.goals.filter((g) => goalKind(g) === 'pensionTax');
   // 나이 구간별 생활비: 은퇴 이후에 시작하는 구간만 표시
   const steps = draw ? [] : (inp.expenseSteps ?? []).filter((x) => x.fromAge > inp.retireAge && x.fromAge <= p.lifeExpectancy);
   // 은퇴 전 저축 변화: 보험 납입 완료·배우자 은퇴(저축 증감)와 은퇴 전에 끝나는 대출 상환
@@ -237,6 +238,7 @@ export default function Retire() {
           <Assume k="은퇴 후 생활비" v={expenseNote + (steps.length ? ` · 나이 구간별(${[{ fromAge: inp.retireAge, ratio: expenseRatioAt(inp.expenseSteps, inp.retireAge) }, ...steps].map((x) => `${x.fromAge}세~ ${won((inp.retireExpenseAnnual * x.ratio) / 12)}`).join(' → ')})` : '')} />
           {(inp.inflows ?? []).some((x) => !x.kind) && <Assume k="수령 전 자산(시작 자산에서 제외)" v={(inp.inflows ?? []).filter((x) => !x.kind).map((x) => `${x.name} ${x.age}세`).join(' · ')} />}
           <Assume k={GOAL_KIND_LABEL.goal} v={`${goalItemsFrom(d.goals, inp.currentAge).length}건 · 총 ${won(goalRows.reduce((a, g) => a + g.amount, 0))}`} />
+          {penTaxRows.length > 0 && <Assume k={GOAL_KIND_LABEL.pensionTax} v={`${penTaxRows[0].age}~${penTaxRows[penTaxRows.length - 1].age}세 · 총 ${won(penTaxRows.reduce((a, g) => a + g.amount, 0))} (인출 계획과 같은 계산 · 가드레일 평균 경로)`} />}
           {npTaxRows.length > 0 && <Assume k={GOAL_KIND_LABEL.npTax} v={`${npTaxRows[0].age}~${npTaxRows[npTaxRows.length - 1].age}세 · 총 ${won(npTaxRows.reduce((a, g) => a + g.amount, 0))}`} />}
           {premiums.length > 0 && <Assume k={GOAL_KIND_LABEL.premium} v={premiums.map((x) => `${x.name} ${x.first.age}~${x.last}세 · 총 ${won(x.total)}`).join(' · ')} />}
           <Assume k="부동산" v={reNote} />
@@ -275,6 +277,7 @@ function Assume({ k, v }: { k: string; v: string }) {
 }
 
 const REPAY_LABEL = { amort: '원리금균등', equal: '원금균등', bullet: '만기일시' } as const;
+const repayLabel = (l: Liability) => (l.repay === 'bullet' && l.maturity === 'open' ? '만기 미정(이자만)' : REPAY_LABEL[l.repay ?? 'amort']);
 
 /** 대출별 연도별 상환액·연말 잔액(지금 금액 기준 추정). 원금균등은 해마다 줄고, 만기일시는 만기 나이에 원금을 한 번에 갚음 */
 function LoanTable({ liabilities, age, retireAge, lifeExpectancy, birthYear }: { liabilities: Liability[]; age: number; retireAge: number; lifeExpectancy: number; birthYear: number }) {
@@ -299,7 +302,7 @@ function LoanTable({ liabilities, age, retireAge, lifeExpectancy, birthYear }: {
               {rows.map(({ l }) => (
                 <th key={l.id ?? l.name} colSpan={2} className="px-2 pt-2 text-center font-semibold text-ink">
                   {l.name}
-                  <div className="text-xs font-normal text-muted">{REPAY_LABEL[l.repay ?? 'amort']} · {l.rate}%</div>
+                  <div className="text-xs font-normal text-muted">{repayLabel(l)} · {l.rate}%</div>
                 </th>
               ))}
             </tr>

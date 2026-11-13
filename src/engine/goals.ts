@@ -195,6 +195,10 @@ export function loanBalanceAt(l: Liability, currentAge: number, years: number) {
 
 /** 만기일시 상환인데 상환 종료 나이(만기)가 비었거나 지난 대출: 원금 상환이 계산에 빠짐 */
 export const bulletNoMaturity = (l: Liability, currentAge: number) => l.repay === 'bullet' && l.balance > 0 && !((l.endAge ?? 0) > currentAge);
+/** 만기를 일부러 정하지 않은 대출(만기 미정 · 이자만 납입): 원금 상환이 빠진 것이 의도라 경고하지 않음 */
+export const bulletOpenEnded = (l: Liability, currentAge: number) => bulletNoMaturity(l, currentAge) && l.maturity === 'open';
+/** 만기 나이를 넣어야 하는데 빠진 만기일시 대출(경고 대상) */
+export const bulletMissingMaturity = (l: Liability, currentAge: number) => bulletNoMaturity(l, currentAge) && l.maturity !== 'open';
 
 /**
  * 만기일시 상환 대출의 원금 일시 상환: 만기 나이에 남은 원금을 자산에서 한 번에 뺌.
@@ -216,6 +220,7 @@ export function loanDebt(l: Liability, currentAge: number, inflation?: number): 
     annual: l.monthlyPayment * 12,
     ...(inflation !== undefined ? { inflation, baseAge: currentAge } : {}),
     ...(l.repay === 'bullet' ? { bullet: true } : {}),
+    ...(bulletOpenEnded(l, currentAge) ? { openEnded: true, principal: l.balance } : {}),
     // 원금균등은 잔액이 줄어 상환액이 해마다 줄고, 줄어든 만큼 저축이 늘어남
     ...(l.repay === 'equal' ? { decline: equalMonthlyDecline(l, currentAge) * 12, fromAge: currentAge } : {}),
   };

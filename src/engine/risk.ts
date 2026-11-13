@@ -1,6 +1,6 @@
 import type { Asset, Level, Liability, Profile } from '../types';
 import { won } from '../lib/format';
-import { bulletNoMaturity } from './goals';
+import { bulletMissingMaturity } from './goals';
 import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
@@ -82,7 +82,7 @@ export function withdrawLevel(rate: number, max: number): Level {
  */
 export function bulletChecks(liabilities: Liability[], age: number): RiskCheck[] {
   return liabilities
-    .filter((l) => bulletNoMaturity(l, age))
+    .filter((l) => bulletMissingMaturity(l, age)) // 만기 미정(이자만 납입)으로 표시한 대출은 경고하지 않음
     .map((l) => ({
       key: `bullet-${l.id ?? l.name}`, label: `${l.name} 만기 나이 입력 필요`, value: `원금 ${won(l.balance)}`, level: 'danger',
       detail: '만기일시 상환인데 상환 종료 나이가 비어 있어 원금 상환이 노후 계산에 빠져 있습니다. ‘기본 정보 → 부채’에서 ‘상환 종료 나이’에 만기 나이를 넣으세요.',

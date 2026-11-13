@@ -65,7 +65,7 @@ export function yearFlow(input: PlanInput, age: number, annualIncome: number, sp
     else if (living < -EPS) sources.push({ key: 'short', label: '소득 초과 저축', amount: -living, tone: 'short' });
   }
   if (debt > EPS) uses.push({ key: 'debt', label: '대출 상환', amount: debt, tone: 'debt' });
-  const tones = { goal: 'goal', premium: 'premium', loan: 'debt', npTax: 'tax' } as const;
+  const tones = { goal: 'goal', premium: 'premium', loan: 'debt', npTax: 'tax', pensionTax: 'tax' } as const;
   for (const k of GOAL_KINDS) if (by[k] > EPS) uses.push({ key: `goal-${k}`, label: GOAL_KIND_LABEL[k], amount: by[k], tone: tones[k] });
   for (const [i, x] of (input.inflows ?? []).entries()) {
     if (x.age !== age || !(x.amount > EPS)) continue;

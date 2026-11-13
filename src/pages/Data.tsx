@@ -13,8 +13,9 @@ import { jumpToTarget } from '../components/SetupLink';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
 import { won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
-import { bulletNoMaturity, equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
+import { bulletMissingMaturity, equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
+import { creditCheck, CREDIT_CHECK_TAX } from '../engine/creditCheck';
 import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf } from '../engine/incomeTax';
 import type { Asset, AssetType, ReUse, ContribPlan, Criteria, DrawInclude, ExpenseBand, ExpenseMode, Goal, IncomeKind, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
 
@@ -248,12 +249,99 @@ function ProfileForm() {
           한 계좌 안에서는 법정 순서(과세제외 → 퇴직금 재원 → 과세재원)로만 빠지고, 운용수익은 모두 과세재원으로 쌓입니다. 퇴직소득세 감면이 40%로 커지는 11년차는 퇴직금 계좌에서 실제로 꺼낸 해만 세므로, ‘매년 최소 인출’에 작은 금액(예: 연 12만원)을 넣어 두면 쓸 일이 없는 해에도 연차가 이어집니다(꺼낸 돈은 ISA·일반계좌로).
         </p>
       </Card>
+      <CreditCheckCard />
       <ContribForm />
       <IncomeTaxForm />
       <Card title="가족 보장">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{n('dependentYears', '부양 필요 기간', '년', '막내 자녀 독립까지 등')}</div>
       </Card>
     </div>
+  );
+}
+
+const WHO: Record<IncomeOwner, string> = { self: '본인', spouse: '배우자' };
+const LEVEL_TEXT = { good: 'text-good', caution: 'text-warn', danger: 'text-bad' } as const;
+const manOrDash = (v?: number) => (v === undefined ? '—' : won(v));
+
+/** 세액공제 확인 대조표: 홈택스 확인서의 세액공제 대상 금액 vs 계좌별 개인 입금액·과세제외 */
+function CreditCheckCard() {
+  const { profile: p, assets } = useFlp();
+  const save = useSaveProfile();
+  const { accounts, people } = creditCheck(p, assets);
+  if (accounts.length === 0) return null;
+  const hasSpouse = p.spouseBirthYear > 0;
+  const setCert = (o: IncomeOwner) => (v: number) => save({ creditCert: { ...(p.creditCert ?? {}), [o]: v > 0 ? v : undefined } });
+  return (
+    <Card title="세액공제 확인 대조표" action={<span className="text-xs text-muted">숨은 비과세 재원 찾기 · 만원</span>}>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Labeled label="본인 확인서 세액공제 대상 금액" hint="홈택스 연금보험료 등 소득·세액 공제확인서 · 연금계좌 누계">
+          <NumberField value={p.creditCert?.self ?? 0} unit="만원" onChange={setCert('self')} />
+        </Labeled>
+        {hasSpouse && (
+          <Labeled label="배우자 확인서 세액공제 대상 금액" hint="배우자 확인서 · 연금계좌 누계">
+            <NumberField value={p.creditCert?.spouse ?? 0} unit="만원" onChange={setCert('spouse')} />
+          </Labeled>
+        )}
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-max text-sm">
+          <thead>
+            <tr className="border-b border-line text-right text-xs text-muted">
+              <th className="py-2 text-left font-medium">계좌</th>
+              {hasSpouse && <th className="px-2 py-2 text-left font-medium">명의</th>}
+              <th className="px-2 py-2 font-medium">개인 입금액</th>
+              <th className="px-2 py-2 font-medium">세액공제(입금−과세제외)</th>
+              <th className="py-2 pl-2 font-medium">과세제외(계획)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {accounts.map((r, i) => (
+              <tr key={i} className="border-b border-line/60 text-right">
+                <td className="py-1.5 text-left">{r.name}</td>
+                {hasSpouse && <td className="px-2 py-1.5 text-left">{WHO[r.owner]}</td>}
+                <td className={`px-2 py-1.5 ${r.paidIn === undefined ? 'text-muted' : ''}`}>{r.paidIn === undefined ? '빈칸(0)' : won(r.paidIn)}</td>
+                <td className="px-2 py-1.5">{manOrDash(r.credited)}</td>
+                <td className="py-1.5 pl-2">{won(r.taxFree)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-max text-sm">
+          <thead>
+            <tr className="border-b border-line text-right text-xs text-muted">
+              <th className="py-2 text-left font-medium">사람별 합계</th>
+              {people.map((x) => <th key={x.owner} className="py-2 pl-3 font-medium">{WHO[x.owner]}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {([
+              ['확인서 세액공제 대상 금액', (x) => manOrDash(x.certified)],
+              ['개인 입금액 합계', (x) => won(x.paidIn)],
+              ['확인서 기준 과세제외(입금 − 확인서)', (x) => manOrDash(x.certExempt)],
+              ['지금 계획의 과세제외', (x) => won(x.planExempt)],
+              ['덜 잡힌 비과세 재원(확인서 기준 − 계획)', (x) => (x.gap === undefined ? '—' : x.gap > 1 ? won(x.gap) : x.gap < -1 ? `${won(-x.gap)} 많음` : '0')],
+              [`인정되면 아끼는 연금소득세(${CREDIT_CHECK_TAX}%)`, (x) => manOrDash(x.saving)],
+            ] as [string, (x: (typeof people)[number]) => string][]).map(([label, f]) => (
+              <tr key={label} className="border-b border-line/60 text-right">
+                <td className="py-1.5 text-left text-muted">{label}</td>
+                {people.map((x) => <td key={x.owner} className="py-1.5 pl-3 font-medium">{f(x)}</td>)}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <ul className="mt-3 space-y-1 text-xs">
+        {people.map((x) => (
+          <li key={x.owner} className={x.level ? LEVEL_TEXT[x.level] : 'text-muted'}>{hasSpouse ? `${WHO[x.owner]}: ` : ''}{x.note}</li>
+        ))}
+      </ul>
+      <p className="mt-2 text-xs text-muted">
+        세액공제를 받지 않은 납입액은 과세제외(비과세 재원)라 꺼낼 때 세금이 없고 1,500만 한도도 쓰지 않습니다. 확인서 기준 과세제외가 계획보다 크면 증권사에 계좌별 ‘과세제외금액(세액공제 받지 않은 납입액)’을 조회하고, 확인서를 내면 고칠 수 있는지 물어보세요.
+        개인 입금액(퇴직금 제외)은 ‘자산’ 탭의 각 연금 자산에서 넣습니다. 확인서는 받은 시점 누계라, 그 뒤 추가 납입은 빼고 비교하세요.
+      </p>
+    </Card>
   );
 }
 
@@ -351,7 +439,7 @@ function IncomeTaxForm() {
           </div>
           <p className="mt-3 text-xs text-muted">
             {rentCount === 0 ? '임대소득은 ‘자산’ 탭의 임대용 부동산 월세나, ‘그 밖의 은퇴 후 소득’에서 종류를 ‘임대소득’으로 고른 항목만 계산에 들어갑니다. ' : ''}
-            ‘부부 소득·연금’의 은퇴 전 세전 총급여는 각자 은퇴 전 해까지 근로소득으로 합쳐 세율 구간·근로소득세액공제·연말정산 기납부를 계산합니다. 급여가 있는 사람은 그 해 직장가입자로 보아 재산분 없이 급여 외 소득 2,000만원 초과분에만 건보료(소득월액 보험료)를 매기고, 부부 중 한 명만 일하면 다른 한 명은 피부양자 요건을 채우면 0, 못 채우면 그 사람만 지역가입자로 계산합니다. 피부양자는 사업소득이 조금이라도 있으면 빠지는 것으로 보되, ‘피부양자 판정: 사업자등록 없음’을 ‘예’로 하면 임대 외 사업소득이 연 500만원 이하일 때는 인정합니다(임대소득은 있으면 항상 빠짐). ‘그 밖의 은퇴 후 소득’은 고른 종류대로 계산합니다(근로소득은 근로소득공제·근로소득세액공제·표준세액공제 13만을 하고 연말정산으로 낸 세금은 기납부로 빼서 5월에는 다른 소득과 합쳐 늘어난 만큼만, 사업소득은 항목별 필요경비율, 공무원·사학·군인연금은 국민연금과 합쳐 연금소득공제, 지역가입자 건보료는 근로·공적연금 × 반영률, 사업·임대 100%). 사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 {t.hiPropAuto ? '부동산 자산의 해마다 오르는 시세로 재산 과세표준을 구해 기본공제 1억을 빼고 2026년 재산등급 점수 × 211.5원으로 추정합니다(매각 연도부터 제외, 임대보증금은 빼지 않음, 자동차·전월세로 사는 집은 넣지 않음, 부부 한 세대)' + (t.hiLoanDeduct ? '. 주택 구입 대출 공제는 표시한 대출의 해마다 줄어드는 잔액(원리금 균등 상환) × 60%를 5,000만 한도로 빼고, 그 해 주택이 2채 이상이면 넣지 않습니다. 실제로는 공시가격 5억 이하 주택을 취득 전후 3개월 안에 빌린 대출이어야 하고 공단에 신청해야 합니다' : '') : '지금 고지서에서 역산해 고정합니다(부부 한 세대)'}. 첫해 부담은 이미 생활비에 들어 있다고 보고,
+            ‘부부 소득·연금’의 은퇴 전 세전 총급여는 각자 은퇴 전 해까지 근로소득으로 합쳐 세율 구간·근로소득세액공제·연말정산 기납부를 계산합니다. 급여가 있는 사람은 그 해 직장가입자로 보아 재산분 없이 급여 외 소득 2,000만원 초과분에만 건보료(소득월액 보험료)를 매기고, 부부 중 한 명만 일하면 다른 한 명은 피부양자 요건을 채우면 0, 못 채우면 그 사람만 지역가입자로 계산합니다. 피부양자는 사업소득이 조금이라도 있으면 빠지는 것으로 보되, ‘피부양자 판정: 사업자등록 없음’을 ‘예’로 하면 임대 외 사업소득이 연 500만원 이하일 때는 인정합니다(임대소득은 있으면 항상 빠짐). ‘그 밖의 은퇴 후 소득’은 고른 종류대로 계산합니다(근로소득은 근로소득공제·근로소득세액공제·표준세액공제 13만을 하고 연말정산으로 낸 세금은 기납부로 빼서 5월에는 다른 소득과 합쳐 늘어난 만큼만, 사업소득은 항목별 필요경비율, 공무원·사학·군인연금은 국민연금과 합쳐 연금소득공제, 지역가입자 건보료는 근로·공적연금 × 반영률, 사업·임대 100%). 사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 {t.hiPropAuto ? '부동산 자산의 해마다 오르는 시세로 재산 과세표준을 구해 기본공제 1억을 빼고 2026년 재산등급 점수 × 211.5원으로 추정합니다(매각 연도부터 제외, 임대보증금은 빼지 않음, 자동차·전월세로 사는 집은 넣지 않음, 부부 한 세대)' + (t.hiLoanDeduct ? '. 주택 구입 대출 공제는 표시한 대출의 해마다 줄어드는 잔액(원리금 균등 상환) × 60%를 5,000만 한도로 빼고, 그 해 주택이 2채 이상이면 넣지 않습니다. 실제로는 공시가격 5억 이하 주택을 취득 전후 3개월 안에 빌린 대출이어야 하고 공단에 신청해야 합니다' : '') : '지금 고지서에서 역산해 고정합니다(부부 한 세대)'}. 첫해 부담은 이미 생활비(또는 재무목표)에 들어 있다고 보고,
             ‘늘어난 세금 인출에 더하기’를 ‘예’로 하면 국민연금 때문에 늘어나는 금액만 해마다 연금계좌에서 더 꺼냅니다.
           </p>
         </>
@@ -528,6 +616,7 @@ function loanNote(l: Liability, age: number, retireAge: number) {
   if (l.repay === 'bullet') {
     const interest = (l.balance * l.rate) / 1200;
     const pay = l.monthlyPayment > 0 ? `월 ${won(l.monthlyPayment)}(이자)` : `월 상환액 0 → 이자 월 ${won(interest)} 정도를 넣으세요`;
+    if (l.maturity === 'open' && !((l.endAge ?? 0) > age)) return `만기 미정(이자만 납입): ${pay}을 기대수명까지 내는 것으로 계산 · 원금 ${won(l.balance)}은 계산에 없음(갚을 시기가 정해지면 만기일시 상환으로 바꾸고 만기 나이 입력)`;
     if (!((l.endAge ?? 0) > age)) return `만기일시 상환: 상환 종료 나이에 만기 나이를 넣어야 원금 ${won(l.balance)} 일시 상환이 반영됩니다. ${pay}`;
     const when = l.endAge! <= retireAge ? '은퇴 전' : '은퇴 후';
     return `만기일시 상환: ${l.endAge! - 1}세까지 ${pay} → ${l.endAge}세(${when})에 원금 ${won(l.balance)}을 자산에서 한 번에 상환`;
@@ -782,7 +871,7 @@ function ListEditor({ table }: { table: ListTable }) {
       )}
       {rows.length === 0 && <Card><p className="py-6 text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘가져오기·백업’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
       {rows.map((r) => (
-        <Card key={r.id} className={table === 'liabilities' && bulletNoMaturity(r as unknown as Liability, data.summary.age) ? 'border-warn! ring-1 ring-warn' : ''}>
+        <Card key={r.id} className={table === 'liabilities' && bulletMissingMaturity(r as unknown as Liability, data.summary.age) ? 'border-warn! ring-1 ring-warn' : ''}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
             {fieldsOf(r).map((f) => (
               <div key={f.key} id={`field-${table}-${r.id}-${f.key}`} className={f.key === 'name' ? 'col-span-2 md:col-span-1' : ''}>
@@ -807,12 +896,18 @@ function ListEditor({ table }: { table: ListTable }) {
                 상환 방식
                 <select
                   className="rounded-lg border border-line bg-surface px-2 py-1 text-xs text-ink"
-                  value={r.repay === 'bullet' || r.repay === 'equal' ? r.repay : 'amort'}
-                  onChange={(e) => tbl.update(r.id!, { repay: e.target.value === 'bullet' || e.target.value === 'equal' ? e.target.value : undefined })}
+                  value={r.repay === 'bullet' && r.maturity === 'open' ? 'open' : r.repay === 'bullet' || r.repay === 'equal' ? r.repay : 'amort'}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    // 만기 미정: 만기일시(이자만)로 두고 만기 나이는 비움
+                    if (v === 'open') tbl.update(r.id!, { repay: 'bullet', maturity: 'open', endAge: 0 });
+                    else tbl.update(r.id!, { repay: v === 'bullet' || v === 'equal' ? v : undefined, maturity: undefined });
+                  }}
                 >
                   <option value="amort">원리금균등 상환(매달 같은 금액)</option>
                   <option value="equal">원금균등 상환(상환액이 점점 줄어듦)</option>
-                  <option value="bullet">만기일시 상환(이자만 냄)</option>
+                  <option value="bullet">만기일시 상환(이자만 내다 만기에 원금)</option>
+                  <option value="open">만기 미정(이자만 납입 · 지인 대출 등)</option>
                 </select>
               </label>
               <div>
@@ -850,7 +945,7 @@ function ListEditor({ table }: { table: ListTable }) {
             </div>
           )}
           <div className="mt-3 flex items-center justify-between gap-3">
-            {table === 'liabilities' && bulletNoMaturity(r as unknown as Liability, data.summary.age) ? (
+            {table === 'liabilities' && bulletMissingMaturity(r as unknown as Liability, data.summary.age) ? (
               // 만기 나이가 빈 만기일시 대출: 경고색 안내, 누르면 상환 종료 나이 입력칸으로 이동
               <button
                 type="button"
@@ -944,6 +1039,9 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
           <>
             <Labeled label="과세제외(만원)" hint="세액공제 안 받은 원금">
               <NumberField value={a.taxFree ?? 0} onChange={(v) => onChange('taxFree', v)} />
+            </Labeled>
+            <Labeled label="개인 입금액(만원)" hint="퇴직금 빼고 넣은 원금 누계 · 세액공제 대조용">
+              <NumberField value={a.paidIn ?? 0} onChange={(v) => onChange('paidIn', v > 0 ? v : undefined)} />
             </Labeled>
             <Labeled label="퇴직금 재원(만원)" hint="IRP 이연퇴직소득">
               <NumberField value={a.retirePart ?? 0} onChange={(v) => onChange('retirePart', v)} />
