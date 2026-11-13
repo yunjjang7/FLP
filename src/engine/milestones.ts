@@ -60,8 +60,16 @@ export function pensionOpenMonth(year: number, birthYear: number, birthMonth?: n
 const man = (v: number) => `${Math.round(v).toLocaleString('ko-KR')}만원`;
 
 /**
+ * 노란우산 소득공제 종소세 추정 행(올해 부금은 남은 달 비율, 노후 진단과 같은 기준). 앞으로 낼 부금이 없으면 없음.
+ * 행의 yuSave(그 해 납입분 소득공제로 줄어든 종합소득세, 명목)는 다음 해 5월 종합소득세 신고 때 돌려받는 돈
+ */
+function yuTaxRows(profile: Profile, assets: Asset[], liabilities: Liability[], nowYear: number, nowMonth?: number) {
+  return needsYuTax(profile, assets, nowYear) ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities, yearShareOf(nowMonth) ?? 1) : undefined;
+}
+
+/**
  * 엑셀 대시보드 ‘다가오는 이정표’: 연금수령 11년차(수령한도 없음), 55세 연금 개시, 인출 시작 연도, 노란우산 등 일시금 수령,
- * 국민연금 개시, 퇴직금 실수령 11년차(감면 40%), 70·80세 연금소득세율, 추가 납입·환급, 부동산 매각·주택연금, 만기일시 대출, 일시 목표.
+ * 국민연금 개시, 퇴직금 실수령 11년차(감면 40%), 70·80세 연금소득세율, 추가 납입·환급, 노란우산 절세 환급(납입 다음 해 5월), 부동산 매각·주택연금, 만기일시 대출, 일시 목표.
  * 지금(nowYear·nowMonth) 이후의 것만 시기순으로 돌려줌.
  */
 export function milestones(profile: Profile, assets: Asset[], liabilities: Liability[], goals: Goal[], nowYear: number, nowMonth: number): Milestone[] {
@@ -116,7 +124,7 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
   // 노란우산 등 수령 시점이 정해진 자산
   // 올해 노란우산 부금은 남은 달만큼(노후 진단과 같은 비율)
   const yuShare = yearShareOf(nowMonth) ?? 1;
-  const yuRows = needsYuTax(profile, assets, nowYear) ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities, yuShare) : undefined;
+  const yuRows = yuTaxRows(profile, assets, liabilities, nowYear, nowMonth);
   for (const a of assets.filter((x) => isLocked(x, nowYear))) {
     const f = lockedInflow(a, profile, nowYear, yuRows, yuShare);
     out.push({ year: f.year, month: isYu(a) ? (validMonths(a.yuPayoutMonth) ?? 0) : 0, kind: 'lump', label: `${a.name || '묶인 자산'} 수령 → ISA·일반계좌에서 운용`, note: `세후 약 ${man(f.nominal)}(그 해 금액)` });
@@ -140,6 +148,10 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
     const first = Math.max(c.from, nowYear);
     if (first <= to) out.push({ year: first, month: 12, kind: 'contrib', label: `연금계좌 추가 납입(${first === to ? `${to}년` : `${first}~${to}년 해마다`})`, note: `${who} · 12월 말 전 납입` });
     out.push({ year: to + 1, month: 5, kind: 'contrib', label: '마지막 추가 납입분 세액공제 환급 확인', note: '5월 종합소득세 신고' });
+  }
+  // 노란우산 소득공제로 줄어든 종합소득세: 납입한 다음 해 5월 신고 때 돌려받음(해마다 한 줄)
+  for (const r of yuRows ?? []) {
+    if (r.yuSave > 0.5) out.push({ year: r.year + 1, month: 5, kind: 'tax', label: '노란우산 절세 환급', note: `약 ${man(r.yuSave)}(${r.year}년 납입분 소득공제로 줄어든 종합소득세 · 5월 종합소득세 신고)` });
   }
   if (profile.slotFill && (profile.slotFillFrom ?? 0) > nowYear) out.push({ year: profile.slotFillFrom!, month: 1, kind: 'tax', label: '1,500만 한도 꽉 채우기 시작', note: '남는 돈은 ISA·일반계좌로 재투자' });
 
@@ -166,9 +178,10 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
 }
 
 /**
- * 엑셀 대시보드 ‘올해·내년 할 일’: 그 해에 챙길 연금 개시 신청·추가 납입·환급·일시금 수령·최소 인출·연말결산.
+ * 엑셀 대시보드 ‘올해·내년 할 일’: 그 해에 챙길 연금 개시 신청·추가 납입·환급(노란우산 절세 포함)·일시금 수령·최소 인출·연말결산.
+ * liabilities·nowMonth: 노란우산 절세 환급 금액을 이정표와 같은 기준(올해 남은 달)으로 계산할 때
  */
-export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, year: number): string[] {
+export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, year: number, liabilities: Liability[] = [], nowMonth?: number): string[] {
   const out: string[] = [];
   const hasSpouse = profile.spouseBirthYear > 0;
   const pensions = mergeAccounts(assets).filter((a) => a.type === 'pension' && a.amount > 0); // 같은 계좌로 묶인 줄은 한 계좌
@@ -188,6 +201,8 @@ export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, ye
     if (who) out.push(`12월 말 전 연금계좌 추가 납입: ${who}(인출을 시작하지 않은 계좌에)`);
   }
   if (paying(year - 1) && c.self + (hasSpouse ? c.spouse : 0) > 0) out.push('5월 종합소득세 신고 때 지난해 납입분 세액공제 환급 확인');
+  const yuSave = yuTaxRows(profile, assets, liabilities, nowYear, nowMonth)?.find((r) => r.year === year - 1)?.yuSave ?? 0;
+  if (yuSave > 0.5) out.push(`5월 종합소득세 신고 때 노란우산 절세 환급 확인(지난해 납입분 소득공제, 약 ${man(yuSave)})`);
   for (const a of assets.filter((x) => isFinancial(x) && x.lockYear === year && year >= nowYear)) out.push(`${a.name || '묶인 자산'} 수령 신청 → ISA·일반계좌로 옮겨 운용`);
   if ((profile.retireMinDraw ?? 0) > 0 && pensions.some((a) => (a.retirePart ?? 0) > 0) && age >= profile.retireAge) out.push(`퇴직금 계좌에서 최소 ${man(profile.retireMinDraw!)} 인출(실수령연차 유지)`);
   const np = [

@@ -5,6 +5,7 @@ import type { Asset, Profile } from '../types';
 import { buildPlanInput, lockedInflow } from './goals';
 import { contribSchedule, creditInflows, incomeTaxSchedule, personIncomeTax, wageIncomeAmount } from './incomeTax';
 import { goalKind, outflowAt } from './montecarlo';
+import { milestones, yearTodos } from './milestones';
 import { summarize } from './portfolio';
 import { taxSetup } from './tax';
 import { convertedDeduction, retireIncomeTax, serviceDeduction, yuLimit, yuPayments, yuPayout, yuPayTo, yuService } from './yellowUmbrella';
@@ -85,6 +86,14 @@ describe('노란우산공제', () => {
     expect(wageIncomeAmount(6000)).toBeCloseTo(4725, 6);
     expect(ceo.yuDedSelf).toBe(500);
     expect(incomeTaxSchedule({ ...profile, wageGross: 9000 }, Y, undefined, [yu])[0].yuDedSelf).toBe(0);
+    // 공제가 0이면 앞으로 낼 부금 전부가 ‘공제 안 받은 부금’(비과세): 지금까지 입력한 500과 합쳐 과세 대상에서 빠짐
+    const out = lockedInflow(yu, profile, Y, incomeTaxSchedule(profile, Y, undefined, [yu])).yu!;
+    expect(out.futureNonDed).toBeCloseTo(1200 * 10, 6);
+    expect(out.nonDed).toBeCloseTo(500 + 1200 * 10, 6);
+    expect(out.taxable).toBeCloseTo(out.fv - out.nonDed, 6);
+    // 사업소득이 있으면 한도(600)를 넘는 부금만 비과세
+    const { profile: biz } = setup(3000);
+    expect(lockedInflow(yu, biz, Y, incomeTaxSchedule(biz, Y, undefined, [yu])).yu!.futureNonDed).toBeCloseTo(600 * 10, 6);
   });
 
   it('수령액: 앞으로 낼 부금까지 불리고, 소득공제 받은 부금·운용수익만 퇴직소득세(공제 못 받은 부금은 비과세)', () => {
@@ -233,6 +242,27 @@ describe('노란우산공제', () => {
     const share = taxSetup(p0, assets, Y, 15000, 3, Y, s.yearShare)!.contrib[0].creditSelf;
     const whole = taxSetup(p0, assets, Y, 15000, 3, Y)!.contrib[0].creditSelf;
     expect(share).toBeGreaterThan(whole);
+  });
+
+  it('이정표·할 일: 소득공제로 줄어든 종합소득세를 납입 다음 해 5월 ‘노란우산 절세 환급’으로, 올해분은 남은 달 기준', () => {
+    const { profile, yu: base } = setup(3000);
+    const yu: Asset = { ...base, yuPay: 400 }; // 한도(600) 안
+    const rows = incomeTaxSchedule(profile, Y, undefined, [yu], [], 0.5); // 7월: 6개월 남음
+    const list = milestones(profile, [yu], [], [], Y, 7).filter((m) => m.label === '노란우산 절세 환급');
+    // 2026~2035년 납입분 → 2027~2036년 5월, 해마다 한 줄
+    expect(list.map((m) => m.year)).toEqual(Array.from({ length: 10 }, (_, i) => Y + 1 + i));
+    expect(list.every((m) => m.month === 5 && m.kind === 'tax')).toBe(true);
+    expect(list[0].note).toContain(`약 ${Math.round(rows[0].yuSave).toLocaleString('ko-KR')}만원(2026년 납입분`);
+    expect(rows[0].yuSave).toBeCloseTo(personIncomeTax(3000, 150) - personIncomeTax(3000, 350), 6); // 올해는 200만 공제
+    expect(list[1].note).toContain(`약 ${Math.round(rows[1].yuSave).toLocaleString('ko-KR')}만원(2027년 납입분`);
+    // 할 일: 내년(2027) 5월 신고 때 지난해분 환급 확인, 올해는 지난해 납입이 없어 없음
+    const todo = yearTodos(profile, [yu], Y, Y + 1, [], 7).find((x) => x.includes('노란우산 절세 환급'));
+    expect(todo).toBe(`5월 종합소득세 신고 때 노란우산 절세 환급 확인(지난해 납입분 소득공제, 약 ${Math.round(rows[0].yuSave).toLocaleString('ko-KR')}만원)`);
+    expect(yearTodos(profile, [yu], Y, Y, [], 7).some((x) => x.includes('노란우산'))).toBe(false);
+    // 사업소득이 없어 공제가 0이면 환급 항목도 없음
+    const { profile: none } = setup(0);
+    expect(milestones(none, [yu], [], [], Y, 7).some((m) => m.label === '노란우산 절세 환급')).toBe(false);
+    expect(yearTodos(none, [yu], Y, Y + 1, [], 7).some((x) => x.includes('노란우산 절세'))).toBe(false);
   });
 
   it('근속연수: 가입한 달부터 수령한 달까지 개월 수 ÷ 12 올림(1년 미만은 1년), 월을 비우면 연도 차이', () => {

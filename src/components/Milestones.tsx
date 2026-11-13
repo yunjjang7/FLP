@@ -14,8 +14,8 @@ export function Milestones() {
   const nowMonth = now.getMonth() + 1;
   const list = useMemo(() => milestones(profile, assets, liabilities, goals, nowYear, nowMonth), [profile, assets, liabilities, goals, nowYear, nowMonth]);
   const todos = useMemo(
-    () => [nowYear, nowYear + 1].map((y) => ({ year: y, items: yearTodos(profile, assets, nowYear, y) })).filter((t) => t.items.length > 0),
-    [profile, assets, nowYear],
+    () => [nowYear, nowYear + 1].map((y) => ({ year: y, items: yearTodos(profile, assets, nowYear, y, liabilities, nowMonth) })).filter((t) => t.items.length > 0),
+    [profile, assets, liabilities, nowYear, nowMonth],
   );
   if (list.length === 0 && todos.length === 0) return null;
   const shown = all ? list : list.slice(0, SHOWN);

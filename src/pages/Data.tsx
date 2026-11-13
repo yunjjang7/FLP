@@ -1152,7 +1152,7 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
         <p className="mt-2 text-xs text-muted">
           {yuRow.year}년 납입 {won(yuPayRow)}{yuRow.year === nowYear && yuShare < 1 ? `(연 ${won(a.yuPay!)} 중 올해 남은 ${yuMonths}개월분)` : ''}{yuFullNote ? `, 소득공제는 1~12월 전체 납입액 ${won(yuDedBase)} 기준 ${won(yuDed)}` : ` 중 소득공제 ${won(yuDed)}`}
           {yuRow.yuSave > 0.5 ? ` → 종합소득세 약 ${won(yuRow.yuSave)} 감소(부부 합계, 다음 해 5월에 들어오는 돈으로 계산)` : ''}.
-          {yuDed <= 0 && <> 사업소득이 없어 공제하지 않았습니다. 은퇴 전 사업소득은 <SetupLink tab="profile" card="그 밖의 은퇴 후 소득">프로필 → 그 밖의 소득</SetupLink>에 ‘사업소득’으로 지금 나이부터 넣거나, 법인 대표자면 세전 총급여(연 {won(YU_CEO_WAGE)} 이하)를 넣으세요.</>}
+          {yuDed <= 0 && <> 사업소득이 없어 공제하지 않았습니다. 은퇴 전 사업소득은 <SetupLink tab="profile" card="그 밖의 은퇴 후 소득">프로필 → 그 밖의 소득</SetupLink>에 ‘사업소득’으로 지금 나이부터 넣거나, 법인 대표자면 세전 총급여(연 {won(YU_CEO_WAGE)} 이하)를 넣으세요.{inflow?.yu && <> 공제받지 못한 부금은 ‘공제 안 받은 부금’으로 보아 수령 때 과세하지 않습니다(앞으로 낼 부금 중 {won(inflow.yu.futureNonDed)}{inflow.yu.nonDed - inflow.yu.futureNonDed > 0 ? ` + 지금까지 입력한 ${won(inflow.yu.nonDed - inflow.yu.futureNonDed)}` : ''} = 비과세 {won(inflow.yu.nonDed)}).</>}</>}
           {' '}해마다 연 납입액을 꺼내 쓸 수 있는 금융자산에서 이 계좌로 옮기는 것으로 계산합니다(지출 탭에 부금을 또 넣지 마세요).
         </p>
       )}

@@ -114,6 +114,7 @@ export interface YuPayout {
   fv: number; // 수령 연도 적립금(명목, 세전)
   paid: number; // 앞으로 낼 부금 합계(명목)
   nonDed: number; // 소득공제를 받지 않은 부금(과세제외 + 앞으로 공제 못 받을 부금)
+  futureNonDed: number; // 그중 앞으로 낼 부금에서 공제 못 받는 금액(사업소득이 없거나 한도 초과) → 비과세
   taxable: number; // 퇴직소득으로 과세되는 금액(소득공제 받은 부금 + 운용수익)
   years: number; // 가입 기간(근속연수, 1년 미만은 올림)
   months: number; // 실제 가입 기간(개월, 가입 월·수령 월을 비우면 연도 차이 × 12)
@@ -133,7 +134,8 @@ export function yuPayout(a: Asset, profile: Profile, nowYear: number, dedFrac?: 
   const owner: IncomeOwner = a.owner === 'spouse' && profile.spouseBirthYear > 0 ? 'spouse' : 'self';
   let fv = a.amount * Math.pow(r, Math.max(0, year - nowYear));
   let paid = 0;
-  let nonDed = Math.max(0, a.taxFree ?? 0);
+  const pastNonDed = Math.max(0, a.taxFree ?? 0);
+  let nonDed = pastNonDed;
   for (const p of yuPayments([a], profile, nowYear, firstShare)) {
     const amt = p.amount;
     paid += amt;
@@ -144,5 +146,5 @@ export function yuPayout(a: Asset, profile: Profile, nowYear: number, dedFrac?: 
   const { years, months } = yuService(a, nowYear);
   const auto = !((a.lockTax ?? 0) > 0);
   const tax = auto ? retireIncomeTax(taxable, years) : (fv * a.lockTax!) / 100;
-  return { year, fv, paid, nonDed, taxable, years, months, tax, auto, rate: fv > 0 ? (tax / fv) * 100 : 0 };
+  return { year, fv, paid, nonDed, futureNonDed: nonDed - pastNonDed, taxable, years, months, tax, auto, rate: fv > 0 ? (tax / fv) * 100 : 0 };
 }
