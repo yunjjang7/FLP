@@ -4,7 +4,7 @@ import type { Asset, Draw } from '../types';
 import { carryOverPlan, reviewDraws } from './drawLog';
 import { milestones, yearTodos } from './milestones';
 import { accountName, mergeAccounts } from './portfolio';
-import { rebalance, splitAccount, switchPlan } from './rebalance';
+import { joinPlan, rebalance, splitAccount, switchPlan } from './rebalance';
 import { pensionTaxSchedule, taxSetup } from './tax';
 
 /**
@@ -131,5 +131,39 @@ describe('같은 계좌에 반대 성격 줄이 있으면 새 줄을 만들지 �
     expect(fresh.put).toHaveLength(1);
     expect(fresh.add).toHaveLength(1);
     expect(fresh.add[0]).toMatchObject({ group: '퇴직 IRP', nature: 'invest', amount: 2000 });
+  });
+});
+
+describe('같은 계좌로 묶인 줄을 한 줄로 합치기(joinPlan)', () => {
+  it('나눈 두 줄을 합치면 나누기 전 계좌와 같은 한 줄: 금액·과세제외·퇴직금 재원 합계, 묶음 지움', () => {
+    const plan = joinPlan(after[3], after)!;
+    expect(plan.add).toEqual([]);
+    expect(plan.remove).toEqual([4]);
+    expect(plan.put).toHaveLength(1);
+    const [m] = plan.put;
+    expect(m).toMatchObject({ id: 1, name: '퇴직 IRP', amount: 10000, taxFree: 1000, retirePart: 4000, pensionYear1: 2024, nature: 'safe' });
+    expect(m.group).toBeUndefined();
+    expect('group' in m).toBe(false);
+    // 합친 뒤 세금 계산도 나누기 전과 같음
+    const joined = [m, saving, isa];
+    expect(run(joined)).toEqual(run(before));
+  });
+
+  it('기대수익률·변동성은 금액가중 평균(소수 첫째 자리), 성격은 금액이 많은 쪽', () => {
+    const a: Asset = { ...base, id: 11, name: 'IRP', nature: 'safe', amount: 3000, expectedReturn: 3, volatility: 1, group: 'IRP', taxFree: 100 };
+    const b: Asset = { ...base, id: 12, name: 'IRP (투자형)', nature: 'invest', amount: 7000, expectedReturn: 7, volatility: 15, group: 'IRP', retirePart: 2000, drawOrder: 2 };
+    const plan = joinPlan(a, [a, saving, b])!;
+    expect(plan.remove).toEqual([12]);
+    expect(plan.put[0]).toMatchObject({ id: 11, name: 'IRP', amount: 10000, expectedReturn: 5.8, volatility: 10.8, nature: 'invest', taxFree: 100, retirePart: 2000, drawOrder: 2 });
+  });
+
+  it('세 줄 이상도 처음 줄로 모두 합치고, 묶이지 않았거나 한 줄뿐이면 null', () => {
+    const rows: Asset[] = [1, 2, 3].map((i) => ({ ...base, id: 20 + i, name: `연금${i}`, nature: i === 2 ? 'invest' : 'safe', amount: 1000 * i, group: '연금저축' }));
+    const plan = joinPlan(rows[2], [isa, ...rows])!;
+    expect(plan.put[0]).toMatchObject({ id: 21, name: '연금저축', amount: 6000, nature: 'safe' });
+    expect(plan.remove).toEqual([22, 23]);
+    expect(joinPlan(irp, before)).toBeNull();
+    expect(joinPlan(rows[0], [rows[0], isa])).toBeNull();
+    expect(joinPlan(isa, [isa])).toBeNull();
   });
 });

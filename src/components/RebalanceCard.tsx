@@ -1,10 +1,11 @@
 import { db } from '../db/db';
 import { IRP_RISK_CAP } from '../engine/buckets';
-import { RISK_PROFILES } from '../engine/portfolio';
+import { groupOf, RISK_PROFILES } from '../engine/portfolio';
 import { rebalance, REBALANCE_BAND, switchPlan, type RebalanceMode, type RebalanceMove, type RebalanceSwitch } from '../engine/rebalance';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import { Labeled, NumberField, SelectField } from './fields';
+import { JoinAccount } from './JoinAccount';
 
 const MODE_LABELS: Record<RebalanceMode, string> = {
   ratio: '바꿀 수 있는 금액에 비례',
@@ -76,6 +77,18 @@ export function RebalanceCard() {
     </div>
   );
   const pensionSum = r.pensions.reduce((a, x) => a + x.move, 0);
+  // 같은 계좌로 나뉜 연금계좌: 아래 연금계좌 표에 나온 계좌는 그 계좌의 첫 줄 밑에, 나머지는 따로 ‘한 줄로 합치기’를 보여 줌
+  const assetOf = (id?: number) => (id === undefined ? undefined : assets.find((a) => a.id === id));
+  const joinAt = new Map<number, string>();
+  if (r.needed) {
+    for (const x of r.pensions) {
+      const a = assetOf(x.id);
+      const g = a ? groupOf(a) : '';
+      if (g && a?.id !== undefined && ![...joinAt.values()].includes(g)) joinAt.set(a.id, g);
+    }
+  }
+  const shown = new Set(joinAt.values());
+  const restGroups = [...new Set(assets.map(groupOf).filter((g) => g && !shown.has(g)))];
   const moved = Math.abs(r.shift);
 
   return (
@@ -128,6 +141,7 @@ export function RebalanceCard() {
                           {fromLabel} {won(x.amount)} → {fromLabel} {won(x.keep)} + {toLabel} {won(x.move)}
                           {x.capped && ` · 위험자산 ${IRP_RISK_CAP * 100}% 한도(${won(x.limit)}까지)`}
                         </div>
+                        {x.id !== undefined && joinAt.has(x.id) && <JoinAccount a={assetOf(x.id)!} assets={assets} className="mt-1" />}
                       </td>
                       <td className="whitespace-nowrap py-1.5 text-right align-top">
                         <div className="font-semibold">{won(x.move)} 교체</div>
@@ -147,7 +161,15 @@ export function RebalanceCard() {
               <div className="mb-1 text-sm font-semibold">일반계좌 <span className="font-normal text-muted">· 팔 때 세금·수수료가 생길 수 있음</span></div>
               <div className="grid gap-4 md:grid-cols-2">
                 <Table title={`팔 것 (${fromLabel})`} rows={r.general.sell} />
-                {r.general.buy.length > 0 ? <Table title={`살 것 (${toLabel})`} rows={r.general.buy} /> : <p className="text-sm text-muted">일반계좌에 {toLabel} 자산이 아직 없습니다. 판 돈 {won(r.general.amount)}으로 {toLabel} 상품을 새로 사고 자산 탭에 추가하세요.</p>}
+                {r.general.buy.length > 0 ? (
+                  <Table title={`살 것 (${toLabel})`} rows={r.general.buy} />
+                ) : (
+                  // 팔 것 표와 같은 제목·구분선을 둬 첫 줄 높이에 맞춤
+                  <div className="min-w-0">
+                    <div className="mb-1 text-xs font-semibold text-muted">살 것 ({toLabel})</div>
+                    <p className="border-t border-line py-1.5 text-sm text-muted">일반계좌에 {toLabel} 자산이 아직 없습니다. 판 돈 {won(r.general.amount)}으로 {toLabel} 상품을 새로 사고 자산 탭에 추가하세요.</p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -163,6 +185,17 @@ export function RebalanceCard() {
         </>
       ) : (
         <p className="mt-3 rounded-lg bg-sunken px-3 py-2 text-sm">목표와의 차이가 ±{REBALANCE_BAND}%p 안이라 지금은 사고팔 필요가 없습니다.</p>
+      )}
+
+      {restGroups.length > 0 && (
+        <div className="mt-4">
+          <div className="mb-1 text-sm font-semibold">같은 계좌로 나뉜 연금계좌 <span className="font-normal text-muted">· 다시 한 줄로 합칠 수 있음</span></div>
+          {restGroups.map((g) => (
+            <div key={g} className="border-t border-line py-1.5">
+              <JoinAccount a={assets.find((a) => groupOf(a) === g)!} assets={assets} />
+            </div>
+          ))}
+        </div>
       )}
 
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">

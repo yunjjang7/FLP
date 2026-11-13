@@ -3,6 +3,7 @@ import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
 import { INSURED_WHO, TABLES, type FieldDef } from '../db/schema';
 import { housePension, HP_LOAN, HP_MARKET_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentDuplicates, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
+import { JoinAccount } from '../components/JoinAccount';
 import { ASSET_TYPES, insuredBirthYear, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, PageHeader } from '../components/ui';
@@ -806,7 +807,7 @@ function ListEditor({ table }: { table: ListTable }) {
 
 /** 자산 추가 설정: 명의, 수령 전 묶인 자산(노란우산 등), 연금계좌 재원 구성 */
 function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v: unknown) => void }) {
-  const { profile: p, summary } = useFlp();
+  const { profile: p, summary, assets } = useFlp();
   const nowYear = p.birthYear + summary.age;
   const hasSpouse = p.spouseBirthYear > 0;
   const pension = a.type === 'pension';
@@ -863,6 +864,7 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
           </>
         )}
       </div>
+      {pension && <JoinAccount a={a} assets={assets} className="mt-2" />}
       {pension && (
         <p className="mt-2 text-xs text-muted">
           연금수령 1년차는 55세가 되고 가입 5년이 지난 해입니다(2013년 3월 전 가입 계좌는 55세에 6년차). 10년차까지는 해마다 ‘연초 평가액 ÷ (11 − 연차) × 120%’까지만 연금으로 받을 수 있고, 넘는 금액은 연금외수령으로 세금이 무거워집니다.

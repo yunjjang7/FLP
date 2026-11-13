@@ -1,7 +1,7 @@
 import type { Asset, Nature } from '../types';
 import { IRP_RISK_CAP, isRiskCapped } from './buckets';
 import { isLocked } from './goals';
-import { accountName, ASSET_TYPES, groupOf, isFinancial, NATURE_LABEL } from './portfolio';
+import { accountName, ASSET_TYPES, groupOf, isFinancial, mergeAccounts, NATURE_LABEL } from './portfolio';
 
 /** 목표와 이만큼(%p) 안쪽이면 그대로 둠: 작은 차이로 사고팔지 않게 */
 export const REBALANCE_BAND = 5;
@@ -222,4 +222,24 @@ export function switchPlan(asset: Asset, move: number, assets: Asset[] = []): Sw
   }
   if (moved >= asset.amount) return { put: [next], add: [], remove: asset.id !== undefined ? [asset.id] : [] };
   return { put: [keep, next], add: [], remove: [] };
+}
+
+/**
+ * 같은 계좌(group)로 묶인 연금계좌 줄(투자형·안전형 등)을 한 줄로 다시 합칠 때 자산 탭에 저장할 내용(자산 탭 ‘한 줄로 합치기’).
+ * - 합친 줄은 묶인 줄 가운데 처음 줄(id 유지) 자리에: 이름 = 계좌 이름, 금액·과세제외·퇴직금 재원 = 합계,
+ *   기대수익률·변동성 = 금액가중 평균(소수 첫째 자리), 성격 = 금액이 많은 쪽, 꺼내는 순서·비교 순서 = 0보다 큰 가장 작은 값,
+ *   명의·연금수령 1년차 등 나머지 계좌 속성은 처음 줄 값. 묶음(group)은 지움(한 줄이 곧 한 계좌).
+ * - 나머지 줄은 remove. 저장된(id 있는) 줄이 둘 이상 묶여 있지 않으면 null.
+ */
+export function joinPlan(asset: Asset, assets: Asset[]): SwitchPlan | null {
+  const g = groupOf(asset);
+  if (!g) return null;
+  const rows = assets.filter((x) => x.id !== undefined && groupOf(x) === g);
+  if (rows.length < 2) return null;
+  const [m] = mergeAccounts(rows);
+  const { group: _g, ...rest } = m;
+  void _g;
+  const put: Asset = { ...rest, id: rows[0].id, expectedReturn: round1(m.expectedReturn), volatility: round1(m.volatility) };
+  for (const key of ['taxFree', 'retirePart'] as const) if (put[key] !== undefined) put[key] = round1(put[key]!);
+  return { put: [put], add: [], remove: rows.slice(1).map((r) => r.id!) };
 }
