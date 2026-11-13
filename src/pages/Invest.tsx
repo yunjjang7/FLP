@@ -1,6 +1,7 @@
 import { Bar as RBar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { Donut } from '../components/Donut';
 import { RebalanceCard } from '../components/RebalanceCard';
+import { SetupLink } from '../components/SetupLink';
 import { Badge, Bar, CHART_COLORS, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { ASSET_TYPES, NATURE_LABEL, PURPOSE_LABEL, RISK_PROFILES } from '../engine/portfolio';
 import { RE_USE, reUseOf } from '../engine/realestate';
@@ -19,7 +20,7 @@ export default function Invest() {
 
   return (
     <>
-      <PageHeader title="투자 점검" desc="자산 구성과 주요 위험요인을 점검합니다. 판정 기준은 ‘기본 정보 → 점검 기준’에서 바꿀 수 있습니다." />
+      <PageHeader title="투자 점검" desc={<>자산 구성과 주요 위험요인을 점검합니다. 판정 기준은 <SetupLink tab="criteria" card="점검 기준">‘기본 정보 → 점검 기준’</SetupLink>에서 바꿀 수 있습니다.</>} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card><Stat label="금융자산 기대수익률" value={pct(s.portfolioReturn, 1)} sub="금액 가중 평균(연)" /></Card>
@@ -67,7 +68,7 @@ export default function Invest() {
             <div className="absolute -top-1.5 h-5 w-5 -translate-x-1/2 rounded-full border-2 border-surface bg-brand" style={{ left: `${Math.min(100, s.investShare)}%` }} />
           </div>
           <p className="mt-3 text-xs text-muted">
-            세로선은 {target.label} 성향의 권장 투자형 비중({target.investShare}%)입니다. 성향은 ‘기본 정보 → 프로필’에서 바꿀 수 있습니다.
+            세로선은 {target.label} 성향의 권장 투자형 비중({target.investShare}%)입니다. 성향은 <SetupLink tab="profile" card="기본 정보" field="투자 위험성향">‘기본 정보 → 프로필’의 ‘투자 위험성향’</SetupLink>에서 바꿀 수 있습니다.
           </p>
         </Card>
         <Card title="용도별 배치 (금융자산)">

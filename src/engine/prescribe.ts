@@ -28,7 +28,7 @@ export function bulletPrescriptions(input: PlanInput): Prescription[] {
     out.push({
       area: '부채', level: 'danger',
       title: `${d.name ?? '대출'} 만기 나이 입력 필요`,
-      detail: `만기일시 상환 대출인데 상환 종료 나이(만기)가 비어 있어 원금 상환이 계산에 빠져 있습니다${d.annual > 0 ? `(이자 월 ${fmt(d.annual / 12)}원은 평생 나가는 것으로 계산)` : ''}. 기본 정보 → 부채에서 만기 나이를 넣으세요.`,
+      detail: `만기일시 상환 대출인데 상환 종료 나이(만기)가 비어 있어 원금 상환이 계산에 빠져 있습니다${d.annual > 0 ? `(이자 월 ${fmt(d.annual / 12)}원은 평생 나가는 것으로 계산)` : ''}. ‘기본 정보 → 부채’에서 ‘상환 종료 나이’에 만기 나이를 넣으세요.`,
     });
   }
   const repays = input.goals.filter((g) => g.loan && g.age >= input.currentAge);
@@ -193,7 +193,7 @@ export function guardrailPrescription(input: PlanInput, successRate: number, tar
       title: `하락장 가드레일(최고점 −${pick.drop}% 이하인 해 생활비 −${pick.cut}%) 적용 시 목표 달성`,
       detail:
         `시장이 최고점보다 ${pick.drop}% 이상 떨어진 해에만 은퇴 후 생활비를 ${pick.cut}%(${startAge}세 기준 월 약 ${fmt((living * pick.cut) / 100 / 12)}원) 줄이면 성공확률이 ${successRate.toFixed(0)}% → ${s.successRate.toFixed(0)}%가 됩니다. ` +
-        `${lifeExpectancy}세까지 줄이는 해는 평균 ${s.cutYearsAvg.toFixed(1)}년이고, 목표를 넘는 조합 가운데 줄이는 부담이 가장 작은 설정입니다. ‘기본 정보 → 점검 기준’의 하락장 기준·생활비 감축을 이 값으로 바꾸면 노후 진단에서 비교해 볼 수 있습니다.`,
+        `${lifeExpectancy}세까지 줄이는 해는 평균 ${s.cutYearsAvg.toFixed(1)}년이고, 목표를 넘는 조합 가운데 줄이는 부담이 가장 작은 설정입니다. ‘기본 정보 → 점검 기준’의 ‘하락장 기준’·‘하락장 생활비 감축’을 이 값으로 바꾸면 노후 진단에서 비교해 볼 수 있습니다.`,
     };
   }
   if (best.sim.successRate <= successRate + 0.5) return null;
@@ -252,7 +252,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
         out.push({
           area: '노후', level: 'caution',
           title: `월 고정 인출액 ${fmt(drawNow)}원 → ${fmt(needDraw)}원`,
-          detail: '현재 계획만으로 목표 확률을 맞추려면 연금으로 쓰는 월 고정 금액(국민·개인연금 + 자산 인출)을 이만큼 낮춰야 합니다. ‘기본 정보 → 프로필’의 인출액 고정 금액에서 바꿉니다.',
+          detail: '현재 계획만으로 목표 확률을 맞추려면 연금으로 쓰는 월 고정 금액(국민·개인연금 + 자산 인출)을 이만큼 낮춰야 합니다. ‘기본 정보 → 프로필 → 노후 계획’의 ‘연금으로 쓰는 월 금액(세후)’에서 바꿉니다.',
         });
       }
     } else {

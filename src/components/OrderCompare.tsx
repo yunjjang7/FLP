@@ -4,6 +4,7 @@ import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, s
 import type { TaxResult, TaxSetup } from '../engine/tax';
 import { won, yearRanges } from '../lib/format';
 import { Labeled, NumberField } from './fields';
+import { SetupLink } from './SetupLink';
 import { Card } from './ui';
 
 /** 엑셀 ‘인출순서비교’: 꺼내는 순서·인출 시작 연도·추가 납입 조합별 세금·한도 초과·고갈 나이 */
@@ -115,9 +116,9 @@ export function OrderCompare({ base, tax, setup }: { base: CompareBase; tax: Tax
           </li>
         )}
         {showIdle && <li>‘한도 미사용’은 그 해 1,500만 한도가 남았는데 인출 시작 연도 전인 계좌에 과세재원이 묶여 낮은 세율(5.5~3.3%)로 못 꺼낸 금액입니다. 계속 크게 남으면 그 계좌의 인출 시작 연도를 당기는 것을 검토하세요(‘꽉 채우기’를 켜지 않았다면 필요한 만큼만 꺼내므로 남는 것이 정상입니다).</li>}
-        <li>추가 납입은 인출 시작 전인 계좌(없으면 첫 계좌)로 넣고, 세액공제율은 기본 정보의 추가 납입 설정(비우면 종합소득금액으로 자동)을 따릅니다. 공제는 그 해 종합소득세까지만 받고 환급은 다음 해 들어옵니다.</li>
+        <li>추가 납입은 인출 시작 전인 계좌(없으면 첫 계좌)로 넣고, 세액공제율은 <SetupLink tab="profile" card="연금계좌 추가 납입(세액공제)" field="본인 세액공제율">‘기본 정보 → 프로필 → 연금계좌 추가 납입(세액공제)’</SetupLink>의 세액공제율(0이면 종합소득금액으로 자동)을 따릅니다. 공제는 그 해 종합소득세까지만 받고 환급은 다음 해 들어옵니다.</li>
         <li>납입금은 ISA·일반계좌에서 먼저 내고, 모자라면 연금계좌에서 더 꺼냅니다. 납입 조합의 고갈 나이·잔액이 좋아 보이는 것은 대부분 덜 쓰고 모은 효과이니, 세금 효과는 ‘순 세금’과 ‘초과 인출’로 비교하세요.</li>
-        <li>여기 입력한 납입액은 비교에만 쓰입니다. 계획에 넣으려면 기본 정보의 ‘추가 납입’에 입력하세요. 초록 굵은 글씨는 조합 가운데 가장 좋은 값입니다.</li>
+        <li>여기 입력한 납입액은 비교에만 쓰입니다. 계획에 넣으려면 <SetupLink tab="profile" card="연금계좌 추가 납입(세액공제)" field="본인 연 납입액">‘기본 정보 → 프로필 → 연금계좌 추가 납입(세액공제)’</SetupLink>에 입력하세요. 초록 굵은 글씨는 조합 가운데 가장 좋은 값입니다.</li>
       </ul>
     </Card>
   );

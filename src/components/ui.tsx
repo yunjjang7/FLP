@@ -5,7 +5,7 @@ import { LEVEL_LABEL } from '../engine/risk';
 
 export function Card({ title, action, children, className = '' }: { title?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <section className={`min-w-0 rounded-2xl border border-line bg-surface p-4 sm:p-5 ${className}`}>
+    <section data-card={typeof title === 'string' ? title : undefined} className={`min-w-0 rounded-2xl border border-line bg-surface p-4 sm:p-5 ${className}`}>
       {(title || action) && (
         <div className="mb-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
           {title && <h2 className="min-w-0 text-[15px] font-semibold">{title}</h2>}
@@ -33,7 +33,7 @@ export function Badge({ level, children }: { level: Level; children?: ReactNode 
   return <span className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-semibold ${cls}`}>{children ?? LEVEL_LABEL[level]}</span>;
 }
 
-export function PageHeader({ title, desc }: { title: string; desc?: string }) {
+export function PageHeader({ title, desc }: { title: string; desc?: ReactNode }) {
   return (
     <header className="mb-4">
       <h1 className="text-2xl font-bold tracking-tight">{title}</h1>

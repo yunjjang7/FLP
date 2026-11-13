@@ -3,6 +3,7 @@ import { debtPaymentAt, deterministicPath, expenseAt, nominalFactor, pensionAt, 
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { ExpenseMode } from '../types';
+import { SetupLink } from './SetupLink';
 import { Card } from './ui';
 
 const RUNS = 500;
@@ -145,7 +146,7 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
         )}
         {inp.expenseSteps?.length ? <li><b className="font-medium text-ink">나이 구간 없이 일정</b>: 지금 설정에서 나이 구간별 생활비만 빼고 기본 생활비를 끝까지 쓴 결과입니다. 연금 생활비 명목 고정에는 나이 구간을 쓰지 않습니다.</li> : null}
         <li>
-          <b className="font-medium text-ink">가정 바꾸기</b>: 왼쪽 메뉴 ‘기본 정보’ → 맨 위 ‘프로필’ 탭 → ‘노후 계획’ 카드의 ‘은퇴 후 생활비 변화’에서 고릅니다.
+          <b className="font-medium text-ink">가정 바꾸기</b>: <SetupLink tab="profile" card="노후 계획" field="은퇴 후 생활비 변화">‘기본 정보 → 프로필 → 노후 계획’의 ‘은퇴 후 생활비 변화’</SetupLink>에서 고릅니다.
         </li>
       </ul>
     </Card>

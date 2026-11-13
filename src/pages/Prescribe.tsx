@@ -2,6 +2,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { Slider } from '../components/fields';
 import { LifeChart } from '../components/LifeChart';
 import { PlanCompare } from '../components/PlanCompare';
+import { SetupLink } from '../components/SetupLink';
 import { Badge, Bar, Button, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { db } from '../db/db';
 import { GOAL_CATEGORY } from '../db/schema';
@@ -112,7 +113,7 @@ function PrescribeInner() {
       <Card title="재무목표별 필요 적립액" className="mt-4">
         {d.goalPlans.length === 0 ? (
           <p className="py-4 text-sm text-muted">
-            {skips.length === 0 ? '등록된 재무목표가 없습니다. ‘기본 정보 → 재무목표’에서 추가하세요.' : '적립액을 계산할 목표(앞으로 쓸 목적자금·반복 지출)가 없습니다. 아래 목표는 이 표에서 빠집니다.'}
+            {skips.length === 0 ? <>등록된 재무목표가 없습니다. <SetupLink tab="goals">‘기본 정보 → 재무목표’</SetupLink>에서 추가하세요.</> : '적립액을 계산할 목표(앞으로 쓸 목적자금·반복 지출)가 없습니다. 아래 목표는 이 표에서 빠집니다.'}
           </p>
         ) : (
           <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
@@ -215,7 +216,7 @@ function PrescribeInner() {
                 <li key={goal.id ?? i}><b className="font-medium">{goal.name}</b> <span className="text-muted">· {reason}</span></li>
               ))}
             </ul>
-            {skips.some((x) => x.goal.category !== 'retirement' && !(x.goal.targetAge >= s.age) && !((x.goal.endAge ?? 0) > x.goal.targetAge)) && <div className="mt-1 text-muted">지난 목표·나이가 빈 목표는 노후 계산에도 들어가지 않습니다. 아직 쓸 돈이면 ‘기본 정보 → 재무목표’에서 목표 나이를 넣어 주세요.</div>}
+            {skips.some((x) => x.goal.category !== 'retirement' && !(x.goal.targetAge >= s.age) && !((x.goal.endAge ?? 0) > x.goal.targetAge)) && <div className="mt-1 text-muted">지난 목표·나이가 빈 목표는 노후 계산에도 들어가지 않습니다. 아직 쓸 돈이면 <SetupLink tab="goals">‘기본 정보 → 재무목표’</SetupLink>에서 ‘목표 나이’를 넣어 주세요.</div>}
           </div>
         )}
       </Card>

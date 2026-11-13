@@ -3,6 +3,7 @@ import { Bar as RBar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAx
 import { ExpenseCompare } from '../components/ExpenseCompare';
 import { GuardrailCompare } from '../components/GuardrailCompare';
 import { LifeChart } from '../components/LifeChart';
+import { SetupLink } from '../components/SetupLink';
 import { Sensitivity } from '../components/Sensitivity';
 import { StressTest } from '../components/StressTest';
 import { debtAnnualAt, expenseAt, expenseRatioAt, GOAL_KIND_LABEL, goalBreakdownAt, goalKind, guardrailSim, incomeValue, nominalFactor } from '../engine/montecarlo';
@@ -125,7 +126,7 @@ export default function Retire() {
         <LifeChart sim={sim} retireAge={inp.retireAge} compare={gsim ? { name: `하락장 가드레일 중앙값(−${gDrop}%·생활비 −${gCut}%)`, p50: gsim.p50 } : undefined} />
         {!retired && inp.annualSavings < 0 && (
           <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
-            지금은 지출이 소득보다 많아 매달 {won(-inp.annualSavings / 12)}을 금융자산에서 꺼내 쓰는 것으로 계산했습니다. 은퇴({inp.retireAge}세) 전 {inp.retireAge - inp.currentAge}년 동안 약 {won((-inp.annualSavings * (inp.retireAge - inp.currentAge)))}(오늘 물가, 수익 제외)이 빠져 곡선이 은퇴 전부터 내려갑니다{(inp.savingsChanges ?? []).length > 0 || (inp.debts ?? []).some((x) => x.endAge < inp.retireAge) ? '(대출 상환 완료·보험 납입 완료로 줄어드는 부족분은 따로 반영)' : ''}. 이미 은퇴했다면 ‘기본 정보 → 노후 계획’의 은퇴 희망 나이를 지금 나이 이하로 바꾸세요.
+            지금은 지출이 소득보다 많아 매달 {won(-inp.annualSavings / 12)}을 금융자산에서 꺼내 쓰는 것으로 계산했습니다. 은퇴({inp.retireAge}세) 전 {inp.retireAge - inp.currentAge}년 동안 약 {won((-inp.annualSavings * (inp.retireAge - inp.currentAge)))}(오늘 물가, 수익 제외)이 빠져 곡선이 은퇴 전부터 내려갑니다{(inp.savingsChanges ?? []).length > 0 || (inp.debts ?? []).some((x) => x.endAge < inp.retireAge) ? '(대출 상환 완료·보험 납입 완료로 줄어드는 부족분은 따로 반영)' : ''}. 이미 은퇴했다면 <SetupLink inherit tab="profile" card="노후 계획" field="은퇴 희망 나이">‘기본 정보 → 프로필 → 노후 계획’의 ‘은퇴 희망 나이’</SetupLink>를 지금 나이 이하로 바꾸세요.
           </p>
         )}
       </Card>

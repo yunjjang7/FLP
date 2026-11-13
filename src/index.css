@@ -110,3 +110,19 @@ select {
 /* 가로로 넘기는 탭 줄: 스크롤은 되고 막대만 숨김 */
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* 다른 화면 안내 문구의 바로가기로 들어온 설정 칸: 잠깐 테두리로 강조(칸 둘레에 여백을 두고) */
+@keyframes setup-target {
+  0%, 55% { outline-color: var(--c-brand); box-shadow: 0 0 0 6px var(--c-brand-soft); background: var(--c-brand-soft); }
+  100% { outline-color: transparent; box-shadow: 0 0 0 6px transparent; background: transparent; }
+}
+.setup-target {
+  border-radius: 0.6rem;
+  outline: 2px solid transparent;
+  outline-offset: 6px;
+  animation: setup-target 2.6s ease-out;
+}
+section.setup-target { border-radius: 1rem; outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  .setup-target { animation: none; outline-color: var(--c-brand); }
+}

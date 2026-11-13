@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
 import { INSURED_WHO, TABLES, type FieldDef } from '../db/schema';
@@ -34,8 +35,43 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'backup', label: '가져오기·백업' },
 ];
 
+/** 주소의 ?tab=&card=&field= 로 들어오면 그 탭을 열고 카드·칸으로 스크롤해 잠깐 강조(다른 화면 안내 문구의 바로가기) */
+function useSetupTarget(setTab: (t: Tab) => void) {
+  const [sp] = useSearchParams();
+  const { key } = useLocation();
+  useEffect(() => {
+    const t = sp.get('tab') as Tab | null;
+    if (!t || !TABS.some((x) => x.key === t)) return;
+    setTab(t);
+    const card = sp.get('card');
+    const field = sp.get('field');
+    if (!card && !field) return;
+    let tries = 0;
+    let timer = 0;
+    // 탭 내용이 그려질 때까지(데이터 로딩 포함) 잠깐 기다리며 찾음. 칸이 숨겨져 있으면 카드로
+    const find = () => {
+      const scope: ParentNode | null = card ? document.querySelector(`[data-card="${CSS.escape(card)}"]`) : document;
+      const el = (field && scope?.querySelector<HTMLElement>(`[data-field="${CSS.escape(field)}"]`)) || (scope instanceof HTMLElement ? scope : null);
+      if (!el) {
+        if (++tries < 20) timer = window.setTimeout(find, 100);
+        return;
+      }
+      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      el.classList.remove('setup-target');
+      void el.offsetWidth; // 같은 칸을 다시 눌러도 강조가 다시 보이게
+      el.classList.add('setup-target');
+      el.querySelector<HTMLElement>('input, select')?.focus({ preventScroll: true });
+      timer = window.setTimeout(() => el.classList.remove('setup-target'), 2600);
+    };
+    timer = window.setTimeout(find, 50);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+}
+
 export default function Data() {
   const [tab, setTab] = useState<Tab>('profile');
+  useSetupTarget(setTab);
   return (
     <>
       <PageHeader title="기본 정보" desc="모든 데이터는 이 기기의 브라우저 안에만 저장되며 외부로 전송되지 않습니다. 금액 단위는 만원입니다." />
@@ -313,7 +349,7 @@ function IncomeTaxForm() {
           <p className="mt-3 text-xs text-muted">
             {rentCount === 0 ? '임대소득은 ‘자산’ 탭의 임대용 부동산 월세나, ‘그 밖의 은퇴 후 소득’에서 종류를 ‘임대소득’으로 고른 항목만 계산에 들어갑니다. ' : ''}
             ‘부부 소득·연금’의 은퇴 전 세전 총급여는 각자 은퇴 전 해까지 근로소득으로 합쳐 세율 구간·근로소득세액공제·연말정산 기납부를 계산합니다. 급여가 있는 사람은 그 해 직장가입자로 보아 재산분 없이 급여 외 소득 2,000만원 초과분에만 건보료(소득월액 보험료)를 매기고, 부부 중 한 명만 일하면 다른 한 명은 피부양자 요건을 채우면 0, 못 채우면 그 사람만 지역가입자로 계산합니다. 피부양자는 사업소득이 조금이라도 있으면 빠지는 것으로 보되, ‘피부양자 판정: 사업자등록 없음’을 ‘예’로 하면 임대 외 사업소득이 연 500만원 이하일 때는 인정합니다(임대소득은 있으면 항상 빠짐). ‘그 밖의 은퇴 후 소득’은 고른 종류대로 계산합니다(근로소득은 근로소득공제·근로소득세액공제·표준세액공제 13만을 하고 연말정산으로 낸 세금은 기납부로 빼서 5월에는 다른 소득과 합쳐 늘어난 만큼만, 사업소득은 항목별 필요경비율, 공무원·사학·군인연금은 국민연금과 합쳐 연금소득공제, 지역가입자 건보료는 근로·공적연금 × 반영률, 사업·임대 100%). 사적연금(1,500만원 이하 분리과세)·퇴직소득·노란우산은 종합소득과 건보료에 넣지 않습니다(2026년 기준). 건보료 소득분은 전년도 소득으로, 재산분은 {t.hiPropAuto ? '부동산 자산의 해마다 오르는 시세로 재산 과세표준을 구해 기본공제 1억을 빼고 2026년 재산등급 점수 × 211.5원으로 추정합니다(매각 연도부터 제외, 임대보증금은 빼지 않음, 자동차·전월세로 사는 집은 넣지 않음, 부부 한 세대)' + (t.hiLoanDeduct ? '. 주택 구입 대출 공제는 표시한 대출의 해마다 줄어드는 잔액(원리금 균등 상환) × 60%를 5,000만 한도로 빼고, 그 해 주택이 2채 이상이면 넣지 않습니다. 실제로는 공시가격 5억 이하 주택을 취득 전후 3개월 안에 빌린 대출이어야 하고 공단에 신청해야 합니다' : '') : '지금 고지서에서 역산해 고정합니다(부부 한 세대)'}. 첫해 부담은 이미 생활비에 들어 있다고 보고,
-            ‘인출에 더하기’를 고르면 국민연금 때문에 늘어나는 금액만 해마다 연금계좌에서 더 꺼냅니다.
+            ‘늘어난 세금 인출에 더하기’를 ‘예’로 하면 국민연금 때문에 늘어나는 금액만 해마다 연금계좌에서 더 꺼냅니다.
           </p>
         </>
       )}
@@ -511,7 +547,7 @@ function loanNote(l: Liability, age: number, retireAge: number) {
 function insuranceNote(p: Insurance, profile: Profile, age: number, retireAge: number) {
   if (!((p.payEndAge ?? 0) > 0) || !(p.monthlyPremium > 0)) return '';
   if (p.insured === 'child' && !((p.insuredBirthYear ?? 0) > 0)) return '자녀 출생연도를 넣어야 자녀 나이로 납입 종료를 계산합니다(비우면 본인 나이로 계산).';
-  if (p.insured === 'spouse' && !(profile.spouseBirthYear > 0)) return '기본 정보에 배우자 출생연도가 없어 본인 나이로 계산합니다.';
+  if (p.insured === 'spouse' && !(profile.spouseBirthYear > 0)) return '프로필 탭 ‘부부 소득·연금’에 배우자 출생연도가 없어 본인 나이로 계산합니다.';
   const end = payEndSelfAge(p, profile);
   if (!(end > 0) || !(p.monthlyPremium > 0)) return '';
   // 피보험자가 본인이 아니면 피보험자 나이와 본인 나이를 함께 보여 줌
@@ -713,7 +749,7 @@ function ListEditor({ table }: { table: ListTable }) {
         <Guide
           items={[
             <><b>월 보험료</b>는 지출(저축 여력)에 자동으로 더합니다. 지출 탭에 보험료를 또 넣지 마세요.</>,
-            <><b>피보험자</b>(본인·배우자·자녀)를 고르고 <b>납입 종료 나이</b>를 그 사람 나이로 넣으세요. 배우자는 기본 정보의 배우자 출생연도, 자녀는 자녀 출생연도로 본인 나이로 바꿔 계산합니다.</>,
+            <><b>피보험자</b>(본인·배우자·자녀)를 고르고 <b>납입 종료 나이</b>를 그 사람 나이로 넣으세요. 배우자는 프로필 탭의 배우자 출생연도, 자녀는 자녀 출생연도로 본인 나이로 바꿔 계산합니다.</>,
             <>납입 종료 나이를 넣으면 그 나이부터 보험료가 지출에서 빠지고, 은퇴 전이면 그만큼 저축이 늘어나는 것으로 계산합니다. 은퇴 나이보다 늦으면 은퇴 후 그 전 해까지 보험료를 자산에서 꺼내 내는 것으로 계산합니다. 0이면 계속 납입하는 것으로 보고, 은퇴 후에도 기대수명까지 보험료를 자산에서 꺼내 내는 것으로 계산합니다(이미 은퇴 후 생활비에 넣었다면 생활비에서 빼 주세요).</>,
           ]}
         />

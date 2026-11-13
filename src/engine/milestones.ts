@@ -109,7 +109,7 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
 
   // 퇴직금 연금 실수령 11년차: 감면 30% → 40%
   if ((profile.retireTaxYear1 ?? 0) > 0 && pensions.some((a) => (a.retirePart ?? 0) > 0)) {
-    out.push({ year: profile.retireTaxYear1! + 10, month: 1, kind: 'tax', label: '퇴직금 연금 실수령 11년차 → 퇴직소득세 감면 30% → 40%', note: (profile.retireMinDraw ?? 0) > 0 ? '해마다 최소 인출을 이어갈 때' : '한 해라도 안 꺼내면 그만큼 늦어짐(프로필의 ‘매년 최소 인출’)' });
+    out.push({ year: profile.retireTaxYear1! + 10, month: 1, kind: 'tax', label: '퇴직금 연금 실수령 11년차 → 퇴직소득세 감면 30% → 40%', note: (profile.retireMinDraw ?? 0) > 0 ? '해마다 최소 인출을 이어갈 때' : '한 해라도 안 꺼내면 그만큼 늦어짐(기본 정보 → 프로필 → 연금 세금의 ‘퇴직금 계좌 매년 최소 인출’)' });
   }
 
   // 노란우산 등 수령 시점이 정해진 자산

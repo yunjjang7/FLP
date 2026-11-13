@@ -12,6 +12,7 @@ import { ExpenseCompare } from '../components/ExpenseCompare';
 import { Milestones } from '../components/Milestones';
 import { IncomeTaxCard } from '../components/IncomeTaxCard';
 import { OrderCompare } from '../components/OrderCompare';
+import { SetupLink } from '../components/SetupLink';
 import type { CompareBase } from '../engine/orderCompare';
 import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
 import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
@@ -164,7 +165,7 @@ function WithdrawInner() {
         </div>
 
         <p className="mt-3 text-xs text-muted">
-          {retired ? `이미 은퇴 나이(${p.retireAge}세)가 지나 현재 ${startAge}세부터 인출합니다${firstShare < 1 ? `(올해는 남은 ${firstMonths}개월만 계산)` : ''}` : `은퇴 ${p.retireAge}세부터 인출`} · 월 생활비 {won(p.retireMonthlyExpense)}{planInput.expenseSteps?.length ? '(나이 구간별로 바뀜)' : ''} · 은퇴 후 기대수익률 {retMean.toFixed(1)}% / 변동성 {retVol.toFixed(1)}%{planInput.retireMeanReturn === undefined && ' (은퇴 전과 같음)'} (‘기본 정보 → 프로필’에서 변경)
+          {retired ? `이미 은퇴 나이(${p.retireAge}세)가 지나 현재 ${startAge}세부터 인출합니다${firstShare < 1 ? `(올해는 남은 ${firstMonths}개월만 계산)` : ''}` : `은퇴 ${p.retireAge}세부터 인출`} · 월 생활비 {won(p.retireMonthlyExpense)}{planInput.expenseSteps?.length ? '(나이 구간별로 바뀜)' : ''} · 은퇴 후 기대수익률 {retMean.toFixed(1)}% / 변동성 {retVol.toFixed(1)}%{planInput.retireMeanReturn === undefined && ' (은퇴 전과 같음)'} (<SetupLink tab="profile" card="노후 계획">‘기본 정보 → 프로필 → 노후 계획’</SetupLink>·<SetupLink tab="profile" card="은퇴 후 자산 운용">‘은퇴 후 자산 운용’</SetupLink>에서 변경)
         </p>
         {others.length > 0 && (
           <p className="mt-1 text-xs text-muted">
@@ -413,7 +414,14 @@ function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase, minDraw, mon
         {hasRetire && (
           <li>
             퇴직소득세 감면은 퇴직금 계좌에서 실제로 꺼낸 해만 연차로 셉니다(올해 {first!.retireNo}년차{retire40 ? `, ${retire40.year}년부터 40% 감면` : ''}).
-            {minDraw > 0 ? ` 쓸 일이 없는 해에도 연 ${won(minDraw)}은 꺼내 연차를 잇고, 그 돈은 ISA·일반계좌로 옮기는 것으로 계산했습니다.` : ' 꺼내지 않는 해가 있으면 40% 감면이 그만큼 늦어지니, ‘기본 정보 → 프로필 → 연금 세금’의 ‘퇴직금 계좌 매년 최소 인출’에 작은 금액(예: 12만원)을 넣어 두세요.'}
+            {minDraw > 0 ? (
+              ` 쓸 일이 없는 해에도 연 ${won(minDraw)}은 꺼내 연차를 잇고, 그 돈은 ISA·일반계좌로 옮기는 것으로 계산했습니다.`
+            ) : (
+              <>
+                {' '}꺼내지 않는 해가 있으면 40% 감면이 그만큼 늦어지니,{' '}
+                <SetupLink tab="profile" card="연금 세금" field="퇴직금 계좌 매년 최소 인출">‘기본 정보 → 프로필 → 연금 세금’의 ‘퇴직금 계좌 매년 최소 인출’</SetupLink>에 작은 금액(예: 12만원)을 넣어 두세요.
+              </>
+            )}
           </li>
         )}
         <li>자산 인출(세후)이 생활비로 쓰는 돈이고, 세금만큼 더 꺼내야 합니다. 성공확률·전략 비교는 세금을 빼고 계산한 값이니 이 카드의 ‘세금 반영 시 자산 고갈’과 함께 보세요.</li>
@@ -423,7 +431,7 @@ function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase, minDraw, mon
             {contrib > 0.5 && `연금계좌 추가 납입은 합계 ${won(contrib)}이고, 세액공제 환급은 다음 해 ‘일시금·환급’으로 들어옵니다.`}
           </li>
         )}
-        <li>국민연금·임대소득에 붙는 종합소득세·건강보험료는 ‘종합소득세·건강보험료’ 카드에서 따로 추정합니다(기본 정보 → 프로필에서 켬).</li>
+        <li>국민연금·임대소득에 붙는 종합소득세·건강보험료는 ‘종합소득세·건강보험료’ 카드에서 따로 추정합니다. 켜려면 <SetupLink tab="profile" card="종합소득세·건강보험료">‘기본 정보 → 프로필 → 종합소득세·건강보험료’</SetupLink> 카드 오른쪽 위에서 ‘추정하기’를 고릅니다.</li>
       </ul>
     </Card>
   );

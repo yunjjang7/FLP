@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Donut } from '../components/Donut';
+import { SetupLink } from '../components/SetupLink';
 import { Badge, Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
 import { debtPaymentAt, GOAL_KIND_LABEL, GOAL_KINDS, goalBreakdownAt, pensionAt, retireOutflowAt } from '../engine/montecarlo';
@@ -136,7 +137,7 @@ export default function Home() {
           </div>
           {s.savings < 0 && (
             <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
-              매달 {won(-s.savings)}이 모자라 은퇴 전({d.profile.retireAge}세)까지 이만큼을 금융자산에서 꺼내 쓰는 것으로 계산합니다. 연금 계좌·투자 자산에서 꺼내는 돈은 ‘세후 소득’에 넣지 마세요. 넣으면 자산이 줄어드는 게 계산에서 빠집니다. 이미 은퇴했다면 ‘기본 정보 → 노후 계획’의 은퇴 희망 나이를 지금 나이 이하로 바꾸면 연금·인출 기준으로 보여 줍니다.
+              매달 {won(-s.savings)}이 모자라 은퇴 전({d.profile.retireAge}세)까지 이만큼을 금융자산에서 꺼내 쓰는 것으로 계산합니다. 연금 계좌·투자 자산에서 꺼내는 돈은 ‘세후 소득’에 넣지 마세요. 넣으면 자산이 줄어드는 게 계산에서 빠집니다. 이미 은퇴했다면 <SetupLink inherit tab="profile" card="노후 계획" field="은퇴 희망 나이">‘기본 정보 → 프로필 → 노후 계획’의 ‘은퇴 희망 나이’</SetupLink>를 지금 나이 이하로 바꾸면 연금·인출 기준으로 보여 줍니다.
             </p>
           )}
         </Card>
