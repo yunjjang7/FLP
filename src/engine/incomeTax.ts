@@ -525,6 +525,20 @@ export function yuSaveInflows(profile: Profile, nowYear: number, rows: IncomeTax
 }
 
 /** 그 해 그 사람 노란우산 납입액 중 소득공제 받은 비율(종소세 추정 행 기준). 그 해 행이 없으면 모두 공제받는다고 봄 */
+/**
+ * 자산 탭 노란우산 안내용: 이 계좌가 처음 납입하는 해의 납입액(올해는 남은 달만큼)과 그중 소득공제 받는 금액, 그 해 줄어든 종합소득세(부부 합계).
+ * 공제 기준 납입액은 프로필 ‘올해 소득공제 1~12월 기준’이면 올해만 1~12월 전체, 공제액 = 공제 기준 납입액 × 명의자 공제 비율.
+ * rows는 incomeTaxSchedule(…, firstShare)와 같은 비율로 만든 행(종합소득세 카드·이정표와 같은 금액)
+ */
+export function yuAssetDed(a: Asset, profile: Profile, nowYear: number, firstShare: number, rows: IncomeTaxRow[]) {
+  const owner = a.owner === 'spouse' && profile.spouseBirthYear > 0 ? 'spouse' : 'self';
+  const row = rows.find((r) => (owner === 'spouse' ? r.yuPaySpouse : r.yuPaySelf) > 0);
+  if (!row) return undefined;
+  const amt = (share: number) => yuPayments([a], profile, nowYear, share).find((x) => x.year === row.year)?.amount ?? 0;
+  const dedBase = amt(profile.yuDedFullYear ? 1 : firstShare);
+  return { row, owner, pay: amt(firstShare), dedBase, ded: dedBase * yuDedFracOf(rows)(row.year, owner), save: row.yuSave };
+}
+
 export function yuDedFracOf(rows: IncomeTaxRow[]) {
   const by = new Map(rows.map((r) => [r.year, r]));
   return (year: number, owner: 'self' | 'spouse') => {

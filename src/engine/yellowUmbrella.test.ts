@@ -3,9 +3,9 @@ import { sampleData } from '../db/sample';
 import { fromCSV, toCSV } from '../db/csv';
 import type { Asset, Profile } from '../types';
 import { buildPlanInput, lockedInflow } from './goals';
-import { contribSchedule, creditInflows, incomeTaxSchedule, personIncomeTax, wageIncomeAmount } from './incomeTax';
+import { contribSchedule, creditInflows, incomeTaxSchedule, personIncomeTax, wageIncomeAmount, yuAssetDed } from './incomeTax';
 import { goalKind, outflowAt } from './montecarlo';
-import { milestones, yearTodos } from './milestones';
+import { milestones, yearTodos, yuRefundRuns } from './milestones';
 import { summarize } from './portfolio';
 import { taxSetup } from './tax';
 import { convertedDeduction, retireIncomeTax, serviceDeduction, yuLimit, yuPayments, yuPayout, yuPayTo, yuService } from './yellowUmbrella';
@@ -244,25 +244,66 @@ describe('노란우산공제', () => {
     expect(share).toBeGreaterThan(whole);
   });
 
-  it('이정표·할 일: 소득공제로 줄어든 종합소득세를 납입 다음 해 5월 ‘노란우산 절세 환급’으로, 올해분은 남은 달 기준', () => {
+  it('이정표·할 일: 소득공제로 줄어든 종합소득세를 납입 다음 해 5월 ‘노란우산 절세 환급’으로, 같은 금액이 이어지는 해는 한 줄로', () => {
     const { profile, yu: base } = setup(3000);
     const yu: Asset = { ...base, yuPay: 400 }; // 한도(600) 안
     const rows = incomeTaxSchedule(profile, Y, undefined, [yu], [], 0.5); // 7월: 6개월 남음
-    const list = milestones(profile, [yu], [], [], Y, 7).filter((m) => m.label === '노란우산 절세 환급');
-    // 2026~2035년 납입분 → 2027~2036년 5월, 해마다 한 줄
-    expect(list.map((m) => m.year)).toEqual(Array.from({ length: 10 }, (_, i) => Y + 1 + i));
-    expect(list.every((m) => m.month === 5 && m.kind === 'tax')).toBe(true);
-    expect(list[0].note).toContain(`약 ${Math.round(rows[0].yuSave).toLocaleString('ko-KR')}만원(2026년 납입분`);
+    const list = milestones(profile, [yu], [], [], Y, 7).filter((m) => m.label.includes('노란우산 절세 환급'));
+    const man = (v: number) => `${Math.round(v).toLocaleString('ko-KR')}만원`;
+    // 올해(2026)분은 남은 달 기준이라 금액이 달라 따로, 2027~2035년분(물가 0%라 같은 금액)은 한 줄로 묶음
     expect(rows[0].yuSave).toBeCloseTo(personIncomeTax(3000, 150) - personIncomeTax(3000, 350), 6); // 올해는 200만 공제
-    expect(list[1].note).toContain(`약 ${Math.round(rows[1].yuSave).toLocaleString('ko-KR')}만원(2027년 납입분`);
-    // 할 일: 내년(2027) 5월 신고 때 지난해분 환급 확인, 올해는 지난해 납입이 없어 없음
-    const todo = yearTodos(profile, [yu], Y, Y + 1, [], 7).find((x) => x.includes('노란우산 절세 환급'));
-    expect(todo).toBe(`5월 종합소득세 신고 때 노란우산 절세 환급 확인(지난해 납입분 소득공제, 약 ${Math.round(rows[0].yuSave).toLocaleString('ko-KR')}만원)`);
+    expect(list).toHaveLength(2);
+    expect(list.every((m) => m.month === 5 && m.kind === 'tax')).toBe(true);
+    expect(list[0]).toMatchObject({ year: Y + 1, label: '노란우산 절세 환급', note: `약 ${man(rows[0].yuSave)}(2026년 납입분 소득공제로 줄어든 종합소득세 · 5월 종합소득세 신고)` });
+    expect(list[1]).toMatchObject({ year: Y + 2, label: `2028~2036년 해마다 5월 노란우산 절세 환급(연 약 ${man(rows[1].yuSave)})`, note: '2027~2035년 납입분 소득공제로 줄어든 종합소득세 · 5월 종합소득세 신고' });
+    expect(rows[1].yuSave).not.toBeCloseTo(rows[0].yuSave, 0);
+    // 이어지는 해라도 금액이 다르면 따로(물가가 오르면 해마다 금액이 달라질 수 있음)
+    const runs = yuRefundRuns([{ ...rows[1], year: 2027, yuSave: 99.4 }, { ...rows[1], year: 2028, yuSave: 97.6 }, { ...rows[1], year: 2029, yuSave: 98.2 }, { ...rows[1], year: 2031, yuSave: 99 }, { ...rows[1], year: 2032, yuSave: 0 }]);
+    expect(runs.map((g) => g.map((r) => r.year))).toEqual([[2027], [2028, 2029], [2031]]);
+    // 할 일: 내년(2027) 5월 신고 때 지난해분 환급 확인(해마다 그 해 금액), 올해는 지난해 납입이 없어 없음
+    const todo = (year: number) => yearTodos(profile, [yu], Y, year, [], 7).find((x) => x.includes('노란우산 절세 환급'));
+    expect(todo(Y + 1)).toBe(`5월 종합소득세 신고 때 노란우산 절세 환급 확인(지난해 납입분 소득공제, 약 ${man(rows[0].yuSave)})`);
+    expect(todo(Y + 2)).toContain(`약 ${man(rows[1].yuSave)}`);
     expect(yearTodos(profile, [yu], Y, Y, [], 7).some((x) => x.includes('노란우산'))).toBe(false);
     // 사업소득이 없어 공제가 0이면 환급 항목도 없음
     const { profile: none } = setup(0);
-    expect(milestones(none, [yu], [], [], Y, 7).some((m) => m.label === '노란우산 절세 환급')).toBe(false);
+    expect(milestones(none, [yu], [], [], Y, 7).some((m) => m.label.includes('노란우산 절세 환급'))).toBe(false);
     expect(yearTodos(none, [yu], Y, Y + 1, [], 7).some((x) => x.includes('노란우산 절세'))).toBe(false);
+  });
+
+  it('‘올해 소득공제 1~12월 기준’: 이정표 올해분 환급·종합소득세 카드·자산 탭 안내가 같은 금액', () => {
+    const { d, profile: base, yu: y0 } = setup(3000);
+    const full: Profile = { ...base, yuDedFullYear: true };
+    const yu: Asset = { ...y0, yuPay: 400 }; // 한도(600) 안
+    const assets: Asset[] = [{ name: '예금', type: 'deposit', amount: 10000, expectedReturn: 3, volatility: 0.5, purpose: 'short', nature: 'safe' }, yu];
+    const s = summarize(full, assets, [], d.cashflows, Y, d.insurance, 7); // 화면과 같은 남은 달 비율(6개월)
+    const man = (v: number) => `${Math.round(v).toLocaleString('ko-KR')}만원`;
+    // 종합소득세 카드(IncomeTaxCard)와 자산 탭이 쓰는 행: 올해 1~12월 400 공제
+    const rows = incomeTaxSchedule(full, Y, undefined, assets, [], s.yearShare ?? 1);
+    const cardRows = rows.filter((r) => r.yuPaySelf + r.yuPaySpouse > 0);
+    expect(cardRows[0].yuDedSelf + cardRows[0].yuDedSpouse).toBeCloseTo(400, 10);
+    const save = personIncomeTax(3000, 150) - personIncomeTax(3000, 550);
+    expect(cardRows[0].yuSave).toBeCloseTo(save, 6);
+    // 자산 탭 안내: 납입은 남은 6개월분 200, 소득공제는 1~12월 400 기준 400, 줄어든 종소세는 카드와 같은 행
+    const info = yuAssetDed(yu, full, Y, s.yearShare ?? 1, rows)!;
+    expect(info.row.year).toBe(Y);
+    expect(info.pay).toBeCloseTo(200, 10);
+    expect(info.dedBase).toBeCloseTo(400, 10);
+    expect(info.ded).toBeCloseTo(cardRows[0].yuDedSelf, 10);
+    expect(info.save).toBeCloseTo(cardRows[0].yuSave, 10);
+    // 이정표 올해분 환급·내년 할 일도 같은 금액
+    const first = milestones(full, assets, [], [], Y, 7).find((m) => m.label.includes('노란우산 절세 환급'))!;
+    // 1~12월 400 공제면 다음 해부터와 같은 금액이라 올해분도 한 줄에 묶임
+    expect(first).toMatchObject({ year: Y + 1, label: `2027~2036년 해마다 5월 노란우산 절세 환급(연 약 ${man(save)})` });
+    expect(first.note).toContain('2026~2035년 납입분');
+    expect(yearTodos(full, assets, Y, Y + 1, [], 7)).toContain(`5월 종합소득세 신고 때 노란우산 절세 환급 확인(지난해 납입분 소득공제, 약 ${man(save)})`);
+    expect(milestones(full, assets, [], [], Y, 7).filter((m) => m.label.includes('노란우산 절세 환급'))).toHaveLength(1);
+    // 기본(남은 달 기준)이면 세 곳 모두 200 공제 기준으로 함께 바뀜
+    const rowsOff = incomeTaxSchedule(base, Y, undefined, assets, [], s.yearShare ?? 1);
+    const off = yuAssetDed(yu, base, Y, s.yearShare ?? 1, rowsOff)!;
+    expect(off.ded).toBeCloseTo(200, 10);
+    expect(off.save).toBeCloseTo(rowsOff[0].yuSave, 10);
+    expect(milestones(base, assets, [], [], Y, 7).find((m) => m.label === '노란우산 절세 환급')!.note).toContain(`약 ${man(rowsOff[0].yuSave)}(2026년 납입분`);
   });
 
   it('근속연수: 가입한 달부터 수령한 달까지 개월 수 ÷ 12 올림(1년 미만은 1년), 월을 비우면 연도 차이', () => {

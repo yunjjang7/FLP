@@ -17,8 +17,8 @@ import { useFlp } from '../store/FlpContext';
 import { bulletMissingMaturity, equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
 import { creditCheck, CREDIT_CHECK_TAX } from '../engine/creditCheck';
-import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf, incomeTaxSchedule, yuDedFracOf } from '../engine/incomeTax';
-import { isYu, YU_CEO_WAGE, yuPayments, yuPayTo } from '../engine/yellowUmbrella';
+import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf, incomeTaxSchedule, yuAssetDed } from '../engine/incomeTax';
+import { isYu, YU_CEO_WAGE, yuPayTo } from '../engine/yellowUmbrella';
 import type { Asset, AssetType, ReUse, ContribPlan, Criteria, DrawInclude, ExpenseBand, ExpenseMode, Goal, IncomeKind, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
@@ -1045,15 +1045,14 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
     );
   }
   const inflow = locked ? lockedInflow(a, p, nowYear, taxRows, summary.yearShare ?? 1) : null;
-  const yuWho = a.owner === 'spouse' && hasSpouse ? 'spouse' : 'self';
-  const yuRow = taxRows?.find((r) => (yuWho === 'spouse' ? r.yuPaySpouse : r.yuPaySelf) > 0);
   // 이 계좌의 그 해 납입액(올해는 남은 달만큼)과 그중 소득공제 받는 금액(공제 기준 납입액 × 명의자 공제 비율)
-  // 프로필 ‘올해 소득공제 1~12월 기준’이면 올해 공제는 1~12월 전체 납입액 기준
+  // 프로필 ‘올해 소득공제 1~12월 기준’이면 올해 공제는 1~12월 전체 납입액 기준 — 종합소득세 카드·이정표와 같은 행에서
   const yuShare = summary.yearShare ?? 1;
-  const yuAmt = (share: number) => (yuRow ? yuPayments([a], p, nowYear, share).find((x) => x.year === yuRow.year)?.amount ?? 0 : 0);
-  const yuPayRow = yuAmt(yuShare);
-  const yuDedBase = yuAmt(p.yuDedFullYear ? 1 : yuShare);
-  const yuDed = yuRow && taxRows ? yuDedBase * yuDedFracOf(taxRows)(yuRow.year, yuWho) : 0;
+  const yuInfo = taxRows ? yuAssetDed(a, p, nowYear, yuShare, taxRows) : undefined;
+  const yuRow = yuInfo?.row;
+  const yuPayRow = yuInfo?.pay ?? 0;
+  const yuDedBase = yuInfo?.dedBase ?? 0;
+  const yuDed = yuInfo?.ded ?? 0;
   const yuFullNote = p.yuDedFullYear && yuRow?.year === nowYear && yuShare < 1;
   const yuMonths = Math.round(yuShare * 12);
   const yuPaying = yu && (a.yuPay ?? 0) > 0;

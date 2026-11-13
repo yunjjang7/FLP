@@ -1,6 +1,6 @@
 import type { Asset, Goal, Liability, Profile } from '../types';
 import { isLocked, isRecurring, lockedInflow, needsYuTax } from './goals';
-import { DEFAULT_CONTRIB, incomeTaxSchedule } from './incomeTax';
+import { DEFAULT_CONTRIB, incomeTaxSchedule, type IncomeTaxRow } from './incomeTax';
 import { isFinancial, mergeAccounts, yearShareOf } from './portfolio';
 import { HP_OVER_NOTE, hpOverCap, isRealEstate, usesHp, willSell } from './realestate';
 import { PENSION_OPEN_AGE } from './tax';
@@ -65,6 +65,18 @@ const man = (v: number) => `${Math.round(v).toLocaleString('ko-KR')}만원`;
  */
 function yuTaxRows(profile: Profile, assets: Asset[], liabilities: Liability[], nowYear: number, nowMonth?: number) {
   return needsYuTax(profile, assets, nowYear) ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities, yearShareOf(nowMonth) ?? 1) : undefined;
+}
+
+/** 노란우산 절세 환급 행 묶음: 절세액이 있는 해 중 이어지는 해이고 만원 반올림 금액이 같으면 한 묶음(올해분처럼 금액이 다른 해는 따로) */
+export function yuRefundRuns(rows: IncomeTaxRow[]): IncomeTaxRow[][] {
+  const runs: IncomeTaxRow[][] = [];
+  for (const r of rows) {
+    if (!(r.yuSave > 0.5)) continue;
+    const last = runs[runs.length - 1]?.at(-1);
+    if (last && last.year + 1 === r.year && Math.round(last.yuSave) === Math.round(r.yuSave)) runs[runs.length - 1].push(r);
+    else runs.push([r]);
+  }
+  return runs;
 }
 
 /**
@@ -149,9 +161,13 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
     if (first <= to) out.push({ year: first, month: 12, kind: 'contrib', label: `연금계좌 추가 납입(${first === to ? `${to}년` : `${first}~${to}년 해마다`})`, note: `${who} · 12월 말 전 납입` });
     out.push({ year: to + 1, month: 5, kind: 'contrib', label: '마지막 추가 납입분 세액공제 환급 확인', note: '5월 종합소득세 신고' });
   }
-  // 노란우산 소득공제로 줄어든 종합소득세: 납입한 다음 해 5월 신고 때 돌려받음(해마다 한 줄)
-  for (const r of yuRows ?? []) {
-    if (r.yuSave > 0.5) out.push({ year: r.year + 1, month: 5, kind: 'tax', label: '노란우산 절세 환급', note: `약 ${man(r.yuSave)}(${r.year}년 납입분 소득공제로 줄어든 종합소득세 · 5월 종합소득세 신고)` });
+  // 노란우산 소득공제로 줄어든 종합소득세: 납입한 다음 해 5월 신고 때 돌려받음 — 이어지는 해의 금액(만원 반올림)이 같으면 한 줄로
+  for (const g of yuRefundRuns(yuRows ?? [])) {
+    const from = g[0].year + 1;
+    const to = g[g.length - 1].year + 1;
+    const note = `${g[0].year === g[g.length - 1].year ? g[0].year : `${g[0].year}~${g[g.length - 1].year}`}년 납입분 소득공제로 줄어든 종합소득세 · 5월 종합소득세 신고`;
+    if (g.length === 1) out.push({ year: from, month: 5, kind: 'tax', label: '노란우산 절세 환급', note: `약 ${man(g[0].yuSave)}(${note})` });
+    else out.push({ year: from, month: 5, kind: 'tax', label: `${from}~${to}년 해마다 5월 노란우산 절세 환급(연 약 ${man(g[0].yuSave)})`, note });
   }
   if (profile.slotFill && (profile.slotFillFrom ?? 0) > nowYear) out.push({ year: profile.slotFillFrom!, month: 1, kind: 'tax', label: '1,500만 한도 꽉 채우기 시작', note: '남는 돈은 ISA·일반계좌로 재투자' });
 
