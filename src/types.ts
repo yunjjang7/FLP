@@ -190,6 +190,7 @@ export interface Profile {
   inflation: number;
   riskProfile: RiskProfile;
   targetInvest?: number; // 리밸런싱 목표 투자형 비중(%, 0·없음이면 투자 성향 권장값)
+  rebalanceMode?: 'ratio' | 'pensionFirst'; // 리밸런싱 배분 방식(없음이면 'ratio': 바꿀 수 있는 금액 비례, 'pensionFirst': 연금계좌부터)
   retireMonthlyExpense: number; // 은퇴 후 월 생활비(현재가치)
   dependentYears: number; // 부양 필요 기간(년)
   nationalPension: number; // 국민연금 월 수령액(현재가치)

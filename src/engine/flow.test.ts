@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { yearFlow } from './flow';
-import type { PlanInput } from './montecarlo';
+import { deterministicPath, type PlanInput } from './montecarlo';
 
 // 40세, 60세 은퇴: 국민연금 65세부터 1,200, 대출 72세까지 연 600, 70세 목표 지출 500·보험료 100
 const input: PlanInput = {
@@ -63,11 +63,80 @@ describe('연간 현금흐름 흐름도', () => {
     balanced(f);
   });
 
-  it('은퇴 전 소득이 저축·대출보다 적으면 생활 지출 0, 모자란 만큼 금융자산에서 인출', () => {
+  // 예전에는 모자란 800을 ‘금융자산에서 인출’로 그리고 저축 1,200도 함께 그려 꺼내서 다시 저축하는 모양이었음.
+  // 시뮬레이션(runPath)은 은퇴 전 소득을 보지 않고 저축 1,200을 그대로 더하므로, 인출이 아니라 ‘소득 초과 저축’으로 표시해 순증감을 엔진과 맞춤
+  it('은퇴 전 소득이 저축·대출보다 적으면 생활 지출 0, 모자란 몫은 소득 초과 저축으로(인출과 저축이 함께 나오지 않음)', () => {
     const f = yearFlow(input, 50, 1000);
+    expect(keys(f.sources)).toEqual(['income', 'short']);
+    expect(f.sources[1]).toMatchObject({ label: '소득 초과 저축', amount: 800, tone: 'short' });
     expect(keys(f.uses)).toEqual(['save', 'debt']);
-    expect(f.sources.find((x) => x.key === 'draw')?.amount).toBeCloseTo(800, 6);
+    expect(f.uses[0].amount).toBeCloseTo(1200, 6);
     balanced(f);
+  });
+
+  it('은퇴 전 소득 < 대출+저축이고 목표 지출이 저축보다 크면 순인출만 나오고 저축 줄은 없음', () => {
+    const inp: PlanInput = { ...input, goals: [...input.goals, { age: 50, amount: 3000 }] };
+    const f = yearFlow(inp, 50, 1000);
+    expect(keys(f.sources)).toEqual(['income', 'short', 'draw']);
+    expect(f.sources[2].amount).toBeCloseTo(3000 - 1200, 6); // 목표 3,000 − 저축 1,200
+    expect(keys(f.uses)).toEqual(['debt', 'goal-goal']);
+    expect(f.total).toBeCloseTo(3600, 6);
+    balanced(f);
+  });
+
+  it('은퇴 전 소득이 충분하고 목표 지출이 있는 해: 인출과 저축을 상계해 순액만', () => {
+    // 저축 1,200 · 목표 500 → 저축 줄 700, 인출 없음
+    const small: PlanInput = { ...input, goals: [{ age: 50, amount: 500 }] };
+    const a = yearFlow(small, 50, 6000);
+    expect(keys(a.sources)).toEqual(['income']);
+    expect(a.uses.find((x) => x.key === 'save')?.amount).toBeCloseTo(700, 6);
+    expect(a.uses.find((x) => x.key === 'living')?.amount).toBeCloseTo(4200, 6);
+    balanced(a);
+    // 저축 1,200 · 목표 3,000 → 인출 1,800, 저축 줄 없음
+    const big: PlanInput = { ...input, goals: [{ age: 50, amount: 3000 }] };
+    const b = yearFlow(big, 50, 6000);
+    expect(b.sources.find((x) => x.key === 'draw')?.amount).toBeCloseTo(1800, 6);
+    expect(keys(b.uses)).toEqual(['living', 'debt', 'goal-goal']);
+    balanced(b);
+  });
+
+  it('경계: 소득 = 대출 + 저축이면 생활 지출 0, 소득 초과 저축·인출 없이 저축·대출만', () => {
+    const f = yearFlow(input, 50, 1800);
+    expect(keys(f.sources)).toEqual(['income']);
+    expect(f.uses).toEqual([
+      { key: 'save', label: '저축·투자', amount: 1200, tone: 'save' },
+      { key: 'debt', label: '대출 상환', amount: 600, tone: 'debt' },
+    ]);
+    expect(f.total).toBe(1800);
+    balanced(f);
+  });
+
+  it('저축 여력이 마이너스면 저축 줄 없이 부족분을 인출, 생활 지출은 소득 − 대출 + 부족분', () => {
+    const f = yearFlow({ ...input, annualSavings: -1200 }, 50, 6000);
+    expect(keys(f.sources)).toEqual(['income', 'draw']);
+    expect(f.sources[1].amount).toBeCloseTo(1200, 6);
+    expect(keys(f.uses)).toEqual(['living', 'debt']);
+    expect(f.uses[0].amount).toBeCloseTo(6600, 6);
+    balanced(f);
+  });
+
+  it('은퇴 전 금융자산 순증감(저축·더함 − 인출)은 시뮬레이션의 수익 전 잔액 변화와 같음', () => {
+    const inp: PlanInput = {
+      ...input, meanReturn: 0, volatility: 0, inflation: 0,
+      goals: [{ age: 45, amount: 3000 }, { age: 47, amount: 800 }],
+      inflows: [{ age: 46, amount: 2000, kind: 'sale' }],
+      debts: [{ endAge: 48, annual: 600 }],
+    };
+    const bal = deterministicPath(inp).balances;
+    for (const income of [6000, 1500, 500]) {
+      for (let age = inp.currentAge; age < inp.retireAge; age++) {
+        const f = yearFlow(inp, age, income);
+        const net = f.uses.filter((x) => x.tone === 'save').reduce((a, x) => a + x.amount, 0) - (f.sources.find((x) => x.key === 'draw')?.amount ?? 0);
+        expect(net).toBeCloseTo(bal[age - inp.currentAge + 1] - bal[age - inp.currentAge], 6);
+        expect(keys(f.sources).includes('draw') && f.uses.some((x) => x.tone === 'save')).toBe(false);
+        balanced(f);
+      }
+    }
   });
 
   it('일시금이 들어와 남는 해: 남는 돈은 금융자산에 더함', () => {

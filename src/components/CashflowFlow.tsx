@@ -8,6 +8,7 @@ const COLOR: Record<FlowItem['tone'], string> = {
   income: 'var(--chart-2)',
   lump: 'var(--chart-6)',
   draw: 'var(--chart-3)',
+  short: 'var(--c-warn)',
   living: 'var(--chart-1)',
   debt: 'var(--chart-5)',
   tax: 'var(--chart-4)',
@@ -82,6 +83,7 @@ export function CashflowFlow() {
   const year = p.birthYear + a;
   const draw = flow.sources.find((x) => x.key === 'draw')?.amount ?? 0;
   const keep = flow.uses.filter((x) => x.tone === 'save').reduce((t, x) => t + x.amount, 0);
+  const over = flow.sources.find((x) => x.key === 'short')?.amount ?? 0; // 은퇴 전 소득으로 못 대는 저축·대출 상환
 
   return (
     <Card title="연간 현금흐름 흐름도" className="mt-4" action={<span className="text-xs text-muted">{year}년 · 본인 {a}세 · 1년 기준 · 오늘 물가</span>}>
@@ -127,12 +129,14 @@ export function CashflowFlow() {
 
       <p className="mt-3 text-sm">
         {a}세에는 연 <b>{won(flow.total)}</b>(월 {won(flow.total / 12)})이 오갑니다.{' '}
-        {draw > 0.5 ? <>이 가운데 <b>{won(draw)}</b>({pct((draw / flow.total) * 100)})을 금융자산에서 꺼냅니다.</> : keep > 0.5 ? <>소득으로 지출을 대고 <b>{won(keep)}</b>이 금융자산에 쌓입니다.</> : <>소득과 지출이 맞습니다.</>}
+        {draw > 0.5 ? <>이 가운데 <b>{won(draw)}</b>({pct((draw / flow.total) * 100)})을 금융자산에서 꺼냅니다.</> : keep > 0.5 ? <>{over > 0.5 ? '' : '소득으로 지출을 대고 '}<b>{won(keep)}</b>이 금융자산에 쌓입니다.</> : <>소득과 지출이 맞습니다.</>}
+        {over > 0.5 && <> 다만 세후 소득이 대출 상환과 저축의 합보다 <b>{won(over)}</b> 적은데도 시뮬레이션은 저축이 계획대로 쌓인다고 계산합니다(‘소득 초과 저축’). 소득·지출 입력을 확인하세요.</>}
       </p>
       <ul className="mt-2 list-disc space-y-1 pl-5 text-xs text-muted">
         <li>금액은 1년 전체 기준의 오늘 물가 금액입니다. 한 번 쓰는 목표·만기에 갚는 대출 원금·일시금 수령은 그 해에만 나타납니다.</li>
         <li>연금계좌에서 꺼낼 때 떼는 연금소득세·퇴직소득세는 여기 들어 있지 않습니다. ‘인출 계획 → 연금 세금 점검’에서 확인하세요.</li>
-        {!flow.retired && <li>은퇴 전 생활 지출은 세후 소득에서 대출 상환과 저축을 뺀 금액이라 보험료가 함께 들어 있습니다.</li>}
+        {!flow.retired && <li>은퇴 전 생활 지출은 세후 소득에서 대출 상환과 저축을 뺀 금액이라 보험료가 함께 들어 있습니다. 소득이 대출 상환과 저축보다 적은 해에는 0으로 둡니다.</li>}
+        <li>금융자산에서 꺼내는 돈과 저축·투자는 서로 상계해 그 해의 순증감만 한쪽에 표시합니다(시뮬레이션의 수익 전 잔액 변화와 같음).</li>
       </ul>
     </Card>
   );
