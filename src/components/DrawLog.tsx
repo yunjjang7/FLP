@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { downloadText, drawsFromCSV, drawsTemplateCSV, drawsToCSV } from '../db/csv';
+import { renameStaleDraws } from '../db/accountOps';
 import { importDraws, saveDraw } from '../db/db';
-import { drawYears, monthKey, OTHER_ACCOUNT, reviewDraws } from '../engine/drawLog';
+import { drawAliases, drawYears, monthKey, OTHER_ACCOUNT, reviewDraws, staleDraws } from '../engine/drawLog';
 import type { TaxResult } from '../engine/tax';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -66,7 +67,10 @@ function Cell({ value, plan, label, onSave }: { value: number; plan: number; lab
  * 연 누적이 계좌별 연금수령한도를 넘으면 빨갛게 표시.
  */
 export function DrawLog({ tax, firstMonths, hasSpouse }: { tax: TaxResult; firstMonths: number; hasSpouse: boolean }) {
-  const { draws } = useFlp();
+  const { draws, assets } = useFlp();
+  // 같은 계좌로 묶기 전에 줄 이름으로 적은 기록: 계좌 이름으로 옮겨야 계획·연말결산과 맞음
+  const stale = staleDraws(assets, draws);
+  const aliasText = [...new Set(stale.map((r) => `‘${r.account}’ → ‘${drawAliases(assets).get(r.account)}’`))].join(', ');
   const now = new Date();
   const nowYear = now.getFullYear();
   const nowMonth = now.getMonth() + 1;
@@ -120,6 +124,12 @@ export function DrawLog({ tax, firstMonths, hasSpouse }: { tax: TaxResult; first
         </div>
       </div>
       {msg && <p className="mt-2 text-xs text-muted">{msg}</p>}
+      {stale.length > 0 && (
+        <p role="alert" className="mt-2 rounded-lg bg-warn-soft px-2 py-1 text-xs text-warn">
+          같은 계좌로 묶인 줄의 이름으로 적은 기록 {stale.length}건이 있어 계획과 맞춰지지 않습니다({aliasText}).{' '}
+          <button type="button" className="font-semibold underline" onClick={() => void renameStaleDraws().then((n) => setMsg(`인출 기록 ${n}건을 계좌 이름으로 옮겼습니다(같은 달 기록은 금액을 더해 한 건으로).`))}>계좌 이름으로 옮기기</button>
+        </p>
+      )}
 
       <div className="mt-3 grid grid-cols-2 gap-3 lg:grid-cols-4">
         <div className="rounded-xl bg-sunken p-3">

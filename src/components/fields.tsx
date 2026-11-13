@@ -105,7 +105,7 @@ export function NumberField({ value, onChange, step = 1, unit, min, plain }: { v
 }
 
 /** 텍스트 입력: 입력 중엔 로컬 상태만 바꾸고 포커스를 벗어날 때 저장 */
-export function TextField({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
+export function TextField({ value, onChange, placeholder, list }: { value: string; onChange: (v: string) => void; placeholder?: string; list?: string }) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
   return (
@@ -113,6 +113,7 @@ export function TextField({ value, onChange, placeholder }: { value: string; onC
       className={base}
       value={text}
       placeholder={placeholder}
+      list={list}
       onChange={(e) => setText(e.target.value)}
       onBlur={() => text !== value && onChange(text)}
       onKeyDown={(e) => e.key === 'Enter' && (e.target as HTMLInputElement).blur()}

@@ -1,11 +1,12 @@
 import { db } from '../db/db';
 import { IRP_RISK_CAP } from '../engine/buckets';
 import { groupOf, RISK_PROFILES } from '../engine/portfolio';
-import { rebalance, REBALANCE_BAND, switchPlan, type RebalanceMode, type RebalanceMove, type RebalanceSwitch } from '../engine/rebalance';
+import { switchInDb } from '../db/accountOps';
+import { rebalance, REBALANCE_BAND, type RebalanceMode, type RebalanceMove, type RebalanceSwitch } from '../engine/rebalance';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import { Labeled, NumberField, SelectField } from './fields';
-import { JoinAccount } from './JoinAccount';
+import { JoinAccount, UndoBar } from './JoinAccount';
 
 const MODE_LABELS: Record<RebalanceMode, string> = {
   ratio: '바꿀 수 있는 금액에 비례',
@@ -20,20 +21,11 @@ import { Badge, Card } from './ui';
  */
 async function applySwitch(x: RebalanceSwitch, fromLabel: string, toLabel: string) {
   const ok = window.confirm(
-    `‘${x.name}’을 자산 탭에서 ${fromLabel}·${toLabel} 두 줄로 나눠 저장할까요?\n${fromLabel} ${won(x.keep)} + ${toLabel} ${won(x.move)}\n두 줄은 같은 계좌로 묶여 연금 세금·수령한도를 계좌 하나로 계산합니다.\n\n실제로 계좌에서 상품을 바꾼 뒤 누르세요. 되돌리려면 자산 탭에서 직접 고쳐야 합니다.`,
+    `‘${x.name}’을 자산 탭에서 ${fromLabel}·${toLabel} 두 줄로 나눠 저장할까요?\n${fromLabel} ${won(x.keep)} + ${toLabel} ${won(x.move)}\n두 줄은 같은 계좌로 묶여 연금 세금·수령한도를 계좌 하나로 계산합니다.\n\n실제로 계좌에서 상품을 바꾼 뒤 누르세요. 저장한 바로 뒤에는 ‘되돌리기’로 되돌릴 수 있습니다.`,
   );
   if (!ok) return;
   try {
-    const done = await db.transaction('rw', db.assets, async () => {
-      const all = await db.assets.toArray();
-      const a = x.id !== undefined ? all.find((v) => v.id === x.id) : undefined;
-      if (!a || a.type !== 'pension' || Math.abs(a.amount - x.amount) > 0.5 || (a.nature === 'invest') !== (fromLabel === '투자형')) return false;
-      const plan = switchPlan(a, x.move, all);
-      for (const v of plan.put) await db.assets.put(v);
-      for (const v of plan.add) await db.assets.add(v);
-      for (const id of plan.remove) await db.assets.delete(id);
-      return true;
-    });
+    const done = await switchInDb(x.id, x.amount, fromLabel === '투자형', x.move, x.name);
     if (!done) window.alert('자산 탭의 그 계좌가 계산할 때와 달라 저장하지 않았습니다. 화면을 다시 확인하세요.');
   } catch (e) {
     window.alert(`저장하지 못했습니다: ${e instanceof Error ? e.message : e}`);
@@ -186,6 +178,8 @@ export function RebalanceCard() {
       ) : (
         <p className="mt-3 rounded-lg bg-sunken px-3 py-2 text-sm">목표와의 차이가 ±{REBALANCE_BAND}%p 안이라 지금은 사고팔 필요가 없습니다.</p>
       )}
+
+      <UndoBar className="mt-4" />
 
       {restGroups.length > 0 && (
         <div className="mt-4">

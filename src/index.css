@@ -123,6 +123,11 @@ select {
   animation: setup-target 2.6s ease-out;
 }
 section.setup-target { border-radius: 1rem; outline-offset: 2px; }
+/* 바로가기로 스크롤할 때 강조 테두리가 가장자리에 붙지 않게, 휴대폰에서는 위 머리글·아래 메뉴에 가리지 않게 */
+[data-card], [data-field] { scroll-margin: 24px 0; }
+@media (max-width: 767px) {
+  [data-card], [data-field] { scroll-margin: 76px 0 88px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .setup-target { animation: none; outline-color: var(--c-brand); }
 }

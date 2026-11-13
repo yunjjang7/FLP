@@ -39,11 +39,16 @@ export function jumpToTarget(card: string | null, field: string | null, maxTries
       if (++tries < maxTries) timer = window.setTimeout(find, 100);
       return;
     }
-    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-    // 부드러운 스크롤이 막히거나(아래 표가 계산되며 길이가 바뀌는 경우 등) 덜 갔으면 바로 이동
+    // 화면 높이의 60%가 넘는 카드는 가운데에 두면 제목이 잘리므로 위쪽에 맞춤(여백은 CSS scroll-margin)
+    const tall = el.getBoundingClientRect().height > window.innerHeight * 0.6;
+    const block: ScrollLogicalPosition = tall ? 'start' : 'center';
+    el.scrollIntoView({ block, behavior: 'smooth' });
+    // 부드러운 스크롤이 막혔거나, 위쪽 내용이 늦게 그려져 위치가 밀렸으면 바로 다시 맞춤
     fix = window.setTimeout(() => {
       const r = el.getBoundingClientRect();
-      if (r.bottom < 0 || r.top > window.innerHeight) el.scrollIntoView({ block: 'center' });
+      const top = parseFloat(getComputedStyle(el).scrollMarginTop) || 0;
+      const off = r.top < top - 8 || (tall ? r.top > window.innerHeight / 2 : r.bottom > window.innerHeight);
+      if (off) el.scrollIntoView({ block });
     }, 900);
     el.classList.remove('setup-target');
     void el.offsetWidth; // 같은 칸을 다시 눌러도 강조가 다시 보이게

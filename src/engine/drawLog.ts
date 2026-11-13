@@ -147,8 +147,11 @@ export function carryOverPlan(assets: Asset[], balances: AccountBalance[], recor
     const retire = Math.max(0, a.retirePart ?? 0);
     // 인출 기록은 계좌 이름으로: 같은 계좌로 묶인 줄(리밸런싱으로 나눈 줄)은 계좌 전체 인출을 줄마다 재원 비율로 나눠 줄임
     const acct = accountName(a);
-    const drawn = pension ? records.filter((r) => r.account === acct && r.month.startsWith(`${year}-`) && r.amount > 0).reduce((s, r) => s + r.amount, 0) : 0;
     const rows = pension && groupOf(a) ? assets.filter((x) => groupOf(x) === groupOf(a)) : [a];
+    // 묶기 전에 줄 이름으로 적은 기록(아직 계좌 이름으로 옮기지 않은 것)도 그 계좌 인출로 셈
+    const alias = drawAliases(assets);
+    const mine = (name: string) => name === acct || (alias.get(name) === acct && rows.some((x) => x.name === name));
+    const drawn = pension ? records.filter((r) => mine(r.account) && r.month.startsWith(`${year}-`) && r.amount > 0).reduce((s, r) => s + r.amount, 0) : 0;
     const freeAll = rows.reduce((s, x) => s + Math.max(0, x.taxFree ?? 0), 0);
     const retireAll = rows.reduce((s, x) => s + Math.max(0, x.retirePart ?? 0), 0);
     const freeCut = Math.min(freeAll, drawn); // 법정 순서: 과세제외 → 퇴직금 재원
@@ -213,3 +216,49 @@ export function undoPatch(r: UndoRow): Partial<Asset> {
 
 /** 기록이 있는 연도(오름차순) */
 export const drawYears = (records: Draw[]) => [...new Set(records.map((r) => Number(r.month.slice(0, 4))).filter((y) => Number.isFinite(y) && y > 0))].sort((a, b) => a - b);
+
+/**
+ * 같은 계좌로 묶인 줄의 이름(계좌 이름과 다른 것) → 계좌 이름. 묶기 전에 줄 이름으로 적은 인출 기록을 계좌 이름으로 옮길 때 씀.
+ * 같은 이름을 묶이지 않은 다른 자산이 쓰고 있으면 그 이름은 옮기지 않음(다른 계좌의 기록일 수 있음).
+ */
+export function drawAliases(assets: Asset[]): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const a of assets) {
+    const g = groupOf(a);
+    if (!g || !a.name || a.name === g) continue;
+    if (assets.some((x) => x.name === a.name && groupOf(x) !== g)) continue;
+    out.set(a.name, g);
+  }
+  return out;
+}
+
+/** 계좌 이름으로 옮겨야 할 인출 기록(묶인 줄 이름으로 적힌 기록) */
+export const staleDraws = (assets: Asset[], records: Draw[]) => {
+  const alias = drawAliases(assets);
+  return records.filter((r) => alias.has(r.account));
+};
+
+/**
+ * 인출 기록 이름 옮기기: alias 의 이름으로 적힌 기록을 계좌 이름으로 바꿈. 같은 달에 계좌 이름 기록이 이미 있으면
+ * 금액을 더해 한 건으로 합치고(메모는 이어 붙임) 옮긴 기록은 지움. put = 고칠 기록, remove = 지울 기록 id.
+ */
+export function drawRenamePlan(records: Draw[], alias: Map<string, string>): { put: Draw[]; remove: number[] } {
+  const put = new Map<number | string, Draw>();
+  const remove: number[] = [];
+  const target = (month: string, account: string) =>
+    [...put.values()].find((r) => r.month === month && r.account === account) ?? records.find((r) => r.month === month && r.account === account && !alias.has(r.account));
+  records.forEach((r, i) => {
+    const to = alias.get(r.account);
+    if (!to) return;
+    const hit = target(r.month, to);
+    if (hit) {
+      const note = [hit.note, r.note].filter(Boolean).join(' / ');
+      const merged: Draw = { ...hit, amount: Math.round((hit.amount + r.amount) * 10) / 10, ...(note ? { note } : {}) };
+      put.set(hit.id ?? `n${records.indexOf(hit)}`, merged);
+      if (r.id !== undefined) remove.push(r.id);
+      return;
+    }
+    put.set(r.id ?? `n${i}`, { ...r, account: to });
+  });
+  return { put: [...put.values()], remove };
+}

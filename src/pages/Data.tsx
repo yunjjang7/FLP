@@ -4,8 +4,9 @@ import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
 import { INSURED_WHO, TABLES, type FieldDef } from '../db/schema';
 import { housePension, HP_LOAN, HP_MARKET_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentDuplicates, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
-import { JoinAccount } from '../components/JoinAccount';
-import { ASSET_TYPES, insuredBirthYear, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
+import { JoinAccount, UndoBar } from '../components/JoinAccount';
+import { alignAccount, setAccountKey, setGroupInDb } from '../db/accountOps';
+import { ACCOUNT_KEY_LABEL, ACCOUNT_KEYS, accountMismatch, ASSET_TYPES, groupNames, groupNotes, groupOf, insuredBirthYear, type AccountKey, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, PageHeader } from '../components/ui';
 import { jumpToTarget } from '../components/SetupLink';
@@ -46,7 +47,10 @@ function useSetupTarget(setTab: (t: Tab) => void) {
     setTab(t);
     const card = sp.get('card');
     const field = sp.get('field');
-    if (!card && !field) return;
+    if (!card && !field) {
+      window.scrollTo({ top: 0 }); // 탭만 여는 바로가기: 앞 화면의 스크롤 위치가 남지 않게 맨 위로
+      return;
+    }
     return jumpToTarget(card, field);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
@@ -688,6 +692,10 @@ function ListEditor({ table }: { table: ListTable }) {
       // 공동명의는 부동산만: 다른 유형으로 바꾸면 본인 명의로
       else if ((row as Asset).owner === 'joint') patch.owner = 'self';
     }
+    // 연금계좌 ‘같은 계좌’와 계좌 속성(명의·연금수령 1년차 등)은 묶인 줄과 함께 맞춤
+    const pen = table === 'assets' && (row as Asset).type === 'pension';
+    if (pen && key === 'group') return void setGroupInDb(row.id!, v as string | undefined);
+    if (pen && groupOf(row as Asset) && (ACCOUNT_KEYS as readonly string[]).includes(key)) return void setAccountKey(row.id!, key as AccountKey, v);
     tbl.update(row.id!, patch);
   };
   /** 부동산은 용도·성격·변동성 대신 부동산 용도와 시세 상승률 */
@@ -716,6 +724,13 @@ function ListEditor({ table }: { table: ListTable }) {
         </div>
         <Button onClick={() => tbl.add({ ...example, name: `새 ${label}` })}>+ {label} 추가</Button>
       </div>
+      {table === 'assets' && <UndoBar />}
+      {table === 'assets' && (
+        // ‘같은 계좌’ 입력칸에서 이미 쓰는 계좌 이름을 고르는 목록
+        <datalist id="flp-account-groups">
+          {groupNames(rows as unknown as Asset[]).map((n) => <option key={n} value={n} />)}
+        </datalist>
+      )}
       {table === 'cashflows' && <CashflowGuide />}
       {table === 'liabilities' && (
         <Guide
@@ -824,6 +839,39 @@ function ListEditor({ table }: { table: ListTable }) {
   );
 }
 
+/**
+ * ‘같은 계좌’ 점검 안내: 이 이름을 쓰는 줄이 하나뿐, 띄어쓰기·대소문자만 다른 계좌 이름, 묶인 줄끼리 계좌 속성이 다름.
+ * 이미 쓰는 계좌 이름은 입력칸 목록(datalist)으로 고를 수 있음.
+ */
+function GroupNotes({ a, assets, onChange }: { a: Asset; assets: Asset[]; onChange: (key: keyof Asset, v: unknown) => void }) {
+  const g = groupOf(a);
+  const { lone, near } = groupNotes(a, assets);
+  const diff = accountMismatch(a, assets);
+  const link = 'font-semibold text-brand hover:underline';
+  return (
+    <>
+      {near && (
+        <p role="alert" className="mt-2 rounded-lg bg-warn-soft px-2 py-1 text-xs text-warn">
+          띄어쓰기·대소문자만 다른 ‘{near}’ 계좌가 있어 지금은 다른 계좌로 계산합니다.{' '}
+          <button type="button" className={link} onClick={() => onChange('group', near)}>‘{near}’로 맞추기</button>
+        </p>
+      )}
+      {!near && lone && (
+        <p className="mt-2 text-xs text-muted">
+          ‘{g}’ 이름을 쓰는 줄이 이 줄 하나뿐이라 혼자 한 계좌로 계산합니다. 같은 계좌의 다른 줄에도 이 이름을 넣거나{' '}
+          <button type="button" className={link} onClick={() => onChange('group', undefined)}>비우세요</button>.
+        </p>
+      )}
+      {diff.length > 0 && (
+        <p role="alert" className="mt-2 rounded-lg bg-warn-soft px-2 py-1 text-xs text-warn">
+          ‘{g}’ 계좌의 줄끼리 값이 다른 항목이 있습니다({diff.map((k) => ACCOUNT_KEY_LABEL[k]).join('·')}). 계산은 자산 탭에서 먼저 나오는 줄의 값을 씁니다.{' '}
+          <button type="button" className={link} onClick={() => void alignAccount(a)}>먼저 나오는 줄 값으로 맞추기</button>
+        </p>
+      )}
+    </>
+  );
+}
+
 /** 자산 추가 설정: 명의, 수령 전 묶인 자산(노란우산 등), 연금계좌 재원 구성 */
 function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v: unknown) => void }) {
   const { profile: p, summary, assets } = useFlp();
@@ -878,11 +926,12 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
               <NumberField value={a.compareOrder ?? 0} min={0} onChange={(v) => onChange('compareOrder', v)} />
             </Labeled>
             <Labeled label="같은 계좌" hint="이름이 같은 줄은 한 계좌로 계산 · 비우면 이 줄이 한 계좌">
-              <TextField value={a.group ?? ''} placeholder="예: 퇴직 IRP" onChange={(v) => onChange('group', v.trim() ? v : undefined)} />
+              <TextField value={a.group ?? ''} placeholder="예: 퇴직 IRP" list="flp-account-groups" onChange={(v) => onChange('group', v.trim() ? v : undefined)} />
             </Labeled>
           </>
         )}
       </div>
+      {pension && <GroupNotes a={a} assets={assets} onChange={onChange} />}
       {pension && <JoinAccount a={a} assets={assets} className="mt-2" />}
       {pension && (
         <p className="mt-2 text-xs text-muted">

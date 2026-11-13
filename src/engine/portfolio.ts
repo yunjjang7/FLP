@@ -39,6 +39,57 @@ export const groupOf = (a: Asset) => (a.type === 'pension' ? a.group?.trim() || 
 /** 연금계좌 줄이 속한 계좌 이름: 같은 계좌로 묶인 줄(group)은 그 이름, 아니면 자기 이름 */
 export const accountName = (a: Asset) => groupOf(a) || a.name;
 
+/** 같은 계좌로 묶인 줄끼리 같아야 하는 계좌 속성(한 줄을 고치면 묶인 줄도 함께 고침) */
+export const ACCOUNT_KEYS = ['owner', 'pensionYear1', 'drawStartYear', 'drawOrder', 'compareOrder', 'lockYear', 'lockTax'] as const;
+export type AccountKey = (typeof ACCOUNT_KEYS)[number];
+export const ACCOUNT_KEY_LABEL: Record<AccountKey, string> = {
+  owner: '명의',
+  pensionYear1: '연금수령 1년차 연도',
+  drawStartYear: '인출 시작 연도',
+  drawOrder: '꺼내는 순서',
+  compareOrder: '비교 기준 순서',
+  lockYear: '수령 연도',
+  lockTax: '수령 시 세율',
+};
+const keyValue = (a: Asset, k: AccountKey) => (k === 'owner' ? a.owner ?? 'self' : a[k] ?? 0);
+const sameRow = (a: Asset, b: Asset) => a === b || (a.id !== undefined && a.id === b.id);
+
+/** 연금계좌 a 와 같은 계좌로 묶인 줄(a 포함, 자산 탭 순서). 묶이지 않았으면 [a] */
+export const groupRows = (a: Asset, assets: Asset[]) => (groupOf(a) ? assets.filter((x) => groupOf(x) === groupOf(a)) : [a]);
+
+/**
+ * 묶인 줄끼리 다른 계좌 속성(계산은 첫 줄 값을 씀). a 가 첫 줄이면 다른 줄 가운데 하나라도 다른 항목,
+ * 아니면 첫 줄과 다른 항목. 묶이지 않았으면 [].
+ */
+export function accountMismatch(a: Asset, assets: Asset[]): AccountKey[] {
+  const rows = groupRows(a, assets);
+  if (rows.length < 2) return [];
+  const others = sameRow(rows[0], a) ? rows.filter((x) => !sameRow(x, a)) : [rows[0]];
+  return ACCOUNT_KEYS.filter((k) => others.some((x) => keyValue(x, k) !== keyValue(a, k)));
+}
+
+/** 계좌 속성만 뽑음(묶을 때·맞출 때 복사할 값). 없는 값은 undefined 로 지움 */
+export function accountAttrs(from: Asset): Pick<Asset, AccountKey> {
+  const out: Partial<Record<AccountKey, unknown>> = {};
+  for (const k of ACCOUNT_KEYS) out[k] = from[k];
+  return out as Pick<Asset, AccountKey>;
+}
+
+/** 같은 계좌 이름 비교용: 띄어쓰기·대소문자 무시 */
+const groupKey = (g: string) => g.replace(/\s+/g, '').toLowerCase();
+
+/** ‘같은 계좌’ 입력 점검: lone = 이 이름을 쓰는 줄이 이 줄 하나뿐, near = 띄어쓰기·대소문자만 다른 다른 계좌 이름 */
+export function groupNotes(a: Asset, assets: Asset[]): { lone: boolean; near?: string } {
+  const g = groupOf(a);
+  if (!g) return { lone: false };
+  const others = assets.filter((x) => !sameRow(x, a));
+  const near = others.map(groupOf).find((x) => x && x !== g && groupKey(x) === groupKey(g));
+  return { lone: !others.some((x) => groupOf(x) === g), ...(near ? { near } : {}) };
+}
+
+/** 이미 쓰는 같은 계좌 이름(입력칸 목록용, 중복 없이) */
+export const groupNames = (assets: Asset[]) => [...new Set(assets.map(groupOf).filter(Boolean))];
+
 /**
  * 같은 계좌(group)로 묶인 연금계좌 줄을 계좌 하나로 합침(연금 세금·수령한도·인출 순서·이정표는 계좌 단위).
  * 합친 줄은 처음 나온 줄 자리에 두고, 이름 = 계좌 이름, 금액·과세제외·퇴직금 재원 = 합계,
