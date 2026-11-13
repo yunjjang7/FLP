@@ -14,7 +14,7 @@ import type { Level, Profile } from '../types';
 
 export default function Prescribe() {
   const d = useFlp();
-  if (!d.hasData) return <><PageHeader title="처방" /><EmptyState /></>;
+  if (!d.hasData) return <><PageHeader title="맞춤 처방" /><EmptyState /></>;
   // 데이터가 바뀌면(저축 여력·수익률·은퇴 나이·생활비) What-if 슬라이더 시작값도 새로 맞춤
   const s = d.summary;
   return <PrescribeInner key={`${Math.round(s.savings)}|${s.portfolioReturn.toFixed(1)}|${d.profile.retireAge}|${d.profile.retireMonthlyExpense}`} />;
@@ -61,7 +61,7 @@ function PrescribeInner() {
 
   return (
     <>
-      <PageHeader title="처방" desc="진단 결과를 바탕으로 행동 지침을 제시하고, 계획을 바꿨을 때의 결과를 바로 확인합니다." />
+      <PageHeader title="맞춤 처방" desc="진단 결과를 바탕으로 행동 지침을 제시하고, 계획을 바꿨을 때의 결과를 바로 확인합니다." />
 
       <Card title="처방전" action={<span className="text-xs text-muted">목표 성공확률 {p.criteria.successTarget}% 기준</span>}>
         <ul className="divide-y divide-line">
@@ -111,8 +111,8 @@ function PrescribeInner() {
 
       <Card title="재무목표별 필요 적립액" className="mt-4">
         {d.goalPlans.length === 0 ? (
-          <p className="py-4 text-center text-sm text-muted">
-            {skips.length === 0 ? '등록된 재무목표가 없습니다. ‘데이터·설정 → 재무목표’에서 추가하세요.' : '적립액을 계산할 목표(앞으로 쓸 목적자금·반복 지출)가 없습니다. 아래 목표는 이 표에서 빠집니다.'}
+          <p className="py-4 text-sm text-muted">
+            {skips.length === 0 ? '등록된 재무목표가 없습니다. ‘기본 정보 → 재무목표’에서 추가하세요.' : '적립액을 계산할 목표(앞으로 쓸 목적자금·반복 지출)가 없습니다. 아래 목표는 이 표에서 빠집니다.'}
           </p>
         ) : (
           <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
@@ -215,7 +215,7 @@ function PrescribeInner() {
                 <li key={goal.id ?? i}><b className="font-medium">{goal.name}</b> <span className="text-muted">· {reason}</span></li>
               ))}
             </ul>
-            {skips.some((x) => x.goal.category !== 'retirement' && !(x.goal.targetAge >= s.age) && !((x.goal.endAge ?? 0) > x.goal.targetAge)) && <div className="mt-1 text-muted">지난 목표·나이가 빈 목표는 노후 계산에도 들어가지 않습니다. 아직 쓸 돈이면 ‘데이터·설정 → 재무목표’에서 목표 나이를 넣어 주세요.</div>}
+            {skips.some((x) => x.goal.category !== 'retirement' && !(x.goal.targetAge >= s.age) && !((x.goal.endAge ?? 0) > x.goal.targetAge)) && <div className="mt-1 text-muted">지난 목표·나이가 빈 목표는 노후 계산에도 들어가지 않습니다. 아직 쓸 돈이면 ‘기본 정보 → 재무목표’에서 목표 나이를 넣어 주세요.</div>}
           </div>
         )}
       </Card>

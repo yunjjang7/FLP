@@ -85,7 +85,7 @@ export function bulletChecks(liabilities: Liability[], age: number): RiskCheck[]
     .filter((l) => bulletNoMaturity(l, age))
     .map((l) => ({
       key: `bullet-${l.id ?? l.name}`, label: `${l.name} 만기 나이 입력 필요`, value: `원금 ${won(l.balance)}`, level: 'danger',
-      detail: '만기일시 상환인데 상환 종료 나이가 비어 있어 원금 상환이 노후 계산에 빠져 있습니다. 데이터·설정 → 부채에서 만기 나이를 넣으세요.',
+      detail: '만기일시 상환인데 상환 종료 나이가 비어 있어 원금 상환이 노후 계산에 빠져 있습니다. 기본 정보 → 부채에서 만기 나이를 넣으세요.',
     }));
 }
 

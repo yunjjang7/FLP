@@ -221,7 +221,8 @@ describe('연금계좌 두 줄로 나누기(splitAccount)', () => {
   it('남는 줄은 원래 자산 그대로 금액만 줄고, 새 줄은 반대 성격 · 금액 = move · id 없음', () => {
     const [keep, add, ...more] = splitAccount(irp, 3000);
     expect(more).toEqual([]);
-    expect(keep).toEqual({ ...irp, amount: 7000, taxFree: 700, retirePart: 2100.7 });
+    expect(keep).toEqual({ ...irp, amount: 7000, taxFree: 700, retirePart: 2100.7, group: '퇴직 IRP' });
+    expect(add.group).toBe('퇴직 IRP'); // 두 줄은 같은 계좌로 묶임
     expect(add).not.toHaveProperty('id');
     expect(add).toMatchObject({ amount: 3000, nature: 'safe', name: '퇴직 IRP (안전형)' });
     expect(keep.amount + add.amount).toBe(irp.amount);

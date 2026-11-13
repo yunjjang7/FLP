@@ -1,7 +1,7 @@
 import type { Asset, Nature } from '../types';
 import { IRP_RISK_CAP, isRiskCapped } from './buckets';
 import { isLocked } from './goals';
-import { ASSET_TYPES, isFinancial, NATURE_LABEL } from './portfolio';
+import { accountName, ASSET_TYPES, groupOf, isFinancial, NATURE_LABEL } from './portfolio';
 
 /** 목표와 이만큼(%p) 안쪽이면 그대로 둠: 작은 차이로 사고팔지 않게 */
 export const REBALANCE_BAND = 5;
@@ -69,9 +69,18 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
   const toInvest = want < 0;
   const movable = fin.filter((a) => !isLocked(a, nowYear));
   const from = movable.filter((a) => (a.nature === 'invest') !== toInvest);
-  // 계좌 안에서 바꿀 수 있는 금액: 퇴직연금 계좌의 안전형을 투자형으로 바꿀 때만 70% 한도
-  const hits = (a: Asset) => toInvest && a.type === 'pension' && isRiskCapped(a.name);
-  const limit = (a: Asset) => (hits(a) ? a.amount * IRP_RISK_CAP : a.amount);
+  // 계좌 안에서 바꿀 수 있는 금액: 퇴직연금 계좌의 안전형을 투자형으로 바꿀 때만 70% 한도.
+  // 한도는 계좌 단위: 같은 계좌로 묶인 줄(리밸런싱으로 나눈 줄)은 합계의 70%에서 이미 담은 투자형을 뺀 만큼을 안전형 줄에 금액 비례로 나눔
+  const hits = (a: Asset) => toInvest && a.type === 'pension' && isRiskCapped(accountName(a));
+  const sameAcct = (a: Asset) => (groupOf(a) ? fin.filter((x) => groupOf(x) === groupOf(a)) : [a]);
+  const limit = (a: Asset) => {
+    if (!hits(a)) return a.amount;
+    const rows = sameAcct(a);
+    const all = rows.reduce((s, x) => s + x.amount, 0);
+    const inv = rows.filter((x) => x.nature === 'invest').reduce((s, x) => s + x.amount, 0);
+    const safe = rows.filter((x) => x.nature !== 'invest').reduce((s, x) => s + x.amount, 0);
+    return safe > 0 ? (Math.max(0, all * IRP_RISK_CAP - inv) * a.amount) / safe : 0;
+  };
   const room = from.reduce((s, a) => s + limit(a), 0);
   const size = needed ? Math.min(Math.abs(want), room) : 0;
   // 연금계좌부터: 연금계좌 몫(penSize)을 연금계좌끼리, 나머지(genSize)를 일반계좌끼리 각각 limit 비례로
@@ -164,10 +173,11 @@ export function splitAccount(asset: Asset, move: number, assets: Asset[] = []): 
   const { ret, vol } = natureReturn(assets, to);
   if (m >= asset.amount) return [{ ...asset, nature: to, expectedReturn: ret, volatility: vol }];
   const share = m / asset.amount;
-  const keep: Asset = { ...asset, amount: asset.amount - m };
+  const group = accountName(asset) || '연금계좌';
+  const keep: Asset = { ...asset, amount: asset.amount - m, group };
   const { id: _id, ...rest } = asset;
   void _id;
-  const add: Asset = { ...rest, name: `${asset.name || '연금계좌'} (${NATURE_LABEL[to]})`, amount: m, nature: to, expectedReturn: ret, volatility: vol };
+  const add: Asset = { ...rest, name: `${asset.name || '연금계좌'} (${NATURE_LABEL[to]})`, amount: m, nature: to, expectedReturn: ret, volatility: vol, group };
   for (const key of ['taxFree', 'retirePart'] as const) {
     const v = asset[key];
     if (v === undefined) continue;
@@ -176,4 +186,40 @@ export function splitAccount(asset: Asset, move: number, assets: Asset[] = []): 
     keep[key] = round1(v - part);
   }
   return [keep, add];
+}
+
+/** ‘자산 탭에 반영’으로 저장할 내용: put 은 고칠 줄(id 있음), add 는 새 줄, remove 는 지울 줄 id */
+export interface SwitchPlan {
+  put: Asset[];
+  add: Asset[];
+  remove: number[];
+}
+
+/**
+ * 연금계좌 줄 asset 에서 move 만큼을 반대 성격으로 바꿀 때 자산 탭에 저장할 내용.
+ * 같은 계좌(group)에 반대 성격 줄이 이미 있으면 새 줄을 만들지 않고 그 줄로 옮김(금액·과세제외·퇴직금 재원을 금액 비례로),
+ * 다 옮기면 원래 줄은 지움. 반대 성격 줄이 없으면 splitAccount 로 두 줄로 나눔.
+ */
+export function switchPlan(asset: Asset, move: number, assets: Asset[] = []): SwitchPlan {
+  const to: Nature = asset.nature === 'invest' ? 'safe' : 'invest';
+  const m = Math.round(move);
+  const g = groupOf(asset);
+  const sib = g && m > 0 && asset.amount > 0 ? assets.find((x) => x !== asset && x.id !== undefined && x.id !== asset.id && groupOf(x) === g && x.nature === to) : undefined;
+  if (!sib) {
+    const rows = splitAccount(asset, move, assets);
+    return { put: rows.filter((r) => r.id !== undefined), add: rows.filter((r) => r.id === undefined), remove: [] };
+  }
+  const moved = Math.min(m, asset.amount);
+  const share = moved / asset.amount;
+  const next: Asset = { ...sib, amount: sib.amount + moved };
+  const keep: Asset = { ...asset, amount: asset.amount - moved };
+  for (const key of ['taxFree', 'retirePart'] as const) {
+    const v = asset[key];
+    if (v === undefined) continue;
+    const part = moved >= asset.amount ? v : round1(v * share);
+    next[key] = round1((sib[key] ?? 0) + part);
+    keep[key] = round1(v - part);
+  }
+  if (moved >= asset.amount) return { put: [next], add: [], remove: asset.id !== undefined ? [asset.id] : [] };
+  return { put: [keep, next], add: [], remove: [] };
 }

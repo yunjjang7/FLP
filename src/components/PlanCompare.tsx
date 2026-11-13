@@ -91,7 +91,7 @@ export function PlanCompare({ draft }: { draft?: Partial<Profile> }) {
       {draft && !full && <p className="mb-3 text-xs text-muted">바꾼 계획으로 저장하면 What-if 의 은퇴 나이·{draft.fixedDraw !== undefined ? '월 고정 인출액' : '생활비'}만 들어갑니다. 저축액·수익률 슬라이더는 실제 데이터 값이 아니라 저장되지 않습니다.</p>}
 
       {saved.length === 0 ? (
-        <p className="py-4 text-center text-sm text-muted">저장한 계획이 없습니다. 지금 계획에 이름을 붙여 저장해 두고, What-if 로 은퇴 나이·생활비를 바꾼 안도 저장하면 성공확률·남는 자산을 나란히 비교할 수 있습니다. 저장한 계획은 언제든 다시 불러올 수 있습니다.</p>
+        <p className="py-4 text-sm text-muted">저장한 계획이 없습니다. 지금 계획에 이름을 붙여 저장해 두고, What-if 로 은퇴 나이·생활비를 바꾼 안도 저장하면 성공확률·남는 자산을 나란히 비교할 수 있습니다. 저장한 계획은 언제든 다시 불러올 수 있습니다.</p>
       ) : (
         <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
           <table className="w-full text-sm" style={{ minWidth: 160 + 140 * (saved.length + 1) }}>

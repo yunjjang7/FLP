@@ -33,6 +33,61 @@ const sum = (xs: number[]) => xs.reduce((a, b) => a + b, 0);
 
 export const isFinancial = (a: Asset) => a.type !== 'realestate';
 
+/** 같은 계좌로 묶인 연금계좌 줄의 계좌 이름(묶이지 않았으면 '') */
+export const groupOf = (a: Asset) => (a.type === 'pension' ? a.group?.trim() || '' : '');
+
+/** 연금계좌 줄이 속한 계좌 이름: 같은 계좌로 묶인 줄(group)은 그 이름, 아니면 자기 이름 */
+export const accountName = (a: Asset) => groupOf(a) || a.name;
+
+/**
+ * 같은 계좌(group)로 묶인 연금계좌 줄을 계좌 하나로 합침(연금 세금·수령한도·인출 순서·이정표는 계좌 단위).
+ * 합친 줄은 처음 나온 줄 자리에 두고, 이름 = 계좌 이름, 금액·과세제외·퇴직금 재원 = 합계,
+ * 기대수익률·변동성 = 금액가중 평균, 성격 = 금액이 많은 쪽, 꺼내는 순서·비교 순서 = 줄 가운데 0보다 큰 가장 작은 값.
+ * 명의·연금수령 1년차·인출 시작 연도 등 나머지 계좌 속성은 처음 줄 값. 묶이지 않은 줄은 그대로.
+ */
+export function mergeAccounts(assets: Asset[]): Asset[] {
+  const groups = new Map<string, Asset[]>();
+  for (const a of assets) {
+    const g = groupOf(a);
+    if (g) groups.set(g, [...(groups.get(g) ?? []), a]);
+  }
+  const out: Asset[] = [];
+  for (const a of assets) {
+    const g = groupOf(a);
+    if (!g) {
+      out.push(a);
+      continue;
+    }
+    const rows = groups.get(g)!;
+    if (rows[0] !== a) continue;
+    if (rows.length === 1) {
+      out.push({ ...a, name: g });
+      continue;
+    }
+    const amount = sum(rows.map((r) => r.amount));
+    const avg = (f: (r: Asset) => number) => (amount > 0 ? sum(rows.map((r) => r.amount * (f(r) || 0))) / amount : f(a));
+    const invest = sum(rows.filter((r) => r.nature === 'invest').map((r) => r.amount));
+    const minPos = (key: 'drawOrder' | 'compareOrder') => {
+      const v = rows.map((r) => r[key] ?? 0).filter((n) => n > 0);
+      return v.length ? { [key]: Math.min(...v) } : {};
+    };
+    const fund = (key: 'taxFree' | 'retirePart') => (rows.some((r) => r[key] !== undefined) ? { [key]: sum(rows.map((r) => r[key] ?? 0)) } : {});
+    out.push({
+      ...a,
+      name: g,
+      amount,
+      expectedReturn: avg((r) => r.expectedReturn),
+      volatility: avg((r) => r.volatility),
+      nature: invest * 2 > amount ? 'invest' : invest * 2 < amount ? 'safe' : a.nature,
+      ...fund('taxFree'),
+      ...fund('retirePart'),
+      ...minPos('drawOrder'),
+      ...minPos('compareOrder'),
+    });
+  }
+  return out;
+}
+
 /**
  * 기대수익률(%)에 맞는 변동성 권장 범위(%). 무위험 3%를 넘는 초과수익 ÷ 샤프비율 0.4~0.2로 잡음
  * (예: 채권 4% → 2.5~5, 주식·채권 반반 6% → 7.5~15, 주식 8% → 12.5~25). 0.5% 단위.

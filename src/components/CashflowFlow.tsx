@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useLayoutEffect, useMemo, useState } from 'react';
 import { yearFlow, type FlowItem } from '../engine/flow';
 import { spouseWork } from '../engine/goals';
 import { pct, won } from '../lib/format';
@@ -18,28 +18,98 @@ const COLOR: Record<FlowItem['tone'], string> = {
   save: 'var(--c-good)',
 };
 
-const W = 560;
 const BAR = 12;
-const LX = 150; // 왼쪽 막대
-const CX = (W - BAR) / 2; // 가운데 막대
-const RX = W - 150 - BAR; // 오른쪽 막대
 const GAP = 10;
-const ROW = 34; // 한 줄 최소 높이(이름·금액 두 줄이 겹치지 않게)
+const TOP = 20; // 위쪽 합계 글자(연 ○○원) 자리
+const NAME = 12; // 이름 글자 크기(px)
+const AMT = 11; // 금액 글자 크기(px)
+const LINE = { name: 15, amt: 14 }; // 줄 높이
 
-/** 한쪽 막대들의 세로 위치: 금액에 비례하되 줄마다 최소 높이를 둠 */
-function layout(items: FlowItem[], scale: number) {
+let ctx: CanvasRenderingContext2D | null | undefined;
+/** 글자 폭(px): 화면 글꼴로 재고, 잴 수 없으면 한글 1em · 그 밖 0.6em 으로 어림 */
+function textWidth(s: string, size: number) {
+  if (ctx === undefined) ctx = typeof document !== 'undefined' ? document.createElement('canvas').getContext('2d') : null;
+  if (ctx) {
+    ctx.font = `${size}px ${getComputedStyle(document.body).fontFamily}`;
+    return ctx.measureText(s).width;
+  }
+  return [...s].reduce((w, c) => w + (/[ㄱ-힝]/.test(c) ? size : size * 0.6), 0);
+}
+
+/** 이름을 칸 폭에 맞게 여러 줄로 나눔(띄어쓰기·여는 괄호 앞에서 먼저 끊고, 한 낱말이 칸보다 길면 글자 단위로). 줄이지 않음 */
+function wrapText(s: string, max: number, measure: (t: string) => number): string[] {
+  const out: string[] = [];
+  let line = '';
+  // 낱말 앞 띄어쓰기는 붙여 둠: 같은 줄에 이어 쓸 때만 살리고 새 줄 첫머리에서는 뺌
+  const push = (piece: string) => {
+    const word = piece.trimStart();
+    const next = line ? line + piece : word;
+    if (measure(next) <= max) { line = next; return; }
+    if (line) { out.push(line); line = ''; }
+    if (measure(word) <= max) { line = word; return; }
+    for (const c of word) {
+      if (line && measure(line + c) > max) { out.push(line); line = ''; }
+      line += c;
+    }
+  };
+  for (const w of s.trim().match(/\s*\(?[^\s(]+|\s*\(/g) ?? []) push(w);
+  if (line) out.push(line);
+  return out.length ? out : [''];
+}
+
+/** 막대 옆 글: 이름(여러 줄) + 금액·비중(칸이 좁으면 두 줄) */
+function labelLines(x: FlowItem, total: number, width: number) {
+  const name = wrapText(x.label, width, (t) => textWidth(t, NAME));
+  const both = `${won(x.amount)} · ${pct((x.amount / total) * 100)}`;
+  const amt = textWidth(both, AMT) <= width ? [both] : [won(x.amount), pct((x.amount / total) * 100)];
+  return { name, amt, height: name.length * LINE.name + amt.length * LINE.amt };
+}
+
+/** 한쪽 막대들의 세로 위치: 금액에 비례하되 줄마다 글이 들어갈 높이를 둠 */
+function layout(items: FlowItem[], scale: number, total: number, width: number) {
   let y = 0;
   return items.map((x) => {
     const h = Math.max(3, x.amount * scale);
-    const slot = Math.max(h, ROW);
+    const text = labelLines(x, total, width);
+    const slot = Math.max(h, text.height + 4);
     const top = y + (slot - h) / 2;
     y += slot + GAP;
-    return { x, top, h };
+    return { x, top, h, slot, text };
   });
 }
+type Node = ReturnType<typeof layout>[number];
 
-/** 막대 옆 칸에 들어가게 이름을 줄임 */
-const short = (s: string) => (s.length > 11 ? `${s.slice(0, 10)}…` : s);
+/** 막대 옆 글(이름은 진하게, 금액은 흐리게): 막대 가운데에 맞춤 */
+function Label({ n, x, anchor }: { n: Node; x: number; anchor: 'start' | 'end' }) {
+  const y0 = n.top + n.h / 2 - n.text.height / 2;
+  const lines = [...n.text.name.map((t) => ({ t, size: NAME, h: LINE.name, fill: 'var(--c-ink)' })), ...n.text.amt.map((t) => ({ t, size: AMT, h: LINE.amt, fill: 'var(--c-muted)' }))];
+  let y = y0;
+  return (
+    <>
+      {lines.map((l, i) => {
+        y += l.h;
+        return <text key={i} x={x} y={y - 3} textAnchor={anchor} fontSize={l.size} fill={l.fill}>{l.t}</text>;
+      })}
+    </>
+  );
+}
+
+/** 카드 안 폭(px)을 재서 그림을 그 폭에 맞춤: 좁은 화면에서도 옆으로 밀지 않고 다 보이게 */
+function useWidth(initial: number) {
+  // 그림 칸은 오가는 돈이 있는 해에만 그려지므로 콜백 ref 로 나타날 때마다 다시 잼
+  const [el, ref] = useState<HTMLDivElement | null>(null);
+  const [w, setW] = useState(initial);
+  useLayoutEffect(() => {
+    if (!el) return;
+    const set = () => setW(Math.round(el.clientWidth) || initial);
+    set();
+    if (typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(set);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [el, initial]);
+  return [ref, w] as const;
+}
 
 /** 왼쪽(x0, y0~y0+h0)에서 오른쪽(x1, y1~y1+h1)으로 이어지는 띠 */
 function ribbon(x0: number, y0: number, h0: number, x1: number, y1: number, h1: number) {
@@ -71,15 +141,21 @@ export function CashflowFlow() {
     return [...set].filter((v) => v >= first && v <= last).sort((x, y) => x - y);
   }, [inp, first, last, spouseStops, sw]);
 
+  const [box, boxW] = useWidth(560);
+  const W = Math.max(280, Math.min(720, boxW));
+  const TW = Math.min(150, Math.max(84, Math.floor(W * 0.26))); // 양쪽 글 칸 폭
+  const LX = TW + 8; // 왼쪽 막대
+  const CX = (W - BAR) / 2; // 가운데 막대
+  const RX = W - TW - 8 - BAR; // 오른쪽 막대
   const scale = flow.total > 0 ? 200 / flow.total : 0;
-  const left = layout(flow.sources, scale);
-  const right = layout(flow.uses, scale);
-  const bottom = (l: ReturnType<typeof layout>) => (l.length ? l[l.length - 1].top + Math.max(l[l.length - 1].h, ROW) : 0);
+  const left = layout(flow.sources, scale, flow.total, TW);
+  const right = layout(flow.uses, scale, flow.total, TW);
+  const bottom = (l: Node[]) => (l.length ? l[l.length - 1].top + (l[l.length - 1].h + l[l.length - 1].slot) / 2 : 0);
   const H = Math.max(bottom(left), bottom(right), flow.total * scale) + 8;
   const ch = flow.total * scale;
   const cy = (H - ch) / 2;
   // 가운데 막대에서 띠가 차지하는 구간(위에서부터 차례로)
-  const stack = (l: ReturnType<typeof layout>) => {
+  const stack = (l: Node[]) => {
     let y = cy;
     return l.map((n) => { const h = n.x.amount * scale; const at = y; y += h; return { at, h }; });
   };
@@ -106,28 +182,28 @@ export function CashflowFlow() {
       </div>
 
       {flow.total <= 0.5 ? (
-        <p className="rounded-lg bg-sunken px-3 py-4 text-center text-sm text-muted">이 해에는 오가는 돈이 없습니다.</p>
+        <p className="rounded-lg bg-sunken px-3 py-4 text-sm text-muted">이 해에는 오가는 돈이 없습니다.</p>
       ) : (
-        <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
-          <svg viewBox={`0 0 ${W} ${H}`} className="w-full min-w-[420px]" role="img" aria-label={`${a}세 연간 현금흐름: 들어오는 돈 ${won(flow.total)}`}>
+        <div ref={box} className="min-w-0 overflow-hidden">
+          <svg viewBox={`0 0 ${W} ${H + TOP}`} className="mx-auto block w-full" style={{ maxWidth: W }} role="img" aria-label={`${a}세 연간 현금흐름: 들어오는 돈 ${won(flow.total)}`}>
+            <text x={CX + BAR / 2} y={12} textAnchor="middle" fontSize={12} fill="var(--c-muted)">연 {won(flow.total)}</text>
+            <g transform={`translate(0,${TOP})`}>
             {left.map((n, i) => <path key={n.x.key} d={ribbon(LX + BAR, n.top, n.h, CX, ls[i].at, ls[i].h)} fill={COLOR[n.x.tone]} opacity={0.28} />)}
             {right.map((n, i) => <path key={n.x.key} d={ribbon(CX + BAR, rs[i].at, rs[i].h, RX, n.top, n.h)} fill={COLOR[n.x.tone]} opacity={0.28} />)}
             <rect x={CX} y={cy} width={BAR} height={ch} rx={3} fill="var(--c-muted)" />
             {left.map((n) => (
               <g key={n.x.key}>
                 <rect x={LX} y={n.top} width={BAR} height={n.h} rx={3} fill={COLOR[n.x.tone]} />
-                <text x={LX - 8} y={n.top + n.h / 2 - 3} textAnchor="end" fontSize={12} fill="var(--c-ink)">{short(n.x.label)}</text>
-                <text x={LX - 8} y={n.top + n.h / 2 + 13} textAnchor="end" fontSize={11} fill="var(--c-muted)">{won(n.x.amount)} · {pct((n.x.amount / flow.total) * 100)}</text>
+                <Label n={n} x={LX - 8} anchor="end" />
               </g>
             ))}
             {right.map((n) => (
               <g key={n.x.key}>
                 <rect x={RX} y={n.top} width={BAR} height={n.h} rx={3} fill={COLOR[n.x.tone]} />
-                <text x={RX + BAR + 8} y={n.top + n.h / 2 - 3} fontSize={12} fill="var(--c-ink)">{short(n.x.label)}</text>
-                <text x={RX + BAR + 8} y={n.top + n.h / 2 + 13} fontSize={11} fill="var(--c-muted)">{won(n.x.amount)} · {pct((n.x.amount / flow.total) * 100)}</text>
+                <Label n={n} x={RX + BAR + 8} anchor="start" />
               </g>
             ))}
-            <text x={CX + BAR / 2} y={Math.max(12, cy - 6)} textAnchor="middle" fontSize={12} fill="var(--c-muted)">연 {won(flow.total)}</text>
+            </g>
           </svg>
         </div>
       )}

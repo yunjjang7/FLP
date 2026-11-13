@@ -37,7 +37,7 @@ export default function Data() {
   const [tab, setTab] = useState<Tab>('profile');
   return (
     <>
-      <PageHeader title="데이터·설정" desc="모든 데이터는 이 기기의 브라우저 안에만 저장되며 외부로 전송되지 않습니다. 금액 단위는 만원입니다." />
+      <PageHeader title="기본 정보" desc="모든 데이터는 이 기기의 브라우저 안에만 저장되며 외부로 전송되지 않습니다. 금액 단위는 만원입니다." />
       <div className="no-scrollbar -mx-4 mb-4 overflow-x-auto px-4 md:mx-0 md:px-0">
         <div className="flex w-max gap-1.5">
           {TABS.map((t) => (
@@ -727,7 +727,7 @@ function ListEditor({ table }: { table: ListTable }) {
           ]}
         />
       )}
-      {rows.length === 0 && <Card><p className="py-6 text-center text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘가져오기·백업’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
+      {rows.length === 0 && <Card><p className="py-6 text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘가져오기·백업’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
       {rows.map((r) => (
         <Card key={r.id} className={table === 'liabilities' && bulletNoMaturity(r as unknown as Liability, data.summary.age) ? 'border-warn! ring-1 ring-warn' : ''}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
@@ -856,6 +856,9 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
             </Labeled>
             <Labeled label="비교 기준 순서" hint="인출 순서 비교표 ①에서만 씀 · 0이면 입력 순서">
               <NumberField value={a.compareOrder ?? 0} min={0} onChange={(v) => onChange('compareOrder', v)} />
+            </Labeled>
+            <Labeled label="같은 계좌" hint="이름이 같은 줄은 한 계좌로 계산 · 비우면 이 줄이 한 계좌">
+              <TextField value={a.group ?? ''} placeholder="예: 퇴직 IRP" onChange={(v) => onChange('group', v.trim() ? v : undefined)} />
             </Labeled>
           </>
         )}

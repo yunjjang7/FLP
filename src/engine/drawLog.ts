@@ -1,6 +1,6 @@
 import type { AccountBalance, Asset, CarryBefore, Draw } from '../types';
 import { isLocked } from './goals';
-import { isFinancial } from './portfolio';
+import { accountName, groupOf, isFinancial } from './portfolio';
 import { pensionLimit, type TaxRow } from './tax';
 
 /** 연금계좌 밖 자산(ISA·일반계좌 등)에서 꺼낸 돈을 적는 계좌 이름 */
@@ -145,10 +145,17 @@ export function carryOverPlan(assets: Asset[], balances: AccountBalance[], recor
     const next = Math.max(0, b.balance);
     const free = Math.max(0, a.taxFree ?? 0);
     const retire = Math.max(0, a.retirePart ?? 0);
-    const drawn = pension ? records.filter((r) => r.account === a.name && r.month.startsWith(`${year}-`) && r.amount > 0).reduce((s, r) => s + r.amount, 0) : 0;
+    // 인출 기록은 계좌 이름으로: 같은 계좌로 묶인 줄(리밸런싱으로 나눈 줄)은 계좌 전체 인출을 줄마다 재원 비율로 나눠 줄임
+    const acct = accountName(a);
+    const drawn = pension ? records.filter((r) => r.account === acct && r.month.startsWith(`${year}-`) && r.amount > 0).reduce((s, r) => s + r.amount, 0) : 0;
+    const rows = pension && groupOf(a) ? assets.filter((x) => groupOf(x) === groupOf(a)) : [a];
+    const freeAll = rows.reduce((s, x) => s + Math.max(0, x.taxFree ?? 0), 0);
+    const retireAll = rows.reduce((s, x) => s + Math.max(0, x.retirePart ?? 0), 0);
+    const freeCut = Math.min(freeAll, drawn); // 법정 순서: 과세제외 → 퇴직금 재원
+    const retireCut = Math.min(retireAll, Math.max(0, drawn - freeAll));
     const useFunds = pension && funds;
-    const freeNext = pension ? Math.min(next, useFunds ? Math.max(0, free - drawn) : free) : free;
-    const retireNext = pension ? Math.min(Math.max(0, next - freeNext), useFunds ? Math.max(0, retire - Math.max(0, drawn - free)) : retire) : retire;
+    const freeNext = pension ? Math.min(next, useFunds ? Math.max(0, free - (freeAll > 0 ? (freeCut * free) / freeAll : 0)) : free) : free;
+    const retireNext = pension ? Math.min(Math.max(0, next - freeNext), useFunds ? Math.max(0, retire - (retireAll > 0 ? (retireCut * retire) / retireAll : 0)) : retire) : retire;
     const round = (v: number) => Math.round(v * 10) / 10;
     const row = { id: a.id, name: a.name, pension, amount: a.amount, next, drawn, free, freeNext: round(freeNext), retire, retireNext: round(retireNext) };
     out.push({ ...row, changed: Math.abs(row.amount - next) > 0.05 || Math.abs(free - row.freeNext) > 0.05 || Math.abs(retire - row.retireNext) > 0.05 });

@@ -68,7 +68,7 @@ export function Button({ children, onClick, variant = 'primary', type = 'button'
 
 export function EmptyState() {
   return (
-    <Card className="mx-auto max-w-lg text-center">
+    <Card className="mx-auto max-w-lg">
       <div className="py-6">
         <h2 className="text-lg font-bold">아직 입력된 자산이 없습니다</h2>
         <p className="mt-2 text-sm text-muted">프로필과 자산을 입력하면 자산 현황·위험 점검·노후 진단이 자동으로 계산됩니다. 먼저 샘플 데이터로 둘러볼 수도 있습니다.</p>
@@ -79,7 +79,7 @@ export function EmptyState() {
 }
 
 export function Disclaimer() {
-  return <p className="mt-6 text-center text-xs text-muted">계산 결과는 입력값과 가정에 기반한 참고용 추정치이며, 투자 권유나 금융 자문이 아닙니다.</p>;
+  return <p className="mt-6 text-xs text-muted">계산 결과는 입력값과 가정에 기반한 참고용 추정치이며, 투자 권유나 금융 자문이 아닙니다.</p>;
 }
 
 export const CHART_COLORS = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)', 'var(--chart-6)', 'var(--chart-7)'];

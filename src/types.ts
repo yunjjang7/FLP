@@ -41,6 +41,7 @@ export interface Asset {
   drawStartYear?: number; // 이 해부터 인출(그 전에는 꺼내지 않고 추가 납입을 받는 계좌). 0이면 바로
   drawOrder?: number; // 같은 사람 계좌 중 꺼내는 순서(작을수록 먼저, 0이면 입력 순서)
   compareOrder?: number; // 인출순서 비교표 ① 조합에서 쓸 기준 순서(작을수록 먼저, 0이면 입력 순서)
+  group?: string; // 연금계좌: 같은 계좌 이름(리밸런싱 ‘자산 탭에 반영’으로 나눈 줄). 값이 같은 줄은 한 계좌로 합쳐 세금·한도·인출 순서·이정표를 계산
 }
 
 export interface Liability {

@@ -1,7 +1,7 @@
 import type { Asset, Profile } from '../types';
 import { isLocked } from './goals';
 import { contribSchedule, incomeTaxSchedule, type ContribYear } from './incomeTax';
-import { isFinancial } from './portfolio';
+import { isFinancial, mergeAccounts } from './portfolio';
 import type { ScheduleRow } from './withdrawal';
 
 /** 사적연금 분리과세 한도: 1인당 연 1,500만원(세전, 명목) */
@@ -62,7 +62,8 @@ export interface TaxSetup {
  * 과세제외·퇴직금 재원은 명목 금액이 그대로라(운용수익은 모두 과세재원), 인출 시작(startYear)이 뒤면 그때까지 물가만큼 실질 금액이 줄어듦.
  */
 export function taxSetup(profile: Profile, assets: Asset[], nowYear: number, startBalance: number, meanReturn: number, startYear = nowYear): TaxSetup | null {
-  const liquid = assets.filter((a) => isFinancial(a) && !isLocked(a, nowYear));
+  // 같은 계좌로 묶인 줄(리밸런싱으로 나눈 줄)은 계좌 하나로: 수령한도·퇴직금 최소 인출·인출 순서가 계좌 단위
+  const liquid = mergeAccounts(assets.filter((a) => isFinancial(a) && !isLocked(a, nowYear)));
   const pension = liquid.filter((a) => a.type === 'pension');
   if (pension.length === 0) return null;
   const total = liquid.reduce((a, x) => a + x.amount, 0);

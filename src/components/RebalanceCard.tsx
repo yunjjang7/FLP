@@ -1,7 +1,7 @@
 import { db } from '../db/db';
 import { IRP_RISK_CAP } from '../engine/buckets';
 import { RISK_PROFILES } from '../engine/portfolio';
-import { rebalance, REBALANCE_BAND, splitAccount, type RebalanceMode, type RebalanceMove, type RebalanceSwitch } from '../engine/rebalance';
+import { rebalance, REBALANCE_BAND, switchPlan, type RebalanceMode, type RebalanceMove, type RebalanceSwitch } from '../engine/rebalance';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import { Labeled, NumberField, SelectField } from './fields';
@@ -13,12 +13,13 @@ const MODE_LABELS: Record<RebalanceMode, string> = {
 import { Badge, Card } from './ui';
 
 /**
- * 연금계좌 한 줄을 남는 줄 + 반대 성격 새 줄로 나눠 저장(한 트랜잭션).
+ * 연금계좌 한 줄을 남는 줄 + 반대 성격 줄로 나눠 저장(한 트랜잭션). 두 줄은 같은 계좌(group)로 묶여
+ * 연금 세금·수령한도·인출 순서·이정표·인출 기록에서 계좌 하나로 계산됨. 같은 계좌에 반대 성격 줄이 이미 있으면 그 줄로 옮김.
  * 계산한 뒤 자산 탭에서 금액·성격을 고쳤으면(계산 때와 다르면) 저장하지 않고 다시 보게 함.
  */
 async function applySwitch(x: RebalanceSwitch, fromLabel: string, toLabel: string) {
   const ok = window.confirm(
-    `‘${x.name}’을 자산 탭에서 두 줄로 나눠 저장할까요?\n${fromLabel} ${won(x.keep)} + ${toLabel} ${won(x.move)}\n\n실제로 계좌에서 상품을 바꾼 뒤 누르세요. 되돌리려면 자산 탭에서 직접 고쳐야 합니다.`,
+    `‘${x.name}’을 자산 탭에서 ${fromLabel}·${toLabel} 두 줄로 나눠 저장할까요?\n${fromLabel} ${won(x.keep)} + ${toLabel} ${won(x.move)}\n두 줄은 같은 계좌로 묶여 연금 세금·수령한도를 계좌 하나로 계산합니다.\n\n실제로 계좌에서 상품을 바꾼 뒤 누르세요. 되돌리려면 자산 탭에서 직접 고쳐야 합니다.`,
   );
   if (!ok) return;
   try {
@@ -26,9 +27,10 @@ async function applySwitch(x: RebalanceSwitch, fromLabel: string, toLabel: strin
       const all = await db.assets.toArray();
       const a = x.id !== undefined ? all.find((v) => v.id === x.id) : undefined;
       if (!a || a.type !== 'pension' || Math.abs(a.amount - x.amount) > 0.5 || (a.nature === 'invest') !== (fromLabel === '투자형')) return false;
-      const [keep, add] = splitAccount(a, x.move, all);
-      await db.assets.put(keep);
-      if (add) await db.assets.add(add);
+      const plan = switchPlan(a, x.move, all);
+      for (const v of plan.put) await db.assets.put(v);
+      for (const v of plan.add) await db.assets.add(v);
+      for (const id of plan.remove) await db.assets.delete(id);
       return true;
     });
     if (!done) window.alert('자산 탭의 그 계좌가 계산할 때와 달라 저장하지 않았습니다. 화면을 다시 확인하세요.');

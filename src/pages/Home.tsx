@@ -136,7 +136,7 @@ export default function Home() {
           </div>
           {s.savings < 0 && (
             <p role="alert" className="mt-3 rounded-lg bg-warn-soft px-3 py-2 text-xs text-warn">
-              매달 {won(-s.savings)}이 모자라 은퇴 전({d.profile.retireAge}세)까지 이만큼을 금융자산에서 꺼내 쓰는 것으로 계산합니다. 연금 계좌·투자 자산에서 꺼내는 돈은 ‘세후 소득’에 넣지 마세요. 넣으면 자산이 줄어드는 게 계산에서 빠집니다. 이미 은퇴했다면 ‘데이터·설정 → 노후 계획’의 은퇴 희망 나이를 지금 나이 이하로 바꾸면 연금·인출 기준으로 보여 줍니다.
+              매달 {won(-s.savings)}이 모자라 은퇴 전({d.profile.retireAge}세)까지 이만큼을 금융자산에서 꺼내 쓰는 것으로 계산합니다. 연금 계좌·투자 자산에서 꺼내는 돈은 ‘세후 소득’에 넣지 마세요. 넣으면 자산이 줄어드는 게 계산에서 빠집니다. 이미 은퇴했다면 ‘기본 정보 → 노후 계획’의 은퇴 희망 나이를 지금 나이 이하로 바꾸면 연금·인출 기준으로 보여 줍니다.
             </p>
           )}
         </Card>
@@ -171,7 +171,7 @@ export default function Home() {
 
       <Card title="순자산 추이" className="mt-4" action={<span className="text-xs text-muted">데이터가 바뀌면 그날의 값이 자동 기록됩니다</span>}>
         {d.snapshots.length < 2 ? (
-          <p className="py-6 text-center text-sm text-muted">기록이 쌓이면 추이가 표시됩니다. (현재 {d.snapshots.length}건)</p>
+          <p className="py-6 text-sm text-muted">기록이 쌓이면 추이가 표시됩니다. (현재 {d.snapshots.length}건)</p>
         ) : (
           <div className="h-56">
             <ResponsiveContainer>

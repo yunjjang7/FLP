@@ -13,7 +13,7 @@ export const NAV: { to: string; label: string; icon: ReactNode }[] = [
   { to: '/', label: '홈', icon: <I d="M3 11l9-7 9 7v9a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z" /> },
   { to: '/invest', label: '투자 점검', icon: <I d="M4 19V5M4 19h16M8 15l3-4 3 2 5-6" /> },
   { to: '/retire', label: '노후 진단', icon: <I d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 7v5l3 2" /> },
-  { to: '/prescribe', label: '처방', icon: <I d="M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" /> },
+  { to: '/prescribe', label: '맞춤 처방', icon: <I d="M9 11l3 3 8-8M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9" /> },
   { to: '/withdraw', label: '인출 계획', icon: <I d="M3 7h18v10H3zM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM7 7V5h10v2" /> },
 ];
 
@@ -50,8 +50,8 @@ export function Layout() {
           </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
-          {/* 데이터·설정은 인출 계획 바로 아래 */}
-          {[...NAV, { to: '/data', label: '데이터·설정', icon: SettingsIcon }].map((n) => (
+          {/* 기본 정보는 인출 계획 바로 아래 */}
+          {[...NAV, { to: '/data', label: '기본 정보', icon: SettingsIcon }].map((n) => (
             <NavLink key={n.to} to={n.to} end={n.to === '/'} className={({ isActive }) => `flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium ${isActive ? 'bg-brand-soft text-brand' : 'text-muted hover:bg-sunken hover:text-ink'}`}>
               {n.icon}
               {n.label}
@@ -67,7 +67,7 @@ export function Layout() {
             <img src="./icon.svg" alt="" className="h-7 w-7" />
             <span className="font-bold">Financial Life Planning</span>
           </div>
-          <NavLink to="/data" aria-label="데이터·설정" className={({ isActive }) => `rounded-lg p-1.5 ${isActive ? 'text-brand' : 'text-muted'}`}>
+          <NavLink to="/data" aria-label="기본 정보" className={({ isActive }) => `rounded-lg p-1.5 ${isActive ? 'text-brand' : 'text-muted'}`}>
             {SettingsIcon}
           </NavLink>
         </header>

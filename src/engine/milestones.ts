@@ -1,7 +1,7 @@
 import type { Asset, Goal, Liability, Profile } from '../types';
 import { isLocked, isRecurring, lockedInflow } from './goals';
 import { DEFAULT_CONTRIB } from './incomeTax';
-import { isFinancial } from './portfolio';
+import { isFinancial, mergeAccounts } from './portfolio';
 import { HP_OVER_NOTE, hpOverCap, isRealEstate, usesHp, willSell } from './realestate';
 import { PENSION_OPEN_AGE } from './tax';
 
@@ -70,7 +70,7 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
     { who: '본인', key: 'self' as const, birth: profile.birthYear, month: validMonth(profile.birthMonth) },
     ...(hasSpouse ? [{ who: '배우자', key: 'spouse' as const, birth: profile.spouseBirthYear, month: validMonth(profile.spouseBirthMonth) }] : []),
   ];
-  const pensions = assets.filter((a) => a.type === 'pension' && a.amount > 0);
+  const pensions = mergeAccounts(assets).filter((a) => a.type === 'pension' && a.amount > 0); // 같은 계좌로 묶인 줄은 한 계좌
   const ownerOf = (a: Asset) => (a.owner === 'spouse' && hasSpouse ? 'spouse' : 'self');
   const nowAge = nowYear - profile.birthYear;
   const retired = nowAge >= profile.retireAge;
@@ -167,7 +167,7 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
 export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, year: number): string[] {
   const out: string[] = [];
   const hasSpouse = profile.spouseBirthYear > 0;
-  const pensions = assets.filter((a) => a.type === 'pension' && a.amount > 0);
+  const pensions = mergeAccounts(assets).filter((a) => a.type === 'pension' && a.amount > 0); // 같은 계좌로 묶인 줄은 한 계좌
   const age = year - profile.birthYear;
   if (year > nowYear && age > profile.retireAge) out.push('1월: 지난해 연말결산 기록 → 가드레일 판정 · 계좌별 정기지급액 변경');
   const starting = pensions.filter((a) => a.drawStartYear === year);

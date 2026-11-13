@@ -49,6 +49,7 @@ const assetCsvExtra: FieldDef[] = [
   { key: 'drawStartYear', label: '인출 시작 연도', kind: 'number', penOnly: true },
   { key: 'drawOrder', label: '꺼내는 순서', kind: 'number', penOnly: true },
   { key: 'compareOrder', label: '비교 기준 순서', kind: 'number', penOnly: true },
+  { key: 'group', label: '같은 계좌', kind: 'text', penOnly: true },
 ];
 
 /** 보험 피보험자: 납입 종료 나이를 누구 나이로 입력했는지 */

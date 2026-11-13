@@ -3,6 +3,7 @@ import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, X
 import { db } from '../db/db';
 import { carryBefore, carryOverPlan, carryPatch, drawTotal, undoCarryPlan, undoPatch, yearEndAccounts } from '../engine/drawLog';
 import { baseBalanceAt, baseFloorAt, DEFAULT_GUARDRAIL, guardrailBaseline, rebaseDiff, refixBase, restoreBase, reviewYearEnds, yearsToYearEnd, type StrategyResult, type WithdrawInput, type YearEndPosition, type YearEndRow } from '../engine/withdrawal';
+import { accountName, groupOf } from '../engine/portfolio';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Asset, Level, PlanBase, YearEnd } from '../types';
@@ -247,9 +248,9 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
           <div className="text-xs text-muted">{year}년 12월 말 계좌별 평가액(명목) — 처음에는 자산 탭의 지금 금액이 들어 있습니다. 증권사·은행 앱의 12월 말 평가액으로 고친 뒤 저장하세요.</div>
           <div className="mt-2 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {list.map((a) => {
-              const d = a.type === 'pension' ? drawTotal(draws.filter((r) => r.account === a.name), year) : 0;
+              const d = a.type === 'pension' ? drawTotal(draws.filter((r) => r.account === accountName(a)), year) : 0;
               return (
-                <Labeled key={a.id} label={a.name || '이름 없음'} hint={`자산 탭 ${won(a.amount)}${d > 0.5 ? ` · 그 해 인출 ${won(d)}` : ''}`}>
+                <Labeled key={a.id} label={a.name || '이름 없음'} hint={`자산 탭 ${won(a.amount)}${d > 0.5 ? ` · 그 해 ${groupOf(a) ? `${accountName(a)} 계좌 ` : ''}인출 ${won(d)}` : ''}`}>
                   <NumberField value={acct[a.id!] ?? 0} unit="만원" min={0} onChange={(v) => setAcct({ ...acct, [a.id!]: v })} />
                 </Labeled>
               );
@@ -385,7 +386,7 @@ export function YearEndReview({ input, startAge, band, cut, cutOnly }: { input: 
           ‘기준선 다시 고정’은 누른 날의 계획(평균수익·정액 인출 경로)을 새 비교 잣대로 저장합니다. 판정·차이(%)·다음 해 권장 인출이 새 기준선으로 다시 계산되고, 가드레일 감액·증액 누적은 처음부터 다시 셉니다. 새 기준선 시작 연도보다 앞선 결산은 판정 표·그래프에서 빠집니다(기록은 남음). 저장한 결산, 자산 탭 금액, 월별 인출 기록, 인출 계획 전략 비교·세금·건보료 표, 노후 진단·처방은 바뀌지 않습니다. 바뀌는 내용은 확인 창에서 먼저 보여 주고, 직전 기준선은 한 단계 보관돼 ‘이전 기준선으로 되돌리기’로 돌아갈 수 있습니다.
         </li>
         <li>실제 수익률(추정) = 12월 말 자산 ÷ (연초 자산 − 그 해 인출) − 1입니다. 연초 자산은 직전 해 결산값(첫해는 기준선을 고정할 때의 자산)을 쓰고, 직전 해 결산이 없으면 계산하지 않습니다. 연중에 넣은 돈(추가 납입·일시금 수령)이 있으면 그만큼 높게 나옵니다.</li>
-        <li>‘계좌별로 입력’으로 저장하면 ‘이어받기’로 자산 탭 금액을 12월 말 평가액으로 한 번에 바꾸고, 연금계좌는 그 해 실제 인출(월별 기록)만큼 과세제외 금액·퇴직금 재원도 줄일 수 있습니다. 잘못 적용했으면 ‘이어받기 되돌리기’로 적용 직전 값으로 돌아갑니다. 합계만 넣었다면 ‘데이터·설정 → 자산’ 금액을 직접 12월 말 평가액으로 고쳐야 노후 진단·인출 계획이 그 값에서 다시 계산됩니다.</li>
+        <li>‘계좌별로 입력’으로 저장하면 ‘이어받기’로 자산 탭 금액을 12월 말 평가액으로 한 번에 바꾸고, 연금계좌는 그 해 실제 인출(월별 기록)만큼 과세제외 금액·퇴직금 재원도 줄일 수 있습니다. 잘못 적용했으면 ‘이어받기 되돌리기’로 적용 직전 값으로 돌아갑니다. 합계만 넣었다면 ‘기본 정보 → 자산’ 금액을 직접 12월 말 평가액으로 고쳐야 노후 진단·인출 계획이 그 값에서 다시 계산됩니다.</li>
       </ul>
     </Card>
   );

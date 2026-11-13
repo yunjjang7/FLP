@@ -58,6 +58,7 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
       const s = String(raw[f.label] ?? raw[f.key] ?? '').trim();
       if (!s || notFor(f, rec.type)) continue;
       if (f.kind === 'number') rec[f.key] = num(s);
+      else if (f.kind === 'text') rec[f.key] = s;
       else {
         const code = Object.entries(f.options ?? {}).find(([k, lbl]) => k === s || lbl === s)?.[0];
         if (code) rec[f.key] = code;
