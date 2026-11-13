@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { deterministicPath, expenseAt, nominalFactor, pensionAt, publicPensionAt, retireOutflowAt, simulate, type PlanInput } from '../engine/montecarlo';
+import { debtPaymentAt, deterministicPath, expenseAt, nominalFactor, pensionAt, publicPensionAt, retireOutflowAt, simulate, type PlanInput } from '../engine/montecarlo';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { ExpenseMode } from '../types';
@@ -82,6 +82,11 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
     return r.noSteps && cur ? r.rate - cur.rate : null;
   };
   const cut20 = (1 - nominalFactor(0, inp.inflation, 20)) * 100;
+  const debtNow = debtPaymentAt(inp, base);
+  const drawRow = rows.find((r) => r.key === 'draw');
+  const realRow = rows.find((r) => r.key === 'real');
+  // 임대료 등 연금 외 소득(월, 오늘 가치)
+  const otherNow = (pensionAt(inp, base) - publicPensionAt(inp, base)) / 12;
 
   return (
     <Card title="생활비 가정 비교" className={className} action={<span className="text-xs text-muted">시나리오 {RUNS}개 · 현재가치</span>}>
@@ -120,11 +125,29 @@ export function ExpenseCompare({ className = 'mt-4' }: { className?: string }) {
           </tbody>
         </table>
       </div>
-      <p className="mt-2 text-xs text-muted">
-        고갈 나이는 매년 평균수익만 났을 때입니다. 금액을 명목 그대로 두면 물가가 연 {inp.inflation}% 오를 때 20년 뒤 실제 가치가 약 {cut20.toFixed(0)}% 줄어, 그만큼 생활 수준을 낮춘다는 뜻입니다. 오른쪽 두 열은 그 변화를 오늘 물가로 보여 줍니다.
-        {start.retired ? '' : ' 은퇴 전까지는 모든 가정에서 물가만큼 오릅니다.'}
-        {inp.expenseSteps?.length ? ' ‘나이 구간 없이 일정’ 행은 지금 설정에서 나이 구간별 생활비만 빼고 기본 생활비를 끝까지 쓴 결과입니다(연금 생활비 명목 고정에는 구간을 쓰지 않음).' : ''} 바꾸려면 ‘기본 정보 → 프로필 → 노후 계획’에서 고릅니다.
-      </p>
+      <ul className="mt-3 list-disc space-y-1 pl-4 text-xs text-muted">
+        <li><b className="font-medium text-ink">고갈 나이</b>: 해마다 평균 수익만 난다고 볼 때 자산이 바닥나는 나이입니다.</li>
+        <li>
+          <b className="font-medium text-ink">첫해 자산 인출</b>: 연금계좌·투자 자산에서 꺼내는 돈입니다.
+          {debtNow > 0 && ` 남은 대출 상환액(월 ${won(debtNow / 12)})이 들어 있습니다.`}
+        </li>
+        <li>
+          <b className="font-medium text-ink">오른쪽 두 열</b>: 월 생활비를 오늘 돈 가치로 바꾼 금액입니다. 금액을 그대로 두면(명목 고정) 물가가 연 {inp.inflation}% 오를 때 20년 뒤 같은 돈으로 살 수 있는 것이 약 {cut20.toFixed(0)}% 줄어, {later}세 열이 작아집니다.
+          {start.retired ? '' : ' 은퇴 전까지는 모든 가정에서 물가만큼 오릅니다.'}
+        </li>
+        {drawRow && (
+          <li>
+            <b className="font-medium text-ink">연금 생활비 명목 고정</b>: 연금계좌·국민연금에서 월 {won(drawRow.livingNow - otherNow)}을 금액 그대로 꺼내고, 임대료 등 다른 소득(월 {won(otherNow)})은 저축하지 않고 모두 씁니다.
+            그래서 {base}세 생활비가 {won(drawRow.livingNow)}입니다.
+            {realRow && drawRow.firstDraw > realRow.firstDraw && ` 물가 연동보다 자산에서 월 ${won(drawRow.firstDraw - realRow.firstDraw)}을 더 꺼내 성공확률이 낮아집니다.`}
+            {' '}꺼내는 금액은 그대로라 물가가 오를수록 실제 가치가 줄고, {later}세 열에는 줄어든 연금 몫과 오른 임대료가 함께 들어갑니다.
+          </li>
+        )}
+        {inp.expenseSteps?.length ? <li><b className="font-medium text-ink">나이 구간 없이 일정</b>: 지금 설정에서 나이 구간별 생활비만 빼고 기본 생활비를 끝까지 쓴 결과입니다. 연금 생활비 명목 고정에는 나이 구간을 쓰지 않습니다.</li> : null}
+        <li>
+          <b className="font-medium text-ink">가정 바꾸기</b>: 왼쪽 메뉴 ‘기본 정보’ → 맨 위 ‘프로필’ 탭 → ‘노후 계획’ 카드의 ‘은퇴 후 생활비 변화’에서 고릅니다.
+        </li>
+      </ul>
     </Card>
   );
 }
