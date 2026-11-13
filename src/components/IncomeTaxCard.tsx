@@ -13,7 +13,7 @@ export function IncomeTaxCard({ tax }: { tax: TaxResult | null }) {
   const { profile: p, summary, assets, liabilities } = useFlp();
   const nowYear = p.birthYear + summary.age;
   const slotByYear = useMemo(() => (tax ? new Map(tax.rows.map((r) => [r.year, [r.slot.self, r.slot.spouse] as [number, number]])) : undefined), [tax]);
-  const rows = useMemo(() => incomeTaxSchedule(p, nowYear, slotByYear, assets, liabilities), [p, nowYear, slotByYear, assets, liabilities]);
+  const rows = useMemo(() => incomeTaxSchedule(p, nowYear, slotByYear, assets, liabilities, summary.yearShare ?? 1), [p, nowYear, slotByYear, assets, liabilities, summary.yearShare]);
   const contrib = useMemo(() => contribSchedule(p, rows), [p, rows]);
   if (rows.length === 0) return null;
   const hasSpouse = p.spouseBirthYear > 0;

@@ -272,8 +272,9 @@ export interface IncomeTaxRow {
  * hiPrivate 이면 급여가 있는 해에도 사적연금을 사람별로 넣음: 직장가입자 급여 외 소득(× 반영률), 피부양자 판정 합산소득(전액), 지역가입자 본인 소득(× 반영률).
  * liabilities: 자산별 추정에서 주택 구입 대출 공제(hiLoanDeduct)를 켰을 때 쓰는 부채 목록.
  * 노란우산공제(자산에서 표시하고 연 납입액을 넣은 것)는 납입하는 해에 소득공제로 종합소득세를 줄임(건보료는 소득공제 전 소득이라 그대로).
+ * firstShare: 올해 남은 달 비율(Summary.yearShare). 올해 노란우산 부금은 그만큼만 낸다고 보고 소득공제도 그 금액으로 셈.
  */
-export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number | [number, number]>, assets: Asset[] = [], liabilities: Liability[] = []): IncomeTaxRow[] {
+export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number | [number, number]>, assets: Asset[] = [], liabilities: Liability[] = [], firstShare = 1): IncomeTaxRow[] {
   const s = { ...DEFAULT_INCOME_TAX, ...(profile.incomeTax ?? {}) };
   const inf = profile.inflation / 100;
   const currentAge = nowYear - profile.birthYear;
@@ -306,7 +307,7 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
   const rows: IncomeTaxRow[] = [];
   // 노란우산 납입액(연도별 [본인, 배우자], 명목)
   const yuPay = new Map<number, [number, number]>();
-  for (const x of yuPayments(assets, profile, nowYear)) {
+  for (const x of yuPayments(assets, profile, nowYear, firstShare)) {
     const v = yuPay.get(x.year) ?? [0, 0];
     v[x.owner === 'spouse' ? 1 : 0] += x.amount;
     yuPay.set(x.year, v);

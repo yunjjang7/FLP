@@ -5,6 +5,9 @@ import type { Draw } from '../types';
 import type { ListTable } from './db';
 import { ORDER_FIELD, TABLES, type FieldDef } from './schema';
 
+/** 1~12만 받는 노란우산 열(마지막 해 납입 개월·가입 월·수령 월) */
+const MONTH_KEYS = ['yuLastMonths', 'yuJoinMonth', 'yuPayoutMonth'];
+
 type Row = Record<string, unknown>;
 
 /** 레코드 배열 → CSV 문자열(한글 헤더, 선택값은 한글 라벨) */
@@ -79,6 +82,13 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
       if (rec.type === 'realestate') rec.reUse ??= 'home';
       if (rec.yu === 'true') rec.yu = true;
       if (rec.yu && (rec.type === 'pension' || rec.type === 'realestate')) delete rec.yu;
+      // 노란우산 월·개월 수 열은 1~12 정수만(그 밖은 빈칸으로 읽음)
+      for (const f of extras(table).filter((x) => MONTH_KEYS.includes(x.key))) {
+        const v = rec[f.key];
+        if (v === undefined || (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 12)) continue;
+        errors.push(`${i + 2}행: '${f.label}'은(는) 1~12만 넣을 수 있어 비워 두었습니다.`);
+        delete rec[f.key];
+      }
     }
     if (!rec.name) {
       errors.push(`${i + 2}행: 이름이 비어 있어 건너뜁니다.`);

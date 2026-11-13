@@ -232,6 +232,9 @@ export const isPaying = (p: Insurance, age: number, profile: Profile) => {
   return !(end > 0 && age >= end);
 };
 
+/** 올해 남은 달 비율(이번 달 포함): 11월이면 2/12. 월이 없거나 범위를 벗어나면 undefined(1년 전체) */
+export const yearShareOf = (month?: number) => (month !== undefined && month >= 1 && month <= 12 ? (13 - Math.round(month)) / 12 : undefined);
+
 export function summarize(profile: Profile, assets: Asset[], liabilities: Liability[], cashflows: Cashflow[], year = new Date().getFullYear(), policies: Insurance[] = [], month?: number): Summary {
   const totalAssets = sum(assets.map((a) => a.amount));
   const fin = assets.filter(isFinancial);
@@ -297,6 +300,6 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
     liquidAssets,
     emergencyFund,
     age,
-    ...(month !== undefined && month >= 1 && month <= 12 ? { yearShare: (13 - Math.round(month)) / 12 } : {}),
+    ...(yearShareOf(month) !== undefined ? { yearShare: yearShareOf(month) } : {}),
   };
 }

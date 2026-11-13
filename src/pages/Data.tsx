@@ -17,8 +17,8 @@ import { useFlp } from '../store/FlpContext';
 import { bulletMissingMaturity, equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
 import { creditCheck, CREDIT_CHECK_TAX } from '../engine/creditCheck';
-import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf, incomeTaxSchedule } from '../engine/incomeTax';
-import { isYu, YU_CEO_WAGE, yuPayTo } from '../engine/yellowUmbrella';
+import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf, incomeTaxSchedule, yuDedFracOf } from '../engine/incomeTax';
+import { isYu, YU_CEO_WAGE, yuPayments, yuPayTo } from '../engine/yellowUmbrella';
 import type { Asset, AssetType, ReUse, ContribPlan, Criteria, DrawInclude, ExpenseBand, ExpenseMode, Goal, IncomeKind, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
@@ -1022,6 +1022,10 @@ function GroupNotes({ a, assets, onChange }: { a: Asset; assets: Asset[]; onChan
 }
 
 /** 자산 추가 설정: 명의, 수령 전 묶인 자산(노란우산 등), 연금계좌 재원 구성 */
+/** 노란우산 개월 수·월 선택지(0 = 비움). 목록에서만 골라 1~12 밖의 값은 들어가지 않음 */
+const MONTH_COUNT_OPTIONS: Record<string, string> = { 0: '비움(12개월)', ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, `${i + 1}개월`])) };
+const MONTH_OPTIONS: Record<string, string> = { 0: '비움', ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [i + 1, `${i + 1}월`])) };
+
 function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v: unknown) => void }) {
   const { profile: p, summary, assets, liabilities } = useFlp();
   const nowYear = p.birthYear + summary.age;
@@ -1030,7 +1034,7 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
   const locked = (a.lockYear ?? 0) > nowYear;
   const yu = isYu(a) && !pension;
   // 노란우산: 소득공제 비율·절세액은 종합소득세 추정 행에서(사업소득은 프로필 ‘그 밖의 소득’, 법인 대표는 세전 총급여)
-  const taxRows = useMemo(() => (yu ? incomeTaxSchedule(p, nowYear, undefined, assets, liabilities) : undefined), [yu, p, nowYear, assets, liabilities]);
+  const taxRows = useMemo(() => (yu ? incomeTaxSchedule(p, nowYear, undefined, assets, liabilities, summary.yearShare ?? 1) : undefined), [yu, p, nowYear, assets, liabilities, summary.yearShare]);
   const [open, setOpen] = useState(pension || locked || yu || (a.owner ?? 'self') !== 'self');
   if (!open) {
     return (
@@ -1042,7 +1046,11 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
   const inflow = locked ? lockedInflow(a, p, nowYear, taxRows, summary.yearShare ?? 1) : null;
   const yuWho = a.owner === 'spouse' && hasSpouse ? 'spouse' : 'self';
   const yuRow = taxRows?.find((r) => (yuWho === 'spouse' ? r.yuPaySpouse : r.yuPaySelf) > 0);
-  const yuDed = yuRow ? (yuWho === 'spouse' ? yuRow.yuDedSpouse : yuRow.yuDedSelf) : 0;
+  // 이 계좌의 그 해 납입액(올해는 남은 달만큼)과 그중 소득공제 받는 금액(명의자 공제 비율로 나눔)
+  const yuShare = summary.yearShare ?? 1;
+  const yuPayRow = yuRow ? yuPayments([a], p, nowYear, yuShare).find((x) => x.year === yuRow.year)?.amount ?? 0 : 0;
+  const yuDed = yuRow && taxRows ? yuPayRow * yuDedFracOf(taxRows)(yuRow.year, yuWho) : 0;
+  const yuMonths = Math.round(yuShare * 12);
   const yuPaying = yu && (a.yuPay ?? 0) > 0;
   return (
     <div className="mt-3 rounded-xl bg-sunken p-3">
@@ -1055,6 +1063,11 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
         <Labeled label="수령 연도" hint={locked ? `${nowYear}~${a.lockYear! - 1}년 인출 불가` : '0이면 지금 인출 가능'}>
           <NumberField plain value={a.lockYear ?? 0} onChange={(v) => onChange('lockYear', v)} />
         </Labeled>
+        {yu && (
+          <Labeled label="수령 월" hint="퇴직소득세 근속연수를 개월로 셈 · 가입 월과 둘 다 비우면 연도 차이">
+            <SelectField value={String(a.yuPayoutMonth ?? 0)} onChange={(v) => onChange('yuPayoutMonth', Number(v) || undefined)} options={MONTH_OPTIONS} />
+          </Labeled>
+        )}
         <Labeled label="수령 시 세율(%)" hint={yu ? (inflow?.yu?.auto ? `0이면 퇴직소득세 자동(지금 약 ${inflow.yu.rate.toFixed(1)}%)` : '넣으면 적립금 × 세율 · 0이면 퇴직소득세 자동') : '일시금 실효세율'}>
           <NumberField value={a.lockTax ?? 0} step={0.1} onChange={(v) => onChange('lockTax', v)} />
         </Labeled>
@@ -1071,8 +1084,14 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
             <Labeled label="마지막 납입 연도" hint={`0이면 명의자 은퇴 전 해(지금 ${yuPayTo(a, p)}년)`}>
               <NumberField plain value={a.yuPayTo ?? 0} onChange={(v) => onChange('yuPayTo', v > 0 ? v : undefined)} />
             </Labeled>
+            <Labeled label="마지막 해 납입 개월" hint="마지막 납입 연도에 낸 개월 수 · 비우면 12개월(그 해 1년치)">
+              <SelectField value={String(a.yuLastMonths ?? 0)} onChange={(v) => onChange('yuLastMonths', Number(v) || undefined)} options={MONTH_COUNT_OPTIONS} />
+            </Labeled>
             <Labeled label="가입 연도" hint="퇴직소득세 근속연수(가입 기간)">
               <NumberField plain value={a.yuJoin ?? 0} onChange={(v) => onChange('yuJoin', v > 0 ? v : undefined)} />
+            </Labeled>
+            <Labeled label="가입 월" hint="가입한 달부터 수령한 달까지로 근속연수(1년 미만은 1년으로 올림)">
+              <SelectField value={String(a.yuJoinMonth ?? 0)} onChange={(v) => onChange('yuJoinMonth', Number(v) || undefined)} options={MONTH_OPTIONS} />
             </Labeled>
             <Labeled label="공제 안 받은 부금(만원)" hint="지금까지 소득공제 못 받은 부금 누계 · 비과세">
               <NumberField value={a.taxFree ?? 0} onChange={(v) => onChange('taxFree', v > 0 ? v : undefined)} />
@@ -1123,7 +1142,7 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
       )}
       {yuPaying && locked && yuRow && (
         <p className="mt-2 text-xs text-muted">
-          {yuRow.year}년 납입 {won(a.yuPay!)} 중 소득공제 {won(yuDed)}
+          {yuRow.year}년 납입 {won(yuPayRow)}{yuRow.year === nowYear && yuShare < 1 ? `(연 ${won(a.yuPay!)} 중 올해 남은 ${yuMonths}개월분)` : ''} 중 소득공제 {won(yuDed)}
           {yuRow.yuSave > 0.5 ? ` → 종합소득세 약 ${won(yuRow.yuSave)} 감소(부부 합계, 다음 해 5월에 들어오는 돈으로 계산)` : ''}.
           {yuDed <= 0 && <> 사업소득이 없어 공제하지 않았습니다. 은퇴 전 사업소득은 <SetupLink tab="profile" card="그 밖의 은퇴 후 소득">프로필 → 그 밖의 소득</SetupLink>에 ‘사업소득’으로 지금 나이부터 넣거나, 법인 대표자면 세전 총급여(연 {won(YU_CEO_WAGE)} 이하)를 넣으세요.</>}
           {' '}해마다 연 납입액을 꺼내 쓸 수 있는 금융자산에서 이 계좌로 옮기는 것으로 계산합니다(지출 탭에 부금을 또 넣지 마세요).
@@ -1131,7 +1150,7 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
       )}
       {inflow?.yu && (
         <p className="mt-2 text-xs text-muted">
-          수령 때 적립금 약 {won(inflow.yu.fv)} 중 소득공제 받은 부금과 운용수익 {won(inflow.yu.taxable)}은 퇴직소득(가입 {inflow.yu.years}년을 근속연수로){inflow.yu.auto ? `, 퇴직소득세 약 ${won(inflow.yu.tax)}` : `, 직접 넣은 세율로 세금 ${won(inflow.yu.tax)}`}입니다. 공제 못 받은 부금 {won(inflow.yu.nonDed)}은 과세하지 않습니다. 중도 해지는 기타소득(16.5%)이라 이 계산과 다릅니다.
+          수령 때 적립금 약 {won(inflow.yu.fv)} 중 소득공제 받은 부금과 운용수익 {won(inflow.yu.taxable)}은 퇴직소득(근속연수 {inflow.yu.years}년({Math.floor(inflow.yu.months / 12)}년 {inflow.yu.months % 12}개월)){inflow.yu.auto ? `, 퇴직소득세 약 ${won(inflow.yu.tax)}` : `, 직접 넣은 세율로 세금 ${won(inflow.yu.tax)}`}입니다. 공제 못 받은 부금 {won(inflow.yu.nonDed)}은 과세하지 않습니다. 중도 해지는 기타소득(16.5%)이라 이 계산과 다릅니다.
         </p>
       )}
       {inflow && (

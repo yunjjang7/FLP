@@ -286,9 +286,12 @@ export function lockedInflow(a: Asset, profile: Profile, nowYear: number, taxRow
 /** 노란우산 종합소득세 추정이 필요한지: 앞으로 낼 부금이 있으면 */
 export const needsYuTax = (profile: Profile, assets: Asset[], nowYear: number) => yuPayments(assets, profile, nowYear).length > 0;
 
-/** 노란우산 부금 납입(실질, 본인 나이): 꺼내 쓸 수 있는 금융자산에서 노란우산으로 옮겨 감(해마다 나가는 흐름) */
-export function yuPayOutflows(profile: Profile, assets: Asset[], nowYear: number) {
-  return yuPayments(assets, profile, nowYear).map((x) => ({ age: x.year - profile.birthYear, amount: x.amount / Math.pow(1 + profile.inflation / 100, x.year - nowYear), yuPay: x.asset.name || '노란우산', flow: true as const }));
+/**
+ * 노란우산 부금 납입(실질, 본인 나이): 꺼내 쓸 수 있는 금융자산에서 노란우산으로 옮겨 감.
+ * 올해 금액은 yuPayments 가 이미 남은 달 비율(firstShare)만큼으로 줄였으므로 flow 로 표시하지 않음(시뮬레이션이 첫해를 또 줄이지 않게)
+ */
+export function yuPayOutflows(profile: Profile, assets: Asset[], nowYear: number, firstShare = 1) {
+  return yuPayments(assets, profile, nowYear, firstShare).map((x) => ({ age: x.year - profile.birthYear, amount: x.amount / Math.pow(1 + profile.inflation / 100, x.year - nowYear), yuPay: x.asset.name || '노란우산' }));
 }
 
 /** 은퇴 후 생활비 방식 → 시뮬레이션 입력 */
@@ -342,7 +345,7 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
   const liqReturn = locked.length && liqTotal > 0 ? liquid.reduce((a, x) => a + (x.amount / liqTotal) * x.expectedReturn, 0) : s.portfolioReturn;
   const liqVol = locked.length && liqTotal > 0 ? liquid.reduce((a, x) => a + (x.amount / liqTotal) * x.volatility, 0) : s.portfolioVol;
   // 종합소득세·건보료 추정과 추가 납입 세액공제: 환급은 다음 해 들어오고, 국민연금 몫 세금은 원하면 지출에 더함
-  const taxRows = profile.incomeTax?.on || profile.contrib || needsYuTax(profile, assets, nowYear) ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities) : [];
+  const taxRows = profile.incomeTax?.on || profile.contrib || needsYuTax(profile, assets, nowYear) ? incomeTaxSchedule(profile, nowYear, undefined, assets, liabilities, s.yearShare ?? 1) : [];
   const credits = creditInflows(profile, nowYear, contribSchedule(profile, taxRows));
   const npCost = profile.incomeTax?.on && profile.incomeTax.addToDraw ? npCostOutflows(taxRows) : [];
   const covered = drawCovers(profile);
@@ -391,6 +394,6 @@ export function buildPlanInput(profile: Profile, assets: Asset[], liabilities: L
       // 은퇴 뒤까지 내는 보험료는 그 해 자산에서 뺌(연금 생활비 고정액에 포함했으면 따로 빼지 않음)
       .concat(covered.has('premium') ? [] : retirePremiums(s, o.retireAge ?? profile.retireAge, inflation, profile.lifeExpectancy))
       .concat(npCost)
-      .concat(yuPayOutflows(profile, assets, nowYear)),
+      .concat(yuPayOutflows(profile, assets, nowYear, s.yearShare ?? 1)),
   };
 }

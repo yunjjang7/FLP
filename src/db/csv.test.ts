@@ -91,10 +91,11 @@ describe('CSV 입출력', () => {
     expect(errors).toEqual([]);
     expect(rows).toEqual(ins);
   });
-  it('양식에 부동산 예시 행 포함', () => {
+  it('양식에 부동산·노란우산 예시 행 포함', () => {
     const { rows, errors } = fromCSV('assets', templateCSV('assets'));
     expect(errors).toEqual([]);
-    expect(rows.map((r) => r.type)).toEqual(['deposit', 'realestate']);
+    expect(rows.map((r) => r.type)).toEqual(['deposit', 'realestate', 'other']);
+    expect(rows[2]).toMatchObject({ yu: true, yuPay: 600, yuPayTo: 2039, yuLastMonths: 3, yuJoin: 2016, yuJoinMonth: 9, yuPayoutMonth: 3 });
     expect(rows[1]).toMatchObject({ reUse: 'rental', rent: 100, deposit: 5000, owner: 'joint', ownerShare: 50 });
   });
   it('템플릿과 영문 키·쉼표 금액 허용', () => {

@@ -26,6 +26,27 @@ function ownerRetireYear(a: Asset, profile: Profile) {
   return a.owner === 'spouse' && profile.spouseBirthYear > 0 ? profile.spouseBirthYear + (profile.spouseRetireAge ?? 0) : profile.birthYear + profile.retireAge;
 }
 
+/** 1~12 정수인 월·개월 수만 받음(그 밖은 없음) */
+export const validMonths = (v: unknown) => (typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= 12 ? v : undefined);
+
+/** 마지막 납입 연도에 낸 개월 수(1~12, 비우면 12) */
+export const yuLastMonthsOf = (a: Asset) => validMonths(a.yuLastMonths) ?? 12;
+
+/**
+ * 퇴직소득세 근속연수(가입 기간): 가입한 달부터 수령한 달까지 개월 수를 12로 나눠 올림(1년 미만은 1년), 최소 1년.
+ * 예: 2020년 9월 가입 → 2040년 3월 수령 = 19년 6개월 → 20년, 2040년 10월 수령 = 20년 1개월 → 21년.
+ * 가입 월·수령 월을 둘 다 비우면 예전처럼 ‘수령 연도 − 가입 연도’(가입 연도를 비우면 올해). 하나만 넣으면 비운 쪽은 1월
+ */
+export function yuService(a: Asset, nowYear: number): { years: number; months: number } {
+  const join = (a.yuJoin ?? 0) > 0 ? a.yuJoin! : nowYear;
+  const payout = a.lockYear ?? nowYear;
+  const jm = validMonths(a.yuJoinMonth);
+  const pm = validMonths(a.yuPayoutMonth);
+  if (jm === undefined && pm === undefined) return { years: Math.max(1, payout - join), months: Math.max(0, (payout - join) * 12) };
+  const months = Math.max(0, (payout - join) * 12 + (pm ?? 1) - (jm ?? 1));
+  return { years: Math.max(1, Math.ceil(months / 12)), months };
+}
+
 /** 마지막 납입 연도: 직접 넣으면 그 해, 비우면 명의자 은퇴 전 해. 수령 연도 전 해를 넘지 않음 */
 export function yuPayTo(a: Asset, profile: Profile) {
   const to = (a.yuPayTo ?? 0) > 0 ? a.yuPayTo! : ownerRetireYear(a, profile) - 1;
@@ -36,16 +57,28 @@ export interface YuPayment {
   asset: Asset;
   year: number;
   owner: IncomeOwner;
-  amount: number; // 그 해 납입액(명목, 1년치)
+  amount: number; // 그 해 납입액(명목). 올해는 남은 달 비율만큼, 다음 해부터 1년치
 }
 
-/** 앞으로 낼 노란우산 부금(올해부터 마지막 납입 연도까지, 명목 고정) */
-export function yuPayments(assets: Asset[], profile: Profile, nowYear: number): YuPayment[] {
+/**
+ * 앞으로 낼 노란우산 부금(올해부터 마지막 납입 연도까지, 명목 고정).
+ * firstShare: 올해 남은 달 비율(Summary.yearShare). 지난 달 납입분은 이미 ‘지금 금액’에 들어 있으므로 올해는 그만큼만 냄.
+ * 마지막 납입 연도는 1월부터 yuLastMonths 개월(비우면 12)만 냄. 그 해가 올해면 두 조건이 겹치는 달만
+ * (예: 11월 계산, 남은 2개월 · 마지막 해 12개월 → 2/12, 마지막 해 3개월 → 이미 끝나 0).
+ * 적립금(yuPayout)·소득공제(incomeTaxSchedule)·금융자산 지출(yuPayOutflows)이 모두 이 금액을 씀
+ */
+export function yuPayments(assets: Asset[], profile: Profile, nowYear: number, firstShare = 1): YuPayment[] {
+  const passed = 1 - Math.min(1, Math.max(0, firstShare)); // 올해 이미 지난 비율
   const out: YuPayment[] = [];
   for (const a of assets) {
     if (!isYu(a) || !((a.yuPay ?? 0) > 0) || !((a.lockYear ?? 0) > nowYear)) continue;
     const owner: IncomeOwner = a.owner === 'spouse' && profile.spouseBirthYear > 0 ? 'spouse' : 'self';
-    for (let year = nowYear; year <= yuPayTo(a, profile); year++) out.push({ asset: a, year, owner, amount: a.yuPay! });
+    const last = yuPayTo(a, profile);
+    for (let year = nowYear; year <= last; year++) {
+      // 그 해 낸 기간 = (끝: 마지막 해면 개월 ÷ 12, 아니면 1) − (시작: 올해면 지난 비율, 아니면 0)
+      const share = Math.max(0, (year === last ? yuLastMonthsOf(a) / 12 : 1) - (year === nowYear ? passed : 0));
+      if (share > 0) out.push({ asset: a, year, owner, amount: a.yuPay! * share });
+    }
   }
   return out;
 }
@@ -82,7 +115,8 @@ export interface YuPayout {
   paid: number; // 앞으로 낼 부금 합계(명목)
   nonDed: number; // 소득공제를 받지 않은 부금(과세제외 + 앞으로 공제 못 받을 부금)
   taxable: number; // 퇴직소득으로 과세되는 금액(소득공제 받은 부금 + 운용수익)
-  years: number; // 가입 기간(근속연수)
+  years: number; // 가입 기간(근속연수, 1년 미만은 올림)
+  months: number; // 실제 가입 기간(개월, 가입 월·수령 월을 비우면 연도 차이 × 12)
   tax: number; // 세금(명목)
   auto: boolean; // 퇴직소득세를 자동 계산했는지(수령 시 세율을 직접 넣으면 false)
   rate: number; // 실효세율(적립금 대비 %)
@@ -100,15 +134,15 @@ export function yuPayout(a: Asset, profile: Profile, nowYear: number, dedFrac?: 
   let fv = a.amount * Math.pow(r, Math.max(0, year - nowYear));
   let paid = 0;
   let nonDed = Math.max(0, a.taxFree ?? 0);
-  for (const p of yuPayments([a], profile, nowYear)) {
-    const amt = p.amount * (p.year === nowYear ? firstShare : 1);
+  for (const p of yuPayments([a], profile, nowYear, firstShare)) {
+    const amt = p.amount;
     paid += amt;
     fv += amt * Math.pow(r, Math.max(0, year - p.year - 1));
     nonDed += amt * (1 - (dedFrac ? Math.min(1, Math.max(0, dedFrac(p.year, owner))) : 1));
   }
   const taxable = Math.max(0, fv - nonDed);
-  const years = Math.max(1, year - ((a.yuJoin ?? 0) > 0 ? a.yuJoin! : nowYear));
+  const { years, months } = yuService(a, nowYear);
   const auto = !((a.lockTax ?? 0) > 0);
   const tax = auto ? retireIncomeTax(taxable, years) : (fv * a.lockTax!) / 100;
-  return { year, fv, paid, nonDed, taxable, years, tax, auto, rate: fv > 0 ? (tax / fv) * 100 : 0 };
+  return { year, fv, paid, nonDed, taxable, years, months, tax, auto, rate: fv > 0 ? (tax / fv) * 100 : 0 };
 }

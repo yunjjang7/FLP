@@ -58,7 +58,10 @@ const assetCsvExtra: FieldDef[] = [
   { key: 'yu', label: '노란우산공제', kind: 'select', options: { true: '예' } },
   { key: 'yuPay', label: '노란우산 연 납입액', kind: 'number', unit: '만원', yuOnly: true },
   { key: 'yuPayTo', label: '노란우산 마지막 납입 연도', kind: 'number', yuOnly: true },
+  { key: 'yuLastMonths', label: '마지막 해 납입 개월', kind: 'number', yuOnly: true },
   { key: 'yuJoin', label: '노란우산 가입 연도', kind: 'number', yuOnly: true },
+  { key: 'yuJoinMonth', label: '노란우산 가입 월', kind: 'number', yuOnly: true },
+  { key: 'yuPayoutMonth', label: '노란우산 수령 월', kind: 'number', yuOnly: true },
 ];
 
 /** 모든 목록 CSV 의 마지막 열: 기본 정보 화면 카드 순서(작을수록 위, 비우면 추가한 순서대로 뒤에) */
@@ -88,6 +91,7 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
     csvExamples: [
       { name: '정기예금', type: 'deposit', amount: 1000, purpose: 'short', nature: 'safe', expectedReturn: 3, volatility: 0.5 },
       { name: '임대 오피스텔', type: 'realestate', amount: 30000, purpose: 'long', nature: 'invest', expectedReturn: 3, volatility: 8, owner: 'joint', ownerShare: 50, reUse: 'rental', rent: 100, deposit: 5000, renewCycle: 2, renewRate: 5, rentCost: 10, lockYear: 2045, lockTax: 5 },
+      { name: '노란우산', type: 'other', amount: 3000, purpose: 'long', nature: 'safe', expectedReturn: 3, volatility: 0.5, lockYear: 2040, yu: true, yuPay: 600, yuPayTo: 2039, yuLastMonths: 3, yuJoin: 2016, yuJoinMonth: 9, yuPayoutMonth: 3 },
     ],
   },
   liabilities: {
