@@ -23,7 +23,7 @@ export function runScenario(base: CompareBase, patch: Partial<WithdrawInput> = {
   const input: WithdrawInput = { ...base.input, ...patch };
   const schedule = compareStrategy(base.strategy, input, 0).schedule;
   const nowYear = base.profile.birthYear + base.summary.age;
-  const setup = taxSetup(base.profile, base.assets, nowYear, input.startBalance, input.meanReturn, base.profile.birthYear + input.startAge);
+  const setup = taxSetup(base.profile, base.assets, nowYear, input.startBalance, input.meanReturn, base.profile.birthYear + input.startAge, base.summary.yearShare ?? 1);
   if (setup) {
     const tax = pensionTaxSchedule(schedule, setup);
     const last = tax.rows[tax.rows.length - 1];

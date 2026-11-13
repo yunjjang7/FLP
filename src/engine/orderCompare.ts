@@ -141,7 +141,7 @@ export function runCombo(base: CompareBase, combo: OrderCombo, c: CompareContrib
     extras: plan.goals.filter((g) => g.age >= start),
   };
   const schedule = compareStrategy(base.strategy, input, 0).schedule;
-  const setup = taxSetup(vp, va, nowYear, base.input.startBalance, base.meanReturn, profile.birthYear + start);
+  const setup = taxSetup(vp, va, nowYear, base.input.startBalance, base.meanReturn, profile.birthYear + start, base.summary.yearShare ?? 1);
   if (!setup) return null;
   return summarizeTax(pensionTaxSchedule(schedule, setup), setup, combo);
 }

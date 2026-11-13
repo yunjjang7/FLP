@@ -247,7 +247,7 @@ export interface IncomeTaxRow {
   baseYear: number; // 비교 기준 해: 첫해. 은퇴 전 급여가 있으면 급여가 모두 끝난 해부터는 그 해(은퇴 후 구간)
   npPart: number; // 그중 국민연금 몫
   rentPart: number; // 그중 임대료 인상 몫
-  yuPaySelf: number; // 노란우산 납입액(본인, 명목)
+  yuPaySelf: number; // 노란우산 소득공제 기준 납입액(본인, 명목): 올해는 남은 달분, 프로필 yuDedFullYear 면 1~12월 전체
   yuPaySpouse: number;
   yuDedSelf: number; // 노란우산 소득공제(본인, 명목): 사업소득금액(임대 제외) 구간별 한도, 법인 대표자는 근로소득금액
   yuDedSpouse: number;
@@ -273,6 +273,7 @@ export interface IncomeTaxRow {
  * liabilities: 자산별 추정에서 주택 구입 대출 공제(hiLoanDeduct)를 켰을 때 쓰는 부채 목록.
  * 노란우산공제(자산에서 표시하고 연 납입액을 넣은 것)는 납입하는 해에 소득공제로 종합소득세를 줄임(건보료는 소득공제 전 소득이라 그대로).
  * firstShare: 올해 남은 달 비율(Summary.yearShare). 올해 노란우산 부금은 그만큼만 낸다고 보고 소득공제도 그 금액으로 셈.
+ * 프로필 yuDedFullYear 면 올해 소득공제는 실제 세법처럼 1~12월 전체 납입액(지난 달 납입분 포함) 기준. 이때 행의 yuPaySelf·yuPaySpouse 도 그 금액.
  */
 export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?: Map<number, number | [number, number]>, assets: Asset[] = [], liabilities: Liability[] = [], firstShare = 1): IncomeTaxRow[] {
   const s = { ...DEFAULT_INCOME_TAX, ...(profile.incomeTax ?? {}) };
@@ -305,9 +306,9 @@ export function incomeTaxSchedule(profile: Profile, nowYear: number, slotByYear?
   const rate = s.hiRate / 100;
   const pub = s.hiPublic / 100;
   const rows: IncomeTaxRow[] = [];
-  // 노란우산 납입액(연도별 [본인, 배우자], 명목)
+  // 노란우산 소득공제 기준 납입액(연도별 [본인, 배우자], 명목): 올해는 남은 달분, yuDedFullYear 면 1~12월 전체
   const yuPay = new Map<number, [number, number]>();
-  for (const x of yuPayments(assets, profile, nowYear, firstShare)) {
+  for (const x of yuPayments(assets, profile, nowYear, profile.yuDedFullYear ? 1 : firstShare)) {
     const v = yuPay.get(x.year) ?? [0, 0];
     v[x.owner === 'spouse' ? 1 : 0] += x.amount;
     yuPay.set(x.year, v);

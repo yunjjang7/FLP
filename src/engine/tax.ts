@@ -62,8 +62,9 @@ export interface TaxSetup {
 /**
  * 현재 자산을 계좌·세금 재원별로 나눔(인출 시작 자산 startBalance 에 비례해 맞춤).
  * 과세제외·퇴직금 재원은 명목 금액이 그대로라(운용수익은 모두 과세재원), 인출 시작(startYear)이 뒤면 그때까지 물가만큼 실질 금액이 줄어듦.
+ * firstShare: 올해 남은 달 비율(Summary.yearShare). 추가 납입 세액공제의 종소세 한도(노란우산 소득공제 포함)를 노후 진단(buildPlanInput)과 같은 기준으로 계산
  */
-export function taxSetup(profile: Profile, assets: Asset[], nowYear: number, startBalance: number, meanReturn: number, startYear = nowYear): TaxSetup | null {
+export function taxSetup(profile: Profile, assets: Asset[], nowYear: number, startBalance: number, meanReturn: number, startYear = nowYear, firstShare = 1): TaxSetup | null {
   // 같은 계좌로 묶인 줄(리밸런싱으로 나눈 줄)은 계좌 하나로: 수령한도·퇴직금 최소 인출·인출 순서가 계좌 단위
   const liquid = mergeAccounts(assets.filter((a) => isFinancial(a) && !isLocked(a, nowYear)));
   const pension = liquid.filter((a) => a.type === 'pension');
@@ -98,7 +99,7 @@ export function taxSetup(profile: Profile, assets: Asset[], nowYear: number, sta
     retireYear1: profile.retireTaxYear1 || nowYear,
     retireMinDraw: Math.max(0, profile.retireMinDraw ?? 0),
     slotFillFrom: profile.slotFill ? Math.max(nowYear, profile.slotFillFrom || nowYear) : Infinity,
-    contrib: contribSchedule(profile, incomeTaxSchedule(profile, nowYear, undefined, assets)),
+    contrib: contribSchedule(profile, incomeTaxSchedule(profile, nowYear, undefined, assets, [], firstShare)),
   };
 }
 

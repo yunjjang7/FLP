@@ -58,7 +58,7 @@ function taxPlan(profile: Profile, assets: Asset[], inp: PlanInput, nowYear: num
   if (profile.planPensionTax === false) return { base, setup: null, schedule: [] };
   const start = withdrawStart(base);
   const wi = withdrawInputOf(base, start, { endAge: inp.lifeExpectancy, inflation: inp.inflation, startBalance: start.balance });
-  const setup = taxSetup({ ...profile, inflation: inp.inflation }, assets, nowYear, wi.startBalance, wi.meanReturn, profile.birthYear + start.age);
+  const setup = taxSetup({ ...profile, inflation: inp.inflation }, assets, nowYear, wi.startBalance, wi.meanReturn, profile.birthYear + start.age, inp.firstYearShare ?? 1);
   if (setup && inp.death) setup.death = { owner: inp.death.who, year: profile.birthYear + inp.death.age };
   return { base, setup, schedule: setup ? compareStrategy(PENSION_TAX_STRATEGY, wi, 0).schedule : [] };
 }

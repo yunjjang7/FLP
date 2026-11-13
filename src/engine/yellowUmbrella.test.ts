@@ -3,9 +3,10 @@ import { sampleData } from '../db/sample';
 import { fromCSV, toCSV } from '../db/csv';
 import type { Asset, Profile } from '../types';
 import { buildPlanInput, lockedInflow } from './goals';
-import { incomeTaxSchedule, personIncomeTax, wageIncomeAmount } from './incomeTax';
+import { contribSchedule, creditInflows, incomeTaxSchedule, personIncomeTax, wageIncomeAmount } from './incomeTax';
 import { goalKind, outflowAt } from './montecarlo';
 import { summarize } from './portfolio';
+import { taxSetup } from './tax';
 import { convertedDeduction, retireIncomeTax, serviceDeduction, yuLimit, yuPayments, yuPayout, yuPayTo, yuService } from './yellowUmbrella';
 
 const Y = 2026;
@@ -178,6 +179,60 @@ describe('노란우산공제', () => {
     expect(yuPayments([{ ...yu, yuLastMonths: 11 }], profile, Y, nov)[0].amount).toBeCloseTo(100, 10);
     expect(yuPayments([{ ...yu, yuLastMonths: 3 }], profile, Y, nov)).toEqual([]); // 3월에 이미 끝남
     expect(incomeTaxSchedule(profile, Y, undefined, [{ ...yu, yuLastMonths: 3 }], [], nov)[0].yuDedSelf).toBe(0);
+  });
+
+  it('프로필 ‘올해 소득공제 1~12월 기준’: 올해 소득공제만 1~12월 전체 납입액으로, 적립금·지출은 남은 달 기준 그대로', () => {
+    const { d, profile: base, yu: y0 } = setup(3000);
+    const yu: Asset = { ...y0, yuPay: 400 }; // 한도(600) 안이라 낸 만큼 모두 공제
+    const assets: Asset[] = [{ name: '예금', type: 'deposit', amount: 10000, expectedReturn: 3, volatility: 0.5, purpose: 'short', nature: 'safe' }, yu];
+    const s = summarize(base, assets, [], d.cashflows, Y, d.insurance, 7); // 6개월 남음
+    const full: Profile = { ...base, yuDedFullYear: true };
+    // 소득공제: 기본은 남은 달분 200, 옵션을 켜면 1~12월 400(다음 해부터는 같음)
+    const off = incomeTaxSchedule(base, Y, undefined, assets, [], s.yearShare);
+    const on = incomeTaxSchedule(full, Y, undefined, assets, [], s.yearShare);
+    expect(off[0].yuDedSelf).toBeCloseTo(200, 10);
+    expect(on[0].yuPaySelf).toBeCloseTo(400, 10);
+    expect(on[0].yuDedSelf).toBeCloseTo(400, 10);
+    expect(on[1].yuDedSelf).toBeCloseTo(off[1].yuDedSelf, 10);
+    expect(on[0].yuSave).toBeCloseTo(personIncomeTax(3000, 150) - personIncomeTax(3000, 550), 6);
+    // 노후 진단: 절세 유입만 커지고, 금융자산 지출(부금)과 수령 적립금은 같음
+    const inpOff = buildPlanInput(base, assets, [], [], s);
+    const inpOn = buildPlanInput(full, assets, [], [], s);
+    const pay = (inp: typeof inpOff) => inp.goals.filter((g) => goalKind(g) === 'yuPay').map((g) => g.amount);
+    expect(pay(inpOn)).toEqual(pay(inpOff));
+    expect(pay(inpOn)[0]).toBeCloseTo(200, 10);
+    const saveOf = (inp: typeof inpOff) => inp.inflows!.filter((x) => x.kind === 'yuSave')[0].amount;
+    expect(saveOf(inpOn)).toBeGreaterThan(saveOf(inpOff));
+    expect(yuPayout(yu, full, Y, undefined, s.yearShare).fv).toBeCloseTo(yuPayout(yu, base, Y, undefined, s.yearShare).fv, 10);
+    // 올해가 마지막 해(3개월)이고 11월이면: 남은 달 납입은 없지만, 옵션을 켜면 1~3월 납입분 300을 올해 공제
+    const last: Asset = { ...y0, yuPay: 1200, yuPayTo: Y, yuLastMonths: 3 };
+    const nov = 2 / 12;
+    expect(yuPayments([last], full, Y, nov)).toEqual([]);
+    expect(incomeTaxSchedule(base, Y, undefined, [last], [], nov)[0].yuDedSelf).toBe(0);
+    expect(incomeTaxSchedule(full, Y, undefined, [last], [], nov)[0].yuDedSelf).toBeCloseTo(300, 10);
+  });
+
+  it('tax.ts: 연금 추가 납입 세액공제가 노후 진단과 같은 올해 남은 달 기준(노란우산 소득공제로 줄어든 종소세 한도)', () => {
+    // 사업소득이 적어 세액공제가 그 해 종소세에서 막히는 경우: 올해 노란우산 공제가 200이냐 400이냐에 따라 세액공제가 달라짐
+    const { d, profile: p0, yu: y0 } = setup(1500, { contrib: { self: 900, spouse: 0, from: Y, to: Y + 1, selfRate: 16.5, spouseRate: 0 } });
+    const yu: Asset = { ...y0, yuPay: 400 };
+    const irp: Asset = { name: 'IRP', type: 'pension', amount: 5000, expectedReturn: 3, volatility: 5, purpose: 'long', nature: 'invest' };
+    const assets: Asset[] = [{ name: '예금', type: 'deposit', amount: 10000, expectedReturn: 3, volatility: 0.5, purpose: 'short', nature: 'safe' }, irp, yu];
+    for (const profile of [p0, { ...p0, yuDedFullYear: true }]) {
+      const s = summarize(profile, assets, [], d.cashflows, Y, d.insurance, 7);
+      const inp = buildPlanInput(profile, assets, [], [], s);
+      const setupTax = taxSetup(profile, assets, Y, 15000, 3, Y, s.yearShare)!;
+      // 노후 진단의 세액공제 환급(다음 해 유입)과 tax.ts 의 세액공제가 같은 금액
+      const credits = inp.inflows!.filter((x) => x.kind === 'credit').map((x) => x.amount);
+      expect(credits.length).toBe(2);
+      expect(creditInflows(profile, Y, setupTax.contrib).map((x) => x.amount)).toEqual(credits);
+      expect(setupTax.contrib).toEqual(contribSchedule(profile, incomeTaxSchedule(profile, Y, undefined, assets, [], s.yearShare)));
+    }
+    // 남은 달 비율을 넘기지 않으면(예전 동작) 올해 공제가 1년치로 커져 세액공제가 달라짐 → 비율이 실제로 쓰인다는 확인
+    const s = summarize(p0, assets, [], d.cashflows, Y, d.insurance, 7);
+    const share = taxSetup(p0, assets, Y, 15000, 3, Y, s.yearShare)!.contrib[0].creditSelf;
+    const whole = taxSetup(p0, assets, Y, 15000, 3, Y)!.contrib[0].creditSelf;
+    expect(share).toBeGreaterThan(whole);
   });
 
   it('근속연수: 가입한 달부터 수령한 달까지 개월 수 ÷ 12 올림(1년 미만은 1년), 월을 비우면 연도 차이', () => {

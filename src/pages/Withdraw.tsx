@@ -71,7 +71,7 @@ function WithdrawInner() {
   const incomeChart = results[0].ages.map((age, i) => ({ age, need: livingOf(input, age) / 12, ...Object.fromEntries(results.map((r) => [r.key, r.medianIncome[i] / 12])) }));
   const sel = results.find((r) => r.key === selected)!;
   const nowYear = p.birthYear + d.summary.age;
-  const setup = useMemo(() => taxSetup(p, d.assets, nowYear, startBalance, retMean, p.birthYear + startAge), [p, d.assets, nowYear, startBalance, retMean, startAge]);
+  const setup = useMemo(() => taxSetup(p, d.assets, nowYear, startBalance, retMean, p.birthYear + startAge, d.summary.yearShare ?? 1), [p, d.assets, nowYear, startBalance, retMean, startAge, d.summary.yearShare]);
   const tax = useMemo(() => (setup ? pensionTaxSchedule(sel.schedule, setup) : null), [setup, sel]);
   const compareBase: CompareBase = useMemo(
     () => ({ profile: p, assets: d.assets, liabilities: d.liabilities, goals: d.goals, summary: d.summary, input, strategy: selected, meanReturn: retMean }),

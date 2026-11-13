@@ -1028,6 +1028,7 @@ const MONTH_OPTIONS: Record<string, string> = { 0: '비움', ...Object.fromEntri
 
 function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v: unknown) => void }) {
   const { profile: p, summary, assets, liabilities } = useFlp();
+  const saveProfile = useSaveProfile();
   const nowYear = p.birthYear + summary.age;
   const hasSpouse = p.spouseBirthYear > 0;
   const pension = a.type === 'pension';
@@ -1046,10 +1047,14 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
   const inflow = locked ? lockedInflow(a, p, nowYear, taxRows, summary.yearShare ?? 1) : null;
   const yuWho = a.owner === 'spouse' && hasSpouse ? 'spouse' : 'self';
   const yuRow = taxRows?.find((r) => (yuWho === 'spouse' ? r.yuPaySpouse : r.yuPaySelf) > 0);
-  // 이 계좌의 그 해 납입액(올해는 남은 달만큼)과 그중 소득공제 받는 금액(명의자 공제 비율로 나눔)
+  // 이 계좌의 그 해 납입액(올해는 남은 달만큼)과 그중 소득공제 받는 금액(공제 기준 납입액 × 명의자 공제 비율)
+  // 프로필 ‘올해 소득공제 1~12월 기준’이면 올해 공제는 1~12월 전체 납입액 기준
   const yuShare = summary.yearShare ?? 1;
-  const yuPayRow = yuRow ? yuPayments([a], p, nowYear, yuShare).find((x) => x.year === yuRow.year)?.amount ?? 0 : 0;
-  const yuDed = yuRow && taxRows ? yuPayRow * yuDedFracOf(taxRows)(yuRow.year, yuWho) : 0;
+  const yuAmt = (share: number) => (yuRow ? yuPayments([a], p, nowYear, share).find((x) => x.year === yuRow.year)?.amount ?? 0 : 0);
+  const yuPayRow = yuAmt(yuShare);
+  const yuDedBase = yuAmt(p.yuDedFullYear ? 1 : yuShare);
+  const yuDed = yuRow && taxRows ? yuDedBase * yuDedFracOf(taxRows)(yuRow.year, yuWho) : 0;
+  const yuFullNote = p.yuDedFullYear && yuRow?.year === nowYear && yuShare < 1;
   const yuMonths = Math.round(yuShare * 12);
   const yuPaying = yu && (a.yuPay ?? 0) > 0;
   return (
@@ -1092,6 +1097,9 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
             </Labeled>
             <Labeled label="가입 월" hint="가입한 달부터 수령한 달까지로 근속연수(1년 미만은 1년으로 올림)">
               <SelectField value={String(a.yuJoinMonth ?? 0)} onChange={(v) => onChange('yuJoinMonth', Number(v) || undefined)} options={MONTH_OPTIONS} />
+            </Labeled>
+            <Labeled label="올해 소득공제 기준" hint={`프로필 설정 · 모든 노란우산에 적용 · 적립금·지출은 늘 남은 ${yuMonths}개월분`}>
+              <SelectField value={p.yuDedFullYear ? 'full' : 'rest'} onChange={(v) => saveProfile({ yuDedFullYear: v === 'full' ? true : undefined })} options={{ rest: '남은 달 납입액(기본)', full: '1~12월 전체 납입액(세법)' }} />
             </Labeled>
             <Labeled label="공제 안 받은 부금(만원)" hint="지금까지 소득공제 못 받은 부금 누계 · 비과세">
               <NumberField value={a.taxFree ?? 0} onChange={(v) => onChange('taxFree', v > 0 ? v : undefined)} />
@@ -1142,7 +1150,7 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
       )}
       {yuPaying && locked && yuRow && (
         <p className="mt-2 text-xs text-muted">
-          {yuRow.year}년 납입 {won(yuPayRow)}{yuRow.year === nowYear && yuShare < 1 ? `(연 ${won(a.yuPay!)} 중 올해 남은 ${yuMonths}개월분)` : ''} 중 소득공제 {won(yuDed)}
+          {yuRow.year}년 납입 {won(yuPayRow)}{yuRow.year === nowYear && yuShare < 1 ? `(연 ${won(a.yuPay!)} 중 올해 남은 ${yuMonths}개월분)` : ''}{yuFullNote ? `, 소득공제는 1~12월 전체 납입액 ${won(yuDedBase)} 기준 ${won(yuDed)}` : ` 중 소득공제 ${won(yuDed)}`}
           {yuRow.yuSave > 0.5 ? ` → 종합소득세 약 ${won(yuRow.yuSave)} 감소(부부 합계, 다음 해 5월에 들어오는 돈으로 계산)` : ''}.
           {yuDed <= 0 && <> 사업소득이 없어 공제하지 않았습니다. 은퇴 전 사업소득은 <SetupLink tab="profile" card="그 밖의 은퇴 후 소득">프로필 → 그 밖의 소득</SetupLink>에 ‘사업소득’으로 지금 나이부터 넣거나, 법인 대표자면 세전 총급여(연 {won(YU_CEO_WAGE)} 이하)를 넣으세요.</>}
           {' '}해마다 연 납입액을 꺼내 쓸 수 있는 금융자산에서 이 계좌로 옮기는 것으로 계산합니다(지출 탭에 부금을 또 넣지 마세요).
