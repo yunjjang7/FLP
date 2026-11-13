@@ -3,7 +3,7 @@ import { Bar as RBar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAx
 import { ExpenseCompare } from '../components/ExpenseCompare';
 import { GuardrailCompare } from '../components/GuardrailCompare';
 import { LifeChart } from '../components/LifeChart';
-import { SetupLink } from '../components/SetupLink';
+import { SetupLink, useCardTarget } from '../components/SetupLink';
 import { Sensitivity } from '../components/Sensitivity';
 import { StressTest } from '../components/StressTest';
 import { debtAnnualAt, expenseAt, expenseRatioAt, GOAL_KIND_LABEL, goalBreakdownAt, goalKind, guardrailSim, incomeValue, nominalFactor } from '../engine/montecarlo';
@@ -21,6 +21,7 @@ import { payEndSelfAge } from '../engine/portfolio';
 
 export default function Retire() {
   const d = useFlp();
+  useCardTarget();
   // 하락장 가드레일 중앙값(비교 카드와 같은 결과를 함께 씀)
   const { guardrailDrop: gDrop, guardrailCut: gCut } = d.profile.criteria;
   const gsim = useMemo(() => (d.hasData && gDrop > 0 && gCut > 0 ? guardrailSim(d.planInput, { drop: gDrop, cut: gCut }) : null), [d.hasData, d.planInput, gDrop, gCut]);

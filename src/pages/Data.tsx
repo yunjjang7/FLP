@@ -8,6 +8,7 @@ import { JoinAccount } from '../components/JoinAccount';
 import { ASSET_TYPES, insuredBirthYear, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, PageHeader } from '../components/ui';
+import { jumpToTarget } from '../components/SetupLink';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
 import { won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -46,25 +47,7 @@ function useSetupTarget(setTab: (t: Tab) => void) {
     const card = sp.get('card');
     const field = sp.get('field');
     if (!card && !field) return;
-    let tries = 0;
-    let timer = 0;
-    // 탭 내용이 그려질 때까지(데이터 로딩 포함) 잠깐 기다리며 찾음. 칸이 숨겨져 있으면 카드로
-    const find = () => {
-      const scope: ParentNode | null = card ? document.querySelector(`[data-card="${CSS.escape(card)}"]`) : document;
-      const el = (field && scope?.querySelector<HTMLElement>(`[data-field="${CSS.escape(field)}"]`)) || (scope instanceof HTMLElement ? scope : null);
-      if (!el) {
-        if (++tries < 20) timer = window.setTimeout(find, 100);
-        return;
-      }
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-      el.classList.remove('setup-target');
-      void el.offsetWidth; // 같은 칸을 다시 눌러도 강조가 다시 보이게
-      el.classList.add('setup-target');
-      el.querySelector<HTMLElement>('input, select')?.focus({ preventScroll: true });
-      timer = window.setTimeout(() => el.classList.remove('setup-target'), 2600);
-    };
-    timer = window.setTimeout(find, 50);
-    return () => window.clearTimeout(timer);
+    return jumpToTarget(card, field);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key]);
 }

@@ -8,11 +8,10 @@ import { withdrawLevel } from '../engine/risk';
 import { BucketGuide } from '../components/BucketGuide';
 import { DrawLog } from '../components/DrawLog';
 import { ScenarioTable } from '../components/ScenarioTable';
-import { ExpenseCompare } from '../components/ExpenseCompare';
 import { Milestones } from '../components/Milestones';
 import { IncomeTaxCard } from '../components/IncomeTaxCard';
 import { OrderCompare } from '../components/OrderCompare';
-import { SetupLink } from '../components/SetupLink';
+import { CardLink, SetupLink } from '../components/SetupLink';
 import type { CompareBase } from '../engine/orderCompare';
 import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
 import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
@@ -259,7 +258,9 @@ function WithdrawInner() {
         </Card>
       </div>
 
-      <ExpenseCompare />
+      <p className="mt-4 text-sm text-muted">
+        물가 연동·명목 고정 같은 생활비 가정별 성공확률과 고갈 나이는 <CardLink to="/retire" card="생활비 가정 비교">노후 진단의 ‘생활비 가정 비교’</CardLink>에서 봅니다.
+      </p>
 
       <YearEndReview input={{ ...input, startBalance: start.balance }} startAge={startAge} band={band / 100} cut={cut / 100} cutOnly={cutOnly} />
 
