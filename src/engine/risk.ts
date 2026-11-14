@@ -135,7 +135,7 @@ export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdr
     {
       key: 'liquidity', label: '유동성', value: `${liquidShare.toFixed(1)}%`,
       score: scale(liquidShare, 10, 20), level: 'good',
-      detail: `바로 현금화 가능한 자산 비중. 20% 이상 권장.${assets.some((a) => a.type === 'pension' && a.amount > 0) ? ' 연금 계좌는 55세 이후에도 연금수령한도 안에서만 낮은 세율로 꺼낼 수 있어 뺐습니다.' : ''}`,
+      detail: `바로 현금화 가능한 자산 비중. 20% 이상 권장.${assets.some((a) => a.type === 'pension' && a.amount > 0) ? ' 연금 계좌는 55세 이후에도 연금수령한도 안에서만 낮은 세율로 꺼낼 수 있어 이 비중에 넣지 않았습니다.' : ''}`,
     },
     {
       key: 'fit', label: '위험성향 적합도', value: `투자형 ${s.investShare.toFixed(0)}%`,

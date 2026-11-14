@@ -263,8 +263,17 @@ export function retirePremiums(s: Summary, retireAge: number, inflation: number,
   const push = (name: string, monthly: number, endExclusive: number) => {
     for (let age = Math.max(retireAge, s.age); age < endExclusive; age++) out.push({ age, amount: (monthly * 12) / Math.pow(1 + inflation / 100, age - s.age), premium: name, flow: true });
   };
-  for (const x of s.insuranceEnds.filter((e) => e.age > retireAge)) push(x.name, x.monthly, x.age);
-  if (lifeExpectancy !== undefined) for (const x of s.insuranceOngoing ?? []) push(x.name, x.monthly, lifeExpectancy + 1);
+  const list = s.insuranceEnds.filter((e) => e.age > retireAge).map((x) => ({ name: x.name, monthly: x.monthly, end: x.age }))
+    .concat(lifeExpectancy !== undefined ? (s.insuranceOngoing ?? []).map((x) => ({ name: x.name, monthly: x.monthly, end: lifeExpectancy + 1 })) : []);
+  // 이름이 같은 보험이 여러 건이면 보고서 등에서 한 줄로 합쳐지지 않게 '이름 (1)', '이름 (2)'로 나눔
+  const total = new Map<string, number>();
+  for (const x of list) total.set(x.name, (total.get(x.name) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  for (const x of list) {
+    const k = (seen.get(x.name) ?? 0) + 1;
+    seen.set(x.name, k);
+    push(total.get(x.name)! > 1 ? `${x.name} (${k})` : x.name, x.monthly, x.end);
+  }
   return out;
 }
 

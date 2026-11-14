@@ -462,6 +462,13 @@ describe('은퇴 후 보험료', () => {
     expect(retirePremiums(summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, [{ ...a, payEndAge: 55 }, ...rest]), 60, 2.5)).toEqual([]);
     expect(retirePremiums(summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance), 60, 2.5)).toEqual([]);
   });
+  it('이름이 같은 보험이 여러 건이면 이름 뒤에 (1)·(2)를 붙여 따로 셈', () => {
+    const twin = [{ ...a, payEndAge: 62, monthlyPremium: 10 }, { ...a, id: 999, payEndAge: 65, monthlyPremium: 30 }];
+    const p = retirePremiums(summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, twin), 60, 0);
+    expect(p.filter((x) => x.premium === `${a.name} (1)`).map((x) => [x.age, x.amount])).toEqual([[60, 120], [61, 120]]);
+    expect(p.filter((x) => x.premium === `${a.name} (2)`).map((x) => x.age)).toEqual([60, 61, 62, 63, 64]);
+    expect(p.find((x) => x.premium === `${a.name} (2)`)!.amount).toBe(360);
+  });
   it('납입 종료 나이가 0이면 은퇴~기대수명까지 매년 자산에서 뺌', () => {
     const [b] = rest;
     const p = retirePremiums(s, 60, d.profile.inflation, d.profile.lifeExpectancy).filter((g) => g.premium === b.name);
