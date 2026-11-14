@@ -85,4 +85,23 @@ describe('배우자 사별 분석', () => {
     const c = survivorCases(base, { livingRatio: 70, rate: 60, spouseGap: 3 }, { self: 0, spouse: 0 })[0];
     expect(c.input.death).toEqual({ who: c.dies, age: c.age });
   });
+
+  it('사망보장: 떠난 사람 보험금 금액과 보험금 없이 돌린 계획을 함께 돌려줌', () => {
+    const cases = survivorCases(base, opt, { self: 20000, spouse: 0 });
+    const self = cases.find((c) => c.key === 'self-75')!;
+    expect(self.benefit).toBe(20000);
+    expect(self.input.inflows?.some((f) => f.name === '사망보험금')).toBe(true);
+    expect(self.noBenefit).toBeDefined();
+    expect(self.noBenefit!.inflows ?? []).toEqual([]);
+    // 보험금 외에는 같은 사별 계획
+    expect(self.noBenefit!.pensions).toEqual(self.input.pensions);
+    expect(self.noBenefit!.lifeExpectancy).toBe(self.input.lifeExpectancy);
+    // 보험금이 있으면 평균 수익 경로의 마지막 잔액이 더 큼
+    const withB = deterministicPath(self.input), noB = deterministicPath(self.noBenefit!);
+    expect(withB.balances[withB.balances.length - 1]).toBeGreaterThan(noB.balances[noB.balances.length - 1]);
+    // 배우자 쪽은 사망보장이 없어 비교 계획도 없음
+    const sp = cases.find((c) => c.key === 'spouse-75')!;
+    expect(sp.benefit).toBe(0);
+    expect(sp.noBenefit).toBeUndefined();
+  });
 });

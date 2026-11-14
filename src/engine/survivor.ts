@@ -98,6 +98,10 @@ export interface SurvivorCase extends StressCase {
   age: number;
   incomeBefore: number; // 사별 다음 해 부부 연금·소득(연, 오늘 물가) — 사별이 없을 때
   incomeAfter: number; // 사별 다음 해 혼자의 연금·소득
+  /** 보험 탭에서 떠난 사람의 사망보장 합계(계약 금액, 만원) */
+  benefit: number;
+  /** 사망보장이 있을 때만: 사망보험금 없이 같은 사별을 돌린 계획(보험이 성공확률에 얼마나 기여하는지 비교용) */
+  noBenefit?: PlanInput;
 }
 
 /** 본인·배우자가 각각 65·75·85세(본인 나이)에 먼저 떠나는 경우들 */
@@ -118,6 +122,8 @@ export function survivorCases(input: PlanInput, base: Omit<SurvivorOptions, 'die
         age,
         incomeBefore: pensionAt(input, age + 1),
         incomeAfter: pensionAt(next, age + 1),
+        benefit: Math.max(0, benefits[dies] ?? 0),
+        ...(next.inflows?.some((f) => f.name === '사망보험금') ? { noBenefit: survivorInput(input, { ...o, deathBenefit: 0 }) } : {}),
       });
     }
   }
