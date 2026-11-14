@@ -1,8 +1,7 @@
-import { useState } from 'react';
-import { SURVIVOR_LIVING, SURVIVOR_OVERLAP, SURVIVOR_RATES } from '../engine/survivor';
+import { SURVIVOR_OVERLAP, SURVIVOR_RATES } from '../engine/survivor';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
-import { SURVIVOR_RATE, useSurvivor } from '../store/useSurvivor';
+import { setSurvivorSettings, useSurvivor } from '../store/useSurvivor';
 import type { Level } from '../types';
 import { Labeled, NumberField, SelectField } from './fields';
 import { Card } from './ui';
@@ -13,10 +12,11 @@ import { Card } from './ui';
  */
 export function SurvivorCard() {
   const { planInput: inp, profile: p, simFlat: sim } = useFlp();
-  const [living, setLiving] = useState(SURVIVOR_LIVING);
-  const [rate, setRate] = useState(SURVIVOR_RATE);
   const target = p.criteria.successTarget;
-  const { hasSpouse, cases, rows, worst: w, benefits } = useSurvivor(living, rate);
+  // 바꾼 설정은 이 브라우저에 저장되고 요약보고·보험 탭 사망보장 효과에도 그대로 쓰임
+  const { hasSpouse, cases, rows, worst: w, benefits, living, rate } = useSurvivor();
+  const setLiving = (v: number) => setSurvivorSettings({ living: v });
+  const setRate = (v: number) => setSurvivorSettings({ rate: v });
 
   if (!hasSpouse || cases.length === 0) return null;
   const lvl = (v: number): Level => (v >= target ? 'good' : v >= 60 ? 'caution' : 'danger');

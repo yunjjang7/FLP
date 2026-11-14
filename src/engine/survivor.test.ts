@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { deterministicPath, expenseRatioAt, incomeValue, pensionAt, type PlanInput } from './montecarlo';
-import { SURVIVOR_OVERLAP, survivorBenefitText, survivorCases, survivorIncomes, survivorInput, survivorSteps, survivorWorst } from './survivor';
+import { parseSurvivorSettings, SURVIVOR_DEFAULTS, SURVIVOR_OVERLAP, survivorBenefitText, survivorCases, survivorIncomes, survivorInput, survivorSteps, survivorWorst } from './survivor';
 import { survivorLine } from './report';
 
 const base: PlanInput = {
@@ -114,7 +114,10 @@ describe('배우자 사별 분석', () => {
     const w = survivorWorst(cases, rows)!;
     expect(w).toEqual({ key: 'self-65', label: '본인이 65세에 먼저', successRate: 50, benefit: 20000, plain: 40 });
     const won = (v: number) => `${v}만원`;
-    expect(survivorBenefitText(w, won)).toBe('보험 탭 사망보장 20000만원이 들어간 값이며, 사망보장이 없으면 40%입니다(보험으로 +10.0%p).');
+    expect(survivorBenefitText(w, won)).toBe('보험 탭 사망보장 20000만원이 들어간 값이며, 사망보장이 없으면 40.0%입니다(보험으로 +10.0%p).');
+    // 성공확률·차이 모두 소수 첫째 자리로, 차이는 보여 주는 값끼리 계산(12.34 − 10.66 → 12.3 − 10.7 = 1.6)
+    expect(survivorBenefitText({ ...w, successRate: 12.34, plain: 10.66 }, won)).toContain('없으면 10.7%입니다(보험으로 +1.6%p)');
+    expect(survivorBenefitText({ ...w, successRate: 10.04, plain: 9.98 }, won)).toContain('(보험으로 차이 없음)');
     expect(survivorBenefitText({ ...w, benefit: 0, plain: undefined }, won)).toContain('보험금 없이 계산한 값');
     // 배우자 쪽이 가장 어려우면 사망보장 없음
     const w2 = survivorWorst(cases, rows.map((r) => ({ ...r, successRate: r.key === 'spouse-85' ? 10 : 90 })))!;
@@ -125,9 +128,17 @@ describe('배우자 사별 분석', () => {
   it('요약보고 줄: 계산 중이면 안내, 끝나면 가장 어려운 경우·지금 계획·보험 없을 때 성공확률', () => {
     expect(survivorLine({ worst: null, base: 80, living: 70, rate: 60 }, 80).text).toContain('계산하는 중');
     const l = survivorLine({ worst: { key: 'self-75', label: '본인이 75세에 먼저', successRate: 72, benefit: 10000, plain: 61 }, base: 85, living: 70, rate: 60 }, 80);
-    expect(l.text).toContain('가장 어려운 경우는 본인이 75세에 먼저 떠날 때로 성공확률 72%');
-    expect(l.text).toContain('지금 계획 85%');
-    expect(l.text).toContain('사망보장이 없으면 61%');
+    expect(l.text).toContain('가장 어려운 경우는 본인이 75세에 먼저 떠날 때로 성공확률 72.0%');
+    expect(l.text).toContain('지금 계획 85.0%');
+    expect(l.text).toContain('사망보장이 없으면 61.0%입니다(보험으로 +11.0%p)');
     expect(l.level).toBe('caution');
+  });
+
+  it('사별 분석 설정: 저장값을 읽고, 깨졌거나 범위를 벗어나면 기본값', () => {
+    expect(parseSurvivorSettings(null)).toEqual(SURVIVOR_DEFAULTS);
+    expect(parseSurvivorSettings('{깨짐')).toEqual(SURVIVOR_DEFAULTS);
+    expect(parseSurvivorSettings(JSON.stringify({ living: 80, rate: 50 }))).toEqual({ living: 80, rate: 50 });
+    expect(parseSurvivorSettings(JSON.stringify({ living: 10, rate: 55 }))).toEqual({ living: 30, rate: SURVIVOR_DEFAULTS.rate });
+    expect(parseSurvivorSettings(JSON.stringify({ living: 150, rate: '40' }))).toEqual({ living: 100, rate: SURVIVOR_DEFAULTS.rate });
   });
 });

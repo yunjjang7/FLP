@@ -155,11 +155,35 @@ export function survivorWorst(cases: SurvivorCase[], rows: SurvivorRow[]): Survi
   return { key: c.key, label: c.label, successRate: r.successRate, benefit: c.benefit, ...(r.plain !== undefined ? { plain: r.plain } : {}) };
 }
 
-/** 가장 어려운 경우의 사망보장 효과 문장(요약보고·보험 탭 공통) */
+/** 성공확률을 소수 첫째 자리로(사별 보장 효과 문장의 숫자끼리 맞도록 차이도 이 값끼리 계산) */
+export const round1 = (v: number) => Math.round(v * 10) / 10;
+
+/** 가장 어려운 경우의 사망보장 효과 문장(요약보고·보험 탭 공통). 성공확률·차이 모두 소수 첫째 자리 */
 export function survivorBenefitText(w: SurvivorWorst, won: (v: number) => string): string {
   if (w.plain !== undefined) {
-    const d = w.successRate - w.plain;
-    return `보험 탭 사망보장 ${won(w.benefit)}이 들어간 값이며, 사망보장이 없으면 ${w.plain.toFixed(0)}%입니다(보험으로 ${d >= 0.05 ? `+${d.toFixed(1)}%p` : '차이 거의 없음'}).`;
+    const d = round1(round1(w.successRate) - round1(w.plain));
+    return `보험 탭 사망보장 ${won(w.benefit)}이 들어간 값이며, 사망보장이 없으면 ${round1(w.plain).toFixed(1)}%입니다(보험으로 ${d > 0 ? `+${d.toFixed(1)}%p` : d < 0 ? `−${Math.abs(d).toFixed(1)}%p` : '차이 없음'}).`;
   }
   return '먼저 떠나는 사람의 사망보장이 보험 탭에 없어 보험금 없이 계산한 값입니다.';
+}
+
+/** 사별 분석 설정(노후 진단 카드에서 바꾸면 요약보고·보험 탭도 같은 값을 씀) */
+export interface SurvivorSettings {
+  living: number; // 혼자일 때 생활비 비율(%), 30~100
+  rate: number; // 유족연금 지급률(%), SURVIVOR_RATES 중 하나
+}
+export const SURVIVOR_DEFAULTS: SurvivorSettings = { living: SURVIVOR_LIVING, rate: 60 };
+
+/** 저장된 설정 읽기: 깨졌거나 범위를 벗어나면 기본값으로 */
+export function parseSurvivorSettings(raw: string | null | undefined): SurvivorSettings {
+  let v: unknown;
+  try {
+    v = raw ? JSON.parse(raw) : null;
+  } catch {
+    v = null;
+  }
+  const o = (v && typeof v === 'object' ? v : {}) as Partial<Record<keyof SurvivorSettings, unknown>>;
+  const living = typeof o.living === 'number' && Number.isFinite(o.living) ? Math.min(100, Math.max(30, o.living)) : SURVIVOR_DEFAULTS.living;
+  const rate = typeof o.rate === 'number' && SURVIVOR_RATES.includes(o.rate) ? o.rate : SURVIVOR_DEFAULTS.rate;
+  return { living, rate };
 }

@@ -15,7 +15,7 @@ import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import { useSurvivor } from '../store/useSurvivor';
-import { survivorBenefitText } from '../engine/survivor';
+import { round1, survivorBenefitText } from '../engine/survivor';
 import { bulletMissingMaturity, equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
 import { creditCheck, CREDIT_CHECK_TAX } from '../engine/creditCheck';
@@ -74,13 +74,14 @@ export default function Data() {
   return (
     <>
       <PageHeader title="기본 정보" desc="모든 데이터는 이 기기의 브라우저 안에만 저장되며 외부로 전송되지 않습니다. 금액 단위는 만원입니다." />
-      <div className="no-scrollbar -mx-4 mb-4 overflow-x-auto px-4 md:mx-0 md:px-0">
-        <div className="flex w-max gap-1.5">
+      {/* 탭 버튼은 모두 같은 크기: 좁은 화면은 4칸 두 줄(가로 스크롤 없이 다 보이게), 넓으면 8칸 한 줄, 아주 넓으면 고정 너비 + 구분선 */}
+      <div className="mb-4">
+        <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-8 md:grid-cols-4 lg:grid-cols-8 xl:flex xl:w-max">
           {TABS.map((t) => (
             <Fragment key={t.key}>
               {/* 백업·복원은 입력 탭과 성격이 달라 구분선으로 띄움 */}
-              {t.key === 'backup' && <span aria-hidden className="mx-1.5 self-center text-muted">|</span>}
-              <button onClick={() => setTab(t.key)} className={`w-24 shrink-0 whitespace-nowrap rounded-full border py-1.5 text-center text-sm font-medium ${tab === t.key ? 'border-ink bg-ink text-surface' : 'border-line bg-surface text-muted'}`}>
+              {t.key === 'backup' && <span aria-hidden className="mx-1.5 hidden self-center text-muted xl:inline">|</span>}
+              <button onClick={() => setTab(t.key)} className={`min-w-0 whitespace-nowrap rounded-full border px-1 py-1.5 xl:w-24 xl:shrink-0 text-center text-sm font-medium ${tab === t.key ? 'border-ink bg-ink text-surface' : 'border-line bg-surface text-muted'}`}>
                 {t.label}
               </button>
             </Fragment>
@@ -753,17 +754,17 @@ function InsuranceSummary() {
 
 /** 보험 탭: 노후 진단 배우자 사별 분석의 가장 어려운 경우와 사망보장 효과 요약 + 그 카드로 가는 링크 */
 function SurvivorBenefitNote() {
-  const { worst } = useSurvivor();
+  const { worst, living, rate } = useSurvivor();
   return (
     <div className='mt-3 rounded-xl bg-sunken px-3 py-2.5 text-sm' style={{ wordBreak: 'keep-all' }}>
       <div className='font-medium'>본인 사망보장이 노후에 미치는 효과</div>
       <p className='mt-1 text-muted'>
         {worst ? (
-          <>가장 어려운 경우는 <b className='text-ink'>{worst.label}</b> 떠날 때로 성공확률 <b className='text-ink'>{pct(worst.successRate)}</b>입니다. {survivorBenefitText(worst, won)}</>
+          <>가장 어려운 경우는 <b className='text-ink'>{worst.label}</b> 떠날 때로 성공확률 <b className='text-ink'>{pct(round1(worst.successRate), 1)}</b>입니다. {survivorBenefitText(worst, won)}</>
         ) : (
           '배우자 사별 분석을 계산하는 중입니다…'
         )}{' '}
-        자세한 경우별 결과는 <CardLink to='/retire' card='배우자 사별 분석'>노후 진단의 배우자 사별 분석</CardLink>에서 봅니다(혼자일 때 생활비 70%, 유족연금 지급률 60% 기준).
+        자세한 경우별 결과는 <CardLink to='/retire' card='배우자 사별 분석'>노후 진단의 배우자 사별 분석</CardLink>에서 봅니다(그 카드에서 정한 혼자일 때 생활비 {living}%, 유족연금 지급률 {rate}% 기준).
       </p>
     </div>
   );

@@ -6,7 +6,7 @@ import type { Summary } from './portfolio';
 import type { Retax } from './pensionTaxPlan';
 import type { Prescription } from './prescribe';
 import type { RiskCheck } from './risk';
-import { survivorBenefitText, type SurvivorWorst } from './survivor';
+import { round1, survivorBenefitText, type SurvivorWorst } from './survivor';
 
 /** 요약 보고의 한 문장(level 이 있으면 앞에 상태 점) */
 export interface ReportLine {
@@ -66,7 +66,7 @@ export function survivorLine(v: NonNullable<ReportInput['survivor']>, target: nu
   const w = v.worst;
   if (!w) return { text: '배우자 사별 분석을 계산하는 중입니다. 잠시 뒤 이 줄에 가장 어려운 경우가 나옵니다.' };
   return {
-    text: `배우자 사별 분석(혼자일 때 생활비 ${v.living}%, 유족연금 지급률 ${v.rate}%)에서 가장 어려운 경우는 ${w.label} 떠날 때로 성공확률 ${pct(w.successRate)}입니다(같은 계산 방식의 지금 계획 ${pct(v.base)}). ${survivorBenefitText(w, won)}`,
+    text: `배우자 사별 분석(혼자일 때 생활비 ${v.living}%, 유족연금 지급률 ${v.rate}%)에서 가장 어려운 경우는 ${w.label} 떠날 때로 성공확률 ${pct(round1(w.successRate), 1)}입니다(같은 계산 방식의 지금 계획 ${pct(round1(v.base), 1)}). ${survivorBenefitText(w, won)}`,
     level: w.successRate >= target ? 'good' : w.successRate >= 60 ? 'caution' : 'danger',
   };
 }
