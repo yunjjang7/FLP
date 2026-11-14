@@ -274,14 +274,17 @@ function PrescribeInner() {
                   </span>
                 </div>
                 <Bar value={Math.min(100, l.ratio)} level={l.level} />
-                <div className="mt-1 text-xs text-muted">{l.gap > 0 ? `${won(l.gap)} 부족` : l.gap < 0 ? `${won(-l.gap)} 초과` : '적정'}</div>
+                <div className="mt-1 text-xs text-muted">
+                  {l.gap > 0 ? `${won(l.gap)} 부족` : l.gap < 0 ? `${won(-l.gap)} 초과` : '적정'}
+                  {l.basis && <span> · 필요액 = {l.basis}</span>}
+                </div>
               </div>
             ))}
                 </div>
               </div>
             ))}
           </div>
-          <p className="mt-3 text-xs text-muted">필요 사망보장 = 유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산. 진단비 = 그 사람 연소득 × {p.criteria.criticalMultiple}배(소득이 없으면 3,000만원). 배우자 사망보장 = 배우자 연소득 × 부양기간, 자녀는 진단비만 필요액으로 봅니다.</p>
+          <p className="mt-3 text-xs text-muted">필요 사망보장 = 유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산. 진단비 = 그 사람 연소득 × {p.criteria.criticalMultiple}배(소득이 없거나 이미 은퇴했으면 치료비 기준액 3,000만원). 배우자 사망보장 = 배우자 연소득 × 부양기간(배우자가 은퇴했으면 0), 자녀는 진단비만 필요액으로 봅니다.</p>
         </Card>
       </div>
       <Disclaimer />

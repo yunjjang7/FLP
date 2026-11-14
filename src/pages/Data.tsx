@@ -20,6 +20,7 @@ import { creditCheck, CREDIT_CHECK_TAX } from '../engine/creditCheck';
 import { CREDIT_CAP, DEFAULT_CONTRIB, DEFAULT_INCOME_TAX, HI_LOAN_CAP, HI_LOAN_RATE, hiLoanDeduct, INCOME_KIND, INCOME_KIND_HINT, incomeKindOf, incomeTaxSchedule, yuAssetDed } from '../engine/incomeTax';
 import { isYu, YU_CEO_WAGE, yuPayTo } from '../engine/yellowUmbrella';
 import type { Asset, AssetType, ReUse, ContribPlan, Criteria, DrawInclude, ExpenseBand, ExpenseMode, Goal, IncomeKind, IncomeOwner, IncomeTaxSettings, Insurance, Liability, Profile, RetireIncome } from '../types';
+import type { CoverageLine } from '../engine/insurance';
 
 const EXPENSE_MODES: Record<ExpenseMode, string> = { real: '물가 연동(기본)', growth: '명목 증가율 지정', draw: '연금 생활비 명목 고정(엑셀 방식)' };
 const EXPENSE_HINT: Record<ExpenseMode, string> = {
@@ -669,7 +670,26 @@ function insuranceEffect(p: Insurance, end: number, age: number, retireAge: numb
 
 /** 보험 탭 위 요약: 피보험자별 건수·월 보험료(지금 납입 중)·보장 합계 */
 function InsuranceSummary() {
-  const { insurance, profile, summary } = useFlp();
+  const { insurance, profile, summary, ins } = useFlp();
+  // 보장 진단(insuranceGap)의 필요액·근거: 자녀가 출생연도별로 여럿이면 한 칸에 합칠 수 없어 보여 주지 않음
+  const needOf = (who: keyof typeof INSURED_WHO, key: CoverageLine['key']) => {
+    const people = ins.people.filter((p) => p.who === who);
+    return people.length === 1 ? people[0].lines.find((l) => l.key === key) : undefined;
+  };
+  const cell = (who: keyof typeof INSURED_WHO, key: CoverageLine['key'], amount: number) => {
+    const l = needOf(who, key);
+    return (
+      <td className="py-1.5 text-right tabular-nums">
+        {won(amount)}
+        {l && (
+          <div className="text-xs text-muted" title={l.basis}>
+            필요 {won(l.need)}
+            {l.basis && <div className="ml-auto max-w-[14rem] whitespace-normal" style={{ wordBreak: 'keep-all' }}>{l.basis}</div>}
+          </div>
+        )}
+      </td>
+    );
+  };
   const groups = (Object.keys(INSURED_WHO) as (keyof typeof INSURED_WHO)[])
     .map((k) => {
       const list = insurance.filter((p) => (p.insured ?? 'self') === k);
@@ -707,9 +727,9 @@ function InsuranceSummary() {
                 <td className="py-1.5 font-medium">{g.label}</td>
                 <td className="py-1.5 text-right tabular-nums">{g.count}건</td>
                 <td className="py-1.5 text-right tabular-nums">{won(g.premium)}</td>
-                <td className="py-1.5 text-right tabular-nums">{won(g.death)}</td>
-                <td className="py-1.5 text-right tabular-nums">{won(g.critical)}</td>
-                <td className="py-1.5 text-right tabular-nums">{won(g.care)}</td>
+                {cell(g.key, 'death', g.death)}
+                {cell(g.key, 'critical', g.critical)}
+                {cell(g.key, 'care', g.care)}
               </tr>
             ))}
           </tbody>

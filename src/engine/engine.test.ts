@@ -1818,3 +1818,53 @@ describe('이미 은퇴해 인출 중일 때의 점검·처방', () => {
     expect(ins.people[0].lines.find((l) => l.key === 'death')!.current).toBe(10000);
   });
 });
+
+describe('진단비 필요액: 은퇴 후 기준과 계산 근거', () => {
+  const d = sampleData(2026); // 본인 45세·은퇴 60세, 배우자 43세·은퇴 60세
+  const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+  const crit = (who: string, ins: ReturnType<typeof insuranceGap>) => ins.people.find((p) => p.person === who)!.lines.find((l) => l.key === 'critical')!;
+  it('은퇴 전에는 연소득 × N배와 그 근거', () => {
+    const ins = insuranceGap(d.profile, s, d.insurance, d.goals);
+    const self = (s.income - d.profile.spouseIncome) * 12;
+    expect(crit('본인', ins).need).toBeCloseTo(self * d.profile.criteria.criticalMultiple, 6);
+    expect(crit('본인', ins).basis).toBe(`연소득 ${won(self)} × ${d.profile.criteria.criticalMultiple}배`);
+  });
+  it('이미 은퇴했으면 연금·월세 소득 × N배 대신 기준액', () => {
+    const retired = { ...s, age: 62, income: 900 }; // 은퇴 후 연금·월세 소득
+    const profile = { ...d.profile, spouseRetireAge: 50 };
+    const ins = insuranceGap(profile, retired, d.insurance, d.goals);
+    expect(crit('본인', ins).need).toBe(CRITICAL_BASE);
+    expect(crit('본인', ins).basis).toContain('은퇴 후');
+    expect(crit('배우자', ins).need).toBe(CRITICAL_BASE);
+    // 처방(요약보고 '권장 대응')에 근거가 함께 나옴
+    const rx = prescriptions(profile, retired, buildPlanInput(profile, d.assets, d.liabilities, d.goals, retired), 90, [], { ...ins, lines: ins.lines.map((l) => ({ ...l, level: 'danger' as const })) });
+    expect(rx.find((r) => r.title.includes('본인 암·중대질병 진단비'))!.detail).toContain(`(은퇴 후라 소득 대신 치료비 기준액 ${won(CRITICAL_BASE)})`);
+  });
+  it('보험 탭·처방 화면 표에 쓰는 근거: 본인·배우자 모든 줄에 있고 자녀는 진단비만', () => {
+    const ins = insuranceGap(d.profile, s, d.insurance, d.goals);
+    for (const g of ins.people.filter((p) => p.who !== 'child')) for (const l of g.lines) expect(l.basis, `${g.person} ${l.label}`).toBeTruthy();
+    const self = ins.people.find((p) => p.who === 'self')!;
+    expect(self.lines.find((l) => l.key === 'care')!.basis).toBe('설정의 간병 기준액');
+    expect(self.lines.find((l) => l.key === 'death')!.basis).toContain('유족 생활비');
+    for (const l of ins.people.filter((p) => p.who === 'child').flatMap((p) => p.lines)) expect(l.basis ?? '').toBe(l.key === 'critical' ? `자녀 기준액 ${won(CRITICAL_BASE)}` : '');
+  });
+  it('배우자만 은퇴했으면 배우자만 기준액', () => {
+    const profile = { ...d.profile, spouseRetireAge: 40 };
+    const ins = insuranceGap(profile, s, d.insurance, d.goals);
+    expect(crit('배우자', ins).need).toBe(CRITICAL_BASE);
+    expect(crit('본인', ins).basis).toContain('연소득');
+  });
+  it('배우자 사망보장: 은퇴 전에는 연소득 × 부양기간, 은퇴했으면 0과 근거', () => {
+    const line = (p: typeof d.profile, policies = d.insurance) => insuranceGap(p, s, policies, d.goals).people.find((x) => x.person === '배우자')!.lines.find((l) => l.key === 'death');
+    const p = { ...d.profile, spouseIncome: 300 };
+    expect(line(p)!.need).toBe(300 * 12 * p.dependentYears);
+    expect(line(p)!.basis).toBe(`배우자 연소득 ${won(3600)} × 부양기간 ${p.dependentYears}년`);
+    const retired = { ...p, spouseRetireAge: 40 };
+    // 가입한 사망보장이 없으면 줄이 사라지고, 있으면 필요 0(충분)과 근거로 보여 줌
+    expect(line(retired, d.insurance.filter((x) => x.insured !== 'spouse'))).toBeUndefined();
+    const withDeath = [...d.insurance, { name: '배우자 종신', insured: 'spouse' as const, death: 10000, critical: 0, care: 0, monthlyPremium: 20, payEndAge: 0 }];
+    const l = line(retired, withDeath)!;
+    expect(l).toMatchObject({ need: 0, current: 10000, level: 'good' });
+    expect(l.basis).toContain('은퇴해');
+  });
+});

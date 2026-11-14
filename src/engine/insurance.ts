@@ -1,4 +1,5 @@
 import type { Goal, Insurance, InsuredWho, Level, Profile } from '../types';
+import { won } from '../lib/format';
 import { isPaying, type Summary } from './portfolio';
 
 export interface CoverageLine {
@@ -11,6 +12,8 @@ export interface CoverageLine {
   level: Level;
   /** 피보험자 이름(본인·배우자·자녀(2015년생)) */
   person: string;
+  /** 필요액 계산 근거(예: '연소득 4,800만원 × 2배', '은퇴 후라 소득 대신 치료비 기준액 3,000만원') */
+  basis?: string;
 }
 
 /** 피보험자 한 사람의 보장 진단 */
@@ -43,6 +46,9 @@ const LABEL = { death: '사망보장', critical: '암·중대질병 진단비', 
  * - 본인: 사망 = 유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산, 진단비 = 본인 연소득 × N배, 간병 = 기준액
  * - 배우자: 사망 = 배우자 연소득 × 부양기간(소득 공백), 진단비 = 배우자 연소득 × N배(최소 3,000만), 간병 = 기준액
  * - 자녀: 진단비 3,000만만 필요로 보고, 사망·간병은 가입한 경우에만 보여 줌
+ * - 진단비는 치료 기간의 소득 공백을 메우는 돈이라, 이미 은퇴했으면(본인 은퇴 나이·배우자 은퇴 나이 기준)
+ *   연금·월세 소득 × N배 대신 치료비 기준액 3,000만원으로 봄
+ * - 배우자 사망보장은 배우자 근로소득 공백을 메우는 돈이라, 배우자가 이미 은퇴했으면 0(근거와 함께 표시)
  */
 export function insuranceGap(profile: Profile, s: Summary, policies: Insurance[], goals: Goal[]): InsuranceGap {
   const c = profile.criteria;
@@ -51,17 +57,37 @@ export function insuranceGap(profile: Profile, s: Summary, policies: Insurance[]
   const selfIncome = Math.max(0, s.income - spouseIncome); // 가구 소득 중 본인 몫
   const eduNeed = goals.filter((g) => g.category === 'education').reduce((a, g) => a + g.amountPV, 0);
   const survivorLiving = s.expense * (c.survivorRatio / 100) * 12 * profile.dependentYears;
+  const selfRetired = s.age >= profile.retireAge;
+  const spouseRetired = hasSpouse && profile.spouseRetireAge > 0 && profile.birthYear + s.age - profile.spouseBirthYear >= profile.spouseRetireAge;
+  const base = `기준액 ${won(CRITICAL_BASE)}`;
+  // 진단비 필요액과 근거: 은퇴했으면 기준액, 아니면 연소득 × N배(소득이 없으면 기준액, 배우자는 최소 기준액)
+  const critical = (monthly: number, retired: boolean, floor: boolean): [number, string] => {
+    if (retired) return [CRITICAL_BASE, `은퇴 후라 소득 대신 치료비 ${base}`];
+    if (!(monthly > 0)) return [CRITICAL_BASE, `근로소득이 없어 ${base}`];
+    const v = monthly * 12 * c.criticalMultiple;
+    const why = `연소득 ${won(monthly * 12)} × ${c.criticalMultiple}배`;
+    return floor && v < CRITICAL_BASE ? [CRITICAL_BASE, `${why}가 ${base}보다 적어 ${base}`] : [v, why];
+  };
+  const [selfCrit, selfCritWhy] = critical(selfIncome, selfRetired, false);
+  const [spouseCrit, spouseCritWhy] = critical(spouseIncome, spouseRetired, true);
   const selfNeed = {
     death: Math.max(0, survivorLiving + s.totalDebt + eduNeed - s.liquidAssets),
-    critical: selfIncome > 0 ? selfIncome * 12 * c.criticalMultiple : CRITICAL_BASE,
+    critical: selfCrit,
     care: c.careNeed,
   };
   const spouseNeed = {
-    death: spouseIncome * 12 * profile.dependentYears,
-    critical: Math.max(CRITICAL_BASE, spouseIncome * 12 * c.criticalMultiple),
+    // 배우자가 이미 은퇴했으면 사망 때 끊길 근로소득이 없어 필요액 0
+    death: spouseRetired ? 0 : spouseIncome * 12 * profile.dependentYears,
+    critical: spouseCrit,
     care: c.careNeed,
   };
   const childNeed = { death: 0, critical: CRITICAL_BASE, care: 0 };
+  const careWhy = '설정의 간병 기준액';
+  const why: Record<InsuredWho, Record<CoverageLine['key'], string>> = {
+    self: { death: '유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산', critical: selfCritWhy, care: careWhy },
+    spouse: { death: spouseRetired ? '배우자가 은퇴해 사망 때 끊길 근로소득이 없어 0' : `배우자 연소득 ${won(spouseIncome * 12)} × 부양기간 ${profile.dependentYears}년`, critical: spouseCritWhy, care: careWhy },
+    child: { death: '', critical: `자녀 ${base}`, care: '' },
+  };
 
   // 보험료는 아직 납입 중인 보험만(납입이 끝난 보험은 보장만 남고 보험료는 나가지 않음)
   const paying = (p: Insurance) => isPaying(p, s.age, profile);
@@ -82,7 +108,7 @@ export function insuranceGap(profile: Profile, s: Summary, policies: Insurance[]
       .map((key): CoverageLine => {
         const current = list.reduce((a, p) => a + (p[key] || 0), 0);
         const ratio = need[key] > 0 ? (current / need[key]) * 100 : 100;
-        return { key, label: LABEL[key], need: need[key], current, gap: need[key] - current, ratio, level: lvl(ratio), person };
+        return { key, label: LABEL[key], need: need[key], current, gap: need[key] - current, ratio, level: lvl(ratio), person, ...(why[who][key] ? { basis: why[who][key] } : {}) };
       })
       // 본인은 세 줄 모두, 나머지는 필요액이나 가입액이 있는 줄만
       .filter((l) => who === 'self' || l.need > 0 || l.current > 0);
