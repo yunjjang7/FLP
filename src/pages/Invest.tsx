@@ -20,7 +20,7 @@ export default function Invest() {
 
   return (
     <>
-      <PageHeader title="투자 점검" desc={<>자산 구성과 주요 위험요인을 점검합니다. 판정 기준은 <SetupLink tab="criteria" card="점검 기준">‘기본 정보 → 점검 기준’</SetupLink>에서 바꿀 수 있습니다.</>} />
+      <PageHeader title="투자 점검" desc={<>자산 구성과 주요 위험요인을 점검합니다. 판정 기준은 <SetupLink tab="criteria" card="점검기준">‘기본 정보 → 점검기준’</SetupLink>에서 바꿀 수 있습니다.</>} />
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Card><Stat label="금융자산 기대수익률" value={pct(s.portfolioReturn, 1)} sub="금액 가중 평균(연)" /></Card>

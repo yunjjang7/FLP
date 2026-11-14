@@ -45,7 +45,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'cashflows', label: '지출' },
   { key: 'goals', label: '재무목표' },
   { key: 'insurance', label: '보험' },
-  { key: 'criteria', label: '점검 기준' },
+  { key: 'criteria', label: '점검기준' },
   { key: 'backup', label: '백업·복원' },
 ];
 
@@ -468,7 +468,7 @@ function CriteriaForm() {
   const c = profile.criteria;
   const set = (k: keyof Criteria) => (v: number) => save({ criteria: { ...c, [k]: v } });
   return (
-    <Card title="점검 기준" action={<span className="text-xs text-muted">홈·투자 점검·노후 진단·처방에서 이 기준으로 판정합니다</span>}>
+    <Card title="점검기준" action={<span className="text-xs text-muted">홈·투자 점검·노후 진단·처방에서 이 기준으로 판정합니다</span>}>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <Labeled label="비상금 목표"><NumberField value={c.emergencyMonths} unit="개월" onChange={set('emergencyMonths')} /></Labeled>
         <Labeled label="목표 저축률"><NumberField value={c.savingsRate} unit="%" onChange={set('savingsRate')} /></Labeled>

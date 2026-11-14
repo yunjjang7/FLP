@@ -47,7 +47,7 @@ export function GuardrailCompare() {
 
   return (
     <Card title="하락장 가드레일 비교" className="mt-4" action={on ? <span className="text-xs text-muted">최고점 대비 −{drop}% 이하인 해 · 생활비 −{cut}%</span> : undefined}>
-      {!on && <p className="mb-3 text-sm text-muted"><SetupLink tab="criteria" card="점검 기준" field="하락장 생활비 감축">‘기본 정보 → 점검 기준’</SetupLink>에서 ‘하락장 기준’과 ‘하락장 생활비 감축’을 0보다 크게 넣으면 그 설정으로 지금 방식과 나란히 비교합니다. 아래 강도별 표는 설정과 관계없이 보여 줍니다.</p>}
+      {!on && <p className="mb-3 text-sm text-muted"><SetupLink tab="criteria" card="점검기준" field="하락장 생활비 감축">‘기본 정보 → 점검기준’</SetupLink>에서 ‘하락장 기준’과 ‘하락장 생활비 감축’을 0보다 크게 넣으면 그 설정으로 지금 방식과 나란히 비교합니다. 아래 강도별 표는 설정과 관계없이 보여 줍니다.</p>}
       <div className="grid gap-3 sm:grid-cols-2">
         {cols.map(({ key, label, desc, s }) => (
           <div key={key} className={`rounded-xl border p-4 ${key === 'guard' ? 'border-brand/40' : 'border-line'}`}>
@@ -115,7 +115,7 @@ export function GuardrailCompare() {
         <li>하락장: 시장(명목 누적수익률)이 그때까지의 최고점보다 기준 이상 낮은 해입니다. 자산에서 꺼낸 돈은 빼고 시장 흐름만으로 판단합니다.</li>
         <li>하락장인 해에는 은퇴 후 생활비{inp.fixedDraw !== undefined ? '(연금 생활비 고정액)' : ''}를 줄입니다(줄이는 금액은 {start.age}세 기준, 오늘 물가). 시장이 회복해 최고점 대비 낙폭이 기준 안으로 들어오면 원래 생활비로 돌아갑니다. 대출 상환·목표 탭 지출·보험료는 줄이지 않습니다.</li>
         <li>모든 방식이 같은 1,000가지 시장 경로로 계산해 차이는 가드레일 효과만 나타냅니다. 위 성공확률·처방·민감도는 지금 방식 기준입니다. 생애 자산 곡선에는 지금 설정의 가드레일 중앙값을 함께 그립니다.</li>
-        <li>인출 계획의 ‘가드레일’ 전략은 평균수익 계획의 기준선과 자산을 비교하는 다른 방식입니다. 기준은 <SetupLink tab="criteria" card="점검 기준" field="하락장 기준">‘기본 정보 → 점검 기준’</SetupLink>의 ‘하락장 기준’·‘하락장 생활비 감축’에서 바꿉니다.</li>
+        <li>인출 계획의 ‘가드레일’ 전략은 평균수익 계획의 기준선과 자산을 비교하는 다른 방식입니다. 기준은 <SetupLink tab="criteria" card="점검기준" field="하락장 기준">‘기본 정보 → 점검기준’</SetupLink>의 ‘하락장 기준’·‘하락장 생활비 감축’에서 바꿉니다.</li>
       </ul>
     </Card>
   );
