@@ -43,7 +43,7 @@ const LABEL = { death: '사망보장', critical: '암·중대질병 진단비', 
 
 /**
  * 피보험자별 보장 부족.
- * - 본인: 사망 = 유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산, 진단비 = 본인 연소득 × N배, 간병 = 기준액
+ * - 본인: 사망 = 유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산(이미 은퇴했으면 유족 생활비는 빼고 계산), 진단비 = 본인 연소득 × N배, 간병 = 기준액
  * - 배우자: 사망 = 배우자 연소득 × 부양기간(소득 공백), 진단비 = 배우자 연소득 × N배(최소 3,000만), 간병 = 기준액
  * - 자녀: 진단비 3,000만만 필요로 보고, 사망·간병은 가입한 경우에만 보여 줌
  * - 진단비는 치료 기간의 소득 공백을 메우는 돈이라, 이미 은퇴했으면(본인 은퇴 나이·배우자 은퇴 나이 기준)
@@ -56,8 +56,11 @@ export function insuranceGap(profile: Profile, s: Summary, policies: Insurance[]
   const spouseIncome = hasSpouse ? Math.max(0, profile.spouseIncome ?? 0) : 0;
   const selfIncome = Math.max(0, s.income - spouseIncome); // 가구 소득 중 본인 몫
   const eduNeed = goals.filter((g) => g.category === 'education').reduce((a, g) => a + g.amountPV, 0);
-  const survivorLiving = s.expense * (c.survivorRatio / 100) * 12 * profile.dependentYears;
   const selfRetired = s.age >= profile.retireAge;
+  // 은퇴 후 s.expense는 은퇴 생활비(retiredBasis)라 연금·월세를 빼지 않은 금액 × 부양기간은 과함.
+  // 은퇴 뒤 가족 생활비는 노후 자산·연금으로 이미 계산하고 본인이 먼저 떠나는 경우는 배우자 사별 분석이 다루므로,
+  // 은퇴했으면 유족 생활비는 빼고 남는 부채·교육비만 봄
+  const survivorLiving = selfRetired ? 0 : s.expense * (c.survivorRatio / 100) * 12 * profile.dependentYears;
   const spouseRetired = hasSpouse && profile.spouseRetireAge > 0 && profile.birthYear + s.age - profile.spouseBirthYear >= profile.spouseRetireAge;
   const base = `기준액 ${won(CRITICAL_BASE)}`;
   // 진단비 필요액과 근거: 은퇴했으면 기준액, 아니면 연소득 × N배(소득이 없으면 기준액, 배우자는 최소 기준액)
@@ -84,7 +87,7 @@ export function insuranceGap(profile: Profile, s: Summary, policies: Insurance[]
   const childNeed = { death: 0, critical: CRITICAL_BASE, care: 0 };
   const careWhy = '설정의 간병 기준액';
   const why: Record<InsuredWho, Record<CoverageLine['key'], string>> = {
-    self: { death: '유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산', critical: selfCritWhy, care: careWhy },
+    self: { death: selfRetired ? '은퇴 후라 유족 생활비는 노후 자산·연금으로 계산(배우자 사별 분석 참고): 부채 + 교육비 − 유동자산' : '유족 생활비 × 부양기간 + 부채 + 교육비 − 유동자산', critical: selfCritWhy, care: careWhy },
     spouse: { death: spouseRetired ? '배우자가 은퇴해 사망 때 끊길 근로소득이 없어 0' : `배우자 연소득 ${won(spouseIncome * 12)} × 부양기간 ${profile.dependentYears}년`, critical: spouseCritWhy, care: careWhy },
     child: { death: '', critical: `자녀 ${base}`, care: '' },
   };

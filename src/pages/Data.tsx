@@ -468,9 +468,9 @@ function CriteriaForm() {
         <Labeled label="부채비율 상한"><NumberField value={c.debtRatioMax} unit="%" onChange={set('debtRatioMax')} /></Labeled>
         <Labeled label="노후 성공확률 목표"><NumberField value={c.successTarget} unit="%" onChange={set('successTarget')} /></Labeled>
         <Labeled label="인출률 상한" hint="은퇴 첫해 인출액 / 금융자산"><NumberField value={c.withdrawRateMax} unit="%" step={0.5} onChange={set('withdrawRateMax')} /></Labeled>
-        <Labeled label="진단비 기준" hint="연소득의 몇 배"><NumberField value={c.criticalMultiple} unit="배" step={0.5} onChange={set('criticalMultiple')} /></Labeled>
-        <Labeled label="간병 필요 보장액"><NumberField value={c.careNeed} unit="만원" onChange={set('careNeed')} /></Labeled>
-        <Labeled label="유족 생활비 비율" hint="현재 지출 대비"><NumberField value={c.survivorRatio} unit="%" onChange={set('survivorRatio')} /></Labeled>
+        <Labeled label="진단비 기준" hint="연소득의 몇 배 · 소득이 없거나 이미 은퇴했으면 치료비 기준액 3,000만원"><NumberField value={c.criticalMultiple} unit="배" step={0.5} onChange={set('criticalMultiple')} /></Labeled>
+        <Labeled label="간병 필요 보장액" hint="본인·배우자 같은 금액 · 배우자 사망보장 = 배우자 연소득 × 부양기간(배우자가 은퇴했으면 0)"><NumberField value={c.careNeed} unit="만원" onChange={set('careNeed')} /></Labeled>
+        <Labeled label="유족 생활비 비율" hint="현재 지출 대비 · 이미 은퇴했으면 유족 생활비는 빼고 계산"><NumberField value={c.survivorRatio} unit="%" onChange={set('survivorRatio')} /></Labeled>
         <Labeled label="하락장 기준" hint="시장이 최고점보다 이만큼 떨어진 해"><NumberField value={c.guardrailDrop} unit="%" onChange={set('guardrailDrop')} /></Labeled>
         <Labeled label="하락장 생활비 감축" hint="그해 은퇴 후 생활비를 줄이는 비율 · 0이면 비교 안 함"><NumberField value={c.guardrailCut} unit="%" onChange={set('guardrailCut')} /></Labeled>
       </div>

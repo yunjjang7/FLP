@@ -1848,6 +1848,19 @@ describe('진단비 필요액: 은퇴 후 기준과 계산 근거', () => {
     expect(self.lines.find((l) => l.key === 'death')!.basis).toContain('유족 생활비');
     for (const l of ins.people.filter((p) => p.who === 'child').flatMap((p) => p.lines)) expect(l.basis ?? '').toBe(l.key === 'critical' ? `자녀 기준액 ${won(CRITICAL_BASE)}` : '');
   });
+  it('본인 사망보장: 은퇴 전에는 유족 생활비 포함, 은퇴 후에는 부채 + 교육비 − 유동자산만', () => {
+    const death = (x: typeof s) => insuranceGap(d.profile, x, d.insurance, d.goals).people[0].lines.find((l) => l.key === 'death')!;
+    const edu = d.goals.filter((g) => g.category === 'education').reduce((a, g) => a + g.amountPV, 0);
+    const before = death(s);
+    const living = s.expense * (d.profile.criteria.survivorRatio / 100) * 12 * d.profile.dependentYears;
+    expect(before.need).toBeCloseTo(Math.max(0, living + s.totalDebt + edu - s.liquidAssets), 6);
+    expect(before.basis).toContain('유족 생활비 × 부양기간');
+    // 은퇴 후 흐름(retiredBasis): 생활비가 커도 유족 생활비로 곱하지 않음
+    const retired = { ...s, age: 62, income: 300, expense: 600, liquidAssets: 1000 };
+    const after = death(retired);
+    expect(after.need).toBeCloseTo(Math.max(0, retired.totalDebt + edu - 1000), 6);
+    expect(after.basis).toContain('배우자 사별 분석');
+  });
   it('배우자만 은퇴했으면 배우자만 기준액', () => {
     const profile = { ...d.profile, spouseRetireAge: 40 };
     const ins = insuranceGap(profile, s, d.insurance, d.goals);
