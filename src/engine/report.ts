@@ -6,6 +6,7 @@ import type { Summary } from './portfolio';
 import type { Retax } from './pensionTaxPlan';
 import type { Prescription } from './prescribe';
 import type { RiskCheck } from './risk';
+import { survivorBenefitText, type SurvivorWorst } from './survivor';
 
 /** 요약 보고의 한 문장(level 이 있으면 앞에 상태 점) */
 export interface ReportLine {
@@ -29,6 +30,8 @@ export interface ReportInput {
   checks: RiskCheck[];
   rx: Prescription[];
   nowYear: number;
+  /** 배우자 사별 분석(배우자가 있을 때): 가장 어려운 경우와 사망보장 효과. worst 가 null 이면 아직 계산 중 */
+  survivor?: { worst: SurvivorWorst | null; base: number; living: number; rate: number };
   retax?: Retax; // 수익률 ±2%p 고갈 나이에서 연금 인출 세금을 바뀐 수익률로 다시 계산
 }
 
@@ -58,6 +61,16 @@ export function livingText(p: Profile) {
 
 const sentence = (s: string) => (/[.)]$/.test(s) ? s : `${s}.`);
 
+/** 요약보고 한 줄: 배우자 사별 분석의 가장 어려운 경우와 사망보장이 있을 때·없을 때 성공확률 */
+export function survivorLine(v: NonNullable<ReportInput['survivor']>, target: number): ReportLine {
+  const w = v.worst;
+  if (!w) return { text: '배우자 사별 분석을 계산하는 중입니다. 잠시 뒤 이 줄에 가장 어려운 경우가 나옵니다.' };
+  return {
+    text: `배우자 사별 분석(혼자일 때 생활비 ${v.living}%, 유족연금 지급률 ${v.rate}%)에서 가장 어려운 경우는 ${w.label} 떠날 때로 성공확률 ${pct(w.successRate)}입니다(같은 계산 방식의 지금 계획 ${pct(v.base)}). ${survivorBenefitText(w, won)}`,
+    level: w.successRate >= target ? 'good' : w.successRate >= 60 ? 'caution' : 'danger',
+  };
+}
+
 /** 계획 전체를 문장으로 정리한 한 장짜리 보고서 */
 export function buildReport(x: ReportInput): ReportSection[] {
   const { profile: p, summary: s, planInput: inp, sim, start, need } = x;
@@ -81,6 +94,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
       text: `평균 수익(은퇴 후 연 ${mean.toFixed(1)}%)이 해마다 고르게 나면 ${depletionText(base, life)}입니다. 수익률이 2%p 낮으면 ${depletionText(low, life)}, 2%p 높으면 ${depletionText(high, life)}입니다.`,
       level: base === null ? 'good' : base >= 90 ? 'caution' : 'danger',
     },
+    ...(x.survivor ? [survivorLine(x.survivor, target)] : []),
     ...(sim.medianDepletionAge !== null ? [{ text: `자산이 바닥나는 시나리오만 보면 절반이 ${sim.medianDepletionAge}세 전에 바닥납니다.` }] : []),
     {
       text: `${start.retired ? '올해' : `은퇴 첫해(${start.age}세)`} 자산 인출은 월 ${won(start.outflow / 12)}이고, 금융자산 ${won(start.balance)} 대비 인출률 ${pct(start.rate, 1)}(상한 ${p.criteria.withdrawRateMax}%)입니다.`,

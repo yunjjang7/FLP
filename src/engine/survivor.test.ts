@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { deterministicPath, expenseRatioAt, incomeValue, pensionAt, type PlanInput } from './montecarlo';
-import { SURVIVOR_OVERLAP, survivorCases, survivorIncomes, survivorInput, survivorSteps } from './survivor';
+import { SURVIVOR_OVERLAP, survivorBenefitText, survivorCases, survivorIncomes, survivorInput, survivorSteps, survivorWorst } from './survivor';
+import { survivorLine } from './report';
 
 const base: PlanInput = {
   currentAge: 60,
@@ -103,5 +104,30 @@ describe('배우자 사별 분석', () => {
     const sp = cases.find((c) => c.key === 'spouse-75')!;
     expect(sp.benefit).toBe(0);
     expect(sp.noBenefit).toBeUndefined();
+  });
+
+  it('가장 어려운 경우: 결과가 다 나와야 고르고, 사망보장 있을 때·없을 때 성공확률을 함께 돌려줌', () => {
+    const cases = survivorCases(base, opt, { self: 20000, spouse: 0 });
+    const rows = cases.map((c, i) => ({ key: c.key, successRate: 50 + i, ...(c.noBenefit ? { plain: 40 + i } : {}) }));
+    expect(survivorWorst(cases, rows.slice(1))).toBeNull(); // 계산 중
+    expect(survivorWorst([], [])).toBeNull(); // 배우자 없음
+    const w = survivorWorst(cases, rows)!;
+    expect(w).toEqual({ key: 'self-65', label: '본인이 65세에 먼저', successRate: 50, benefit: 20000, plain: 40 });
+    const won = (v: number) => `${v}만원`;
+    expect(survivorBenefitText(w, won)).toBe('보험 탭 사망보장 20000만원이 들어간 값이며, 사망보장이 없으면 40%입니다(보험으로 +10.0%p).');
+    expect(survivorBenefitText({ ...w, benefit: 0, plain: undefined }, won)).toContain('보험금 없이 계산한 값');
+    // 배우자 쪽이 가장 어려우면 사망보장 없음
+    const w2 = survivorWorst(cases, rows.map((r) => ({ ...r, successRate: r.key === 'spouse-85' ? 10 : 90 })))!;
+    expect(w2.benefit).toBe(0);
+    expect(w2.plain).toBeUndefined();
+  });
+
+  it('요약보고 줄: 계산 중이면 안내, 끝나면 가장 어려운 경우·지금 계획·보험 없을 때 성공확률', () => {
+    expect(survivorLine({ worst: null, base: 80, living: 70, rate: 60 }, 80).text).toContain('계산하는 중');
+    const l = survivorLine({ worst: { key: 'self-75', label: '본인이 75세에 먼저', successRate: 72, benefit: 10000, plain: 61 }, base: 85, living: 70, rate: 60 }, 80);
+    expect(l.text).toContain('가장 어려운 경우는 본인이 75세에 먼저 떠날 때로 성공확률 72%');
+    expect(l.text).toContain('지금 계획 85%');
+    expect(l.text).toContain('사망보장이 없으면 61%');
+    expect(l.level).toBe('caution');
   });
 });

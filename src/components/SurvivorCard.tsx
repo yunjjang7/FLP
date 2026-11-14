@@ -1,59 +1,27 @@
-import { useEffect, useMemo, useState } from 'react';
-import { spouseGap } from '../engine/goals';
-import { runStress, type StressResult } from '../engine/stress';
-import { SURVIVOR_LIVING, SURVIVOR_OVERLAP, SURVIVOR_RATES, survivorCases } from '../engine/survivor';
+import { useState } from 'react';
+import { SURVIVOR_LIVING, SURVIVOR_OVERLAP, SURVIVOR_RATES } from '../engine/survivor';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
+import { SURVIVOR_RATE, useSurvivor } from '../store/useSurvivor';
 import type { Level } from '../types';
 import { Labeled, NumberField, SelectField } from './fields';
 import { Card } from './ui';
 
 /**
  * 노후 진단: 배우자 사별 분석. 부부 중 한 사람이 먼저 떠났을 때 남은 사람의 생활비·연금이 어떻게 바뀌고
- * 자산이 끝까지 버티는지. 기본 계산과 같은 1,000가지 시장 경로로 돌림
+ * 자산이 끝까지 버티는지. 기본 계산과 같은 1,000가지 시장 경로로 돌림(계산은 useSurvivor, 요약보고·보험 탭과 같은 결과)
  */
 export function SurvivorCard() {
-  const { planInput: inp, retax, profile: p, simFlat: sim, insurance } = useFlp();
+  const { planInput: inp, profile: p, simFlat: sim } = useFlp();
   const [living, setLiving] = useState(SURVIVOR_LIVING);
-  const [rate, setRate] = useState(60);
+  const [rate, setRate] = useState(SURVIVOR_RATE);
   const target = p.criteria.successTarget;
-  const hasSpouse = p.spouseBirthYear > 0;
-  const benefits = useMemo(
-    () => ({
-      self: insurance.filter((x) => (x.insured ?? 'self') === 'self').reduce((a, x) => a + (x.death ?? 0), 0),
-      spouse: insurance.filter((x) => x.insured === 'spouse').reduce((a, x) => a + (x.death ?? 0), 0),
-    }),
-    [insurance],
-  );
-  const cases = useMemo(() => (hasSpouse ? survivorCases(inp, { livingRatio: living, rate, spouseGap: spouseGap(p) }, benefits).map((c) => ({ ...c, input: retax(c.input), ...(c.noBenefit ? { noBenefit: retax(c.noBenefit) } : {}) })) : []), [inp, retax, p, living, rate, benefits, hasSpouse]);
-
-  // 경우마다 1,000회 시뮬레이션이라 하나씩 나눠 계산(사망보장이 있으면 보험금 없이 한 번 더)
-  const [rows, setRows] = useState<(StressResult & { plain?: number })[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const done: (StressResult & { plain?: number })[] = [];
-    setRows([]);
-    const step = (i: number) => {
-      if (cancelled || i >= cases.length) return;
-      const c = cases[i];
-      const r = runStress(c);
-      done.push(c.noBenefit ? { ...r, plain: runStress({ ...c, input: c.noBenefit }).successRate } : r);
-      setRows([...done]);
-      timer = setTimeout(() => step(i + 1), 0);
-    };
-    timer = setTimeout(() => step(0), 0);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [cases]);
+  const { hasSpouse, cases, rows, worst: w, benefits } = useSurvivor(living, rate);
 
   if (!hasSpouse || cases.length === 0) return null;
   const lvl = (v: number): Level => (v >= target ? 'good' : v >= 60 ? 'caution' : 'danger');
   const tone = (l: Level) => (l === 'good' ? 'bg-good-soft text-good' : l === 'caution' ? 'bg-warn-soft text-warn' : 'bg-bad-soft text-bad');
-  const ready = rows.length === cases.length;
-  const worst = ready ? rows.reduce((a, r) => (r.successRate < a.successRate ? r : a), rows[0]) : null;
+  const worst = w;
   const draw = inp.fixedDraw !== undefined;
 
   return (
@@ -117,7 +85,7 @@ export function SurvivorCard() {
           {worst.successRate < sim.successRate - 0.05 ? (
             <>
               가장 어려운 경우는 <b>{worst.label}</b> 떠날 때입니다: 성공확률 {pct(sim.successRate)} → <b>{pct(worst.successRate)}</b>.
-              {worst.plain !== undefined && <> 보험 탭 사망보장 {won(cases.find((c) => c.key === worst.key)?.benefit ?? 0)}이 없으면 <b>{pct(worst.plain)}</b>입니다.</>}
+              {worst.plain !== undefined && <> 보험 탭 사망보장 {won(worst.benefit)}이 없으면 <b>{pct(worst.plain)}</b>입니다.</>}
             </>
           ) : (
             <>어느 경우에도 성공확률이 지금 계획보다 떨어지지 않습니다. 줄어드는 생활비가 끊기는 연금보다 큽니다.</>

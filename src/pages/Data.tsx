@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { downloadText, fromCSV, templateCSV, toCSV } from '../db/csv';
 import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } from '../db/db';
@@ -10,10 +10,12 @@ import { ACCOUNT_KEY_LABEL, ACCOUNT_KEYS, accountMismatch, ASSET_TYPES, groupNam
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, MoveButtons, PageHeader } from '../components/ui';
 import { appendOrders, byOrder, moveItem, moveRow, nextOrder } from '../db/order';
-import { jumpToTarget, SetupLink } from '../components/SetupLink';
+import { CardLink, jumpToTarget, SetupLink } from '../components/SetupLink';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
-import { won } from '../lib/format';
+import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
+import { useSurvivor } from '../store/useSurvivor';
+import { survivorBenefitText } from '../engine/survivor';
 import { bulletMissingMaturity, equalMonthlyDecline, equalPrincipal, loanEndAge } from '../engine/goals';
 import { PENSION_OPEN_AGE, pensionLimit, pensionYearNo } from '../engine/tax';
 import { creditCheck, CREDIT_CHECK_TAX } from '../engine/creditCheck';
@@ -44,7 +46,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'goals', label: '재무목표' },
   { key: 'insurance', label: '보험' },
   { key: 'criteria', label: '점검 기준' },
-  { key: 'backup', label: '가져오기·백업' },
+  { key: 'backup', label: '백업·복원' },
 ];
 
 /** 주소의 ?tab=&card=&field= 로 들어오면 그 탭을 열고 카드·칸으로 스크롤해 잠깐 강조(다른 화면 안내 문구의 바로가기) */
@@ -75,9 +77,13 @@ export default function Data() {
       <div className="no-scrollbar -mx-4 mb-4 overflow-x-auto px-4 md:mx-0 md:px-0">
         <div className="flex w-max gap-1.5">
           {TABS.map((t) => (
-            <button key={t.key} onClick={() => setTab(t.key)} className={`rounded-full px-3.5 py-1.5 text-sm font-medium ${tab === t.key ? 'bg-ink text-surface' : 'border border-line bg-surface text-muted'}`}>
-              {t.label}
-            </button>
+            <Fragment key={t.key}>
+              {/* 백업·복원은 입력 탭과 성격이 달라 구분선으로 띄움 */}
+              {t.key === 'backup' && <span aria-hidden className="mx-1.5 self-center text-muted">|</span>}
+              <button onClick={() => setTab(t.key)} className={`w-24 shrink-0 whitespace-nowrap rounded-full border py-1.5 text-center text-sm font-medium ${tab === t.key ? 'border-ink bg-ink text-surface' : 'border-line bg-surface text-muted'}`}>
+                {t.label}
+              </button>
+            </Fragment>
           ))}
         </div>
       </div>
@@ -739,7 +745,27 @@ function InsuranceSummary() {
         월 보험료는 지금 납입 중인 보험만 더한 금액입니다(합계 월 {won(total)}).
         {summary.insuranceDup.length > 0 && total > 0 && ' 지출에 보험료 항목이 따로 있어 이 금액은 지출에 더하지 않았습니다.'}
       </p>
+      {/* 은퇴 후 본인 사망보장은 유족 생활비 대신 배우자 사별 분석으로 보므로, 그 결과를 함께 보여 줌 */}
+      {needOf('self', 'death')?.basis?.includes('배우자 사별 분석') && profile.spouseBirthYear > 0 && <SurvivorBenefitNote />}
     </Card>
+  );
+}
+
+/** 보험 탭: 노후 진단 배우자 사별 분석의 가장 어려운 경우와 사망보장 효과 요약 + 그 카드로 가는 링크 */
+function SurvivorBenefitNote() {
+  const { worst } = useSurvivor();
+  return (
+    <div className='mt-3 rounded-xl bg-sunken px-3 py-2.5 text-sm' style={{ wordBreak: 'keep-all' }}>
+      <div className='font-medium'>본인 사망보장이 노후에 미치는 효과</div>
+      <p className='mt-1 text-muted'>
+        {worst ? (
+          <>가장 어려운 경우는 <b className='text-ink'>{worst.label}</b> 떠날 때로 성공확률 <b className='text-ink'>{pct(worst.successRate)}</b>입니다. {survivorBenefitText(worst, won)}</>
+        ) : (
+          '배우자 사별 분석을 계산하는 중입니다…'
+        )}{' '}
+        자세한 경우별 결과는 <CardLink to='/retire' card='배우자 사별 분석'>노후 진단의 배우자 사별 분석</CardLink>에서 봅니다(혼자일 때 생활비 70%, 유족연금 지급률 60% 기준).
+      </p>
+    </div>
   );
 }
 
@@ -902,7 +928,7 @@ function ListEditor({ table }: { table: ListTable }) {
           ]}
         />
       )}
-      {rows.length === 0 && <Card><p className="py-6 text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘가져오기·백업’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
+      {rows.length === 0 && <Card><p className="py-6 text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘백업·복원’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
       {rows.map((r, idx) => (
         <Card key={r.id} className={table === 'liabilities' && bulletMissingMaturity(r as unknown as Liability, data.summary.age) ? 'border-warn! ring-1 ring-warn' : ''}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">

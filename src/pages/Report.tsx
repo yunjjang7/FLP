@@ -3,6 +3,8 @@ import { Button, Card, EmptyState, PageHeader } from '../components/ui';
 import { prescriptions } from '../engine/prescribe';
 import { buildReport } from '../engine/report';
 import { useFlp } from '../store/FlpContext';
+import { SURVIVOR_LIVING } from '../engine/survivor';
+import { SURVIVOR_RATE, useSurvivor } from '../store/useSurvivor';
 import type { Level } from '../types';
 
 const DOT: Record<Level, string> = { good: 'bg-good', caution: 'bg-warn', danger: 'bg-bad' };
@@ -10,12 +12,14 @@ const DOT: Record<Level, string> = { good: 'bg-good', caution: 'bg-warn', danger
 /** 요약 보고: 계획 전체를 문장으로 정리한 한 장(인쇄용) */
 export default function Report() {
   const d = useFlp();
+  // 배우자 사별 분석은 노후 진단 카드와 같은 기본 설정(혼자일 때 생활비 70%, 지급률 60%)·같은 계산 결과를 씀
+  const sv = useSurvivor();
   const nowYear = d.profile.birthYear + d.summary.age;
   const sections = useMemo(() => {
     if (!d.hasData) return [];
     const rx = prescriptions(d.profile, d.basis, d.planInput, d.sim.successRate, d.goalPlans, d.ins, d.retax);
-    return buildReport({ profile: d.profile, summary: d.summary, planInput: d.planInput, sim: d.sim, start: d.start, need: d.need, liabilities: d.liabilities, goals: d.goals, checks: d.checks, rx, nowYear, retax: d.retax });
-  }, [d, nowYear]);
+    return buildReport({ profile: d.profile, summary: d.summary, planInput: d.planInput, sim: d.sim, start: d.start, need: d.need, liabilities: d.liabilities, goals: d.goals, checks: d.checks, rx, nowYear, retax: d.retax, ...(sv.hasSpouse && sv.cases.length ? { survivor: { worst: sv.worst, base: d.simFlat.successRate, living: SURVIVOR_LIVING, rate: SURVIVOR_RATE } } : {}) });
+  }, [d, nowYear, sv.hasSpouse, sv.cases.length, sv.worst]);
   if (!d.hasData) return <><PageHeader title="요약 보고" /><EmptyState /></>;
   const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });
 

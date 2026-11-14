@@ -129,3 +129,37 @@ export function survivorCases(input: PlanInput, base: Omit<SurvivorOptions, 'die
   }
   return out;
 }
+
+/** 사별 분석 결과 한 줄(사망보장이 있으면 보험금 없이 돌린 성공확률 plain 도 함께) */
+export interface SurvivorRow {
+  key: string;
+  successRate: number;
+  plain?: number;
+}
+
+/** 가장 어려운 경우와 그때 사망보장 효과 */
+export interface SurvivorWorst {
+  key: string;
+  label: string;
+  successRate: number;
+  benefit: number; // 떠난 사람의 사망보장(계약 금액)
+  plain?: number; // 사망보장 없이 같은 사별을 돌린 성공확률
+}
+
+/** 성공확률이 가장 낮은 사별 경우(결과가 다 나오기 전이거나 경우가 없으면 null) */
+export function survivorWorst(cases: SurvivorCase[], rows: SurvivorRow[]): SurvivorWorst | null {
+  if (cases.length === 0 || rows.length < cases.length) return null;
+  let i = 0;
+  rows.forEach((r, j) => { if (r.successRate < rows[i].successRate) i = j; });
+  const c = cases[i], r = rows[i];
+  return { key: c.key, label: c.label, successRate: r.successRate, benefit: c.benefit, ...(r.plain !== undefined ? { plain: r.plain } : {}) };
+}
+
+/** 가장 어려운 경우의 사망보장 효과 문장(요약보고·보험 탭 공통) */
+export function survivorBenefitText(w: SurvivorWorst, won: (v: number) => string): string {
+  if (w.plain !== undefined) {
+    const d = w.successRate - w.plain;
+    return `보험 탭 사망보장 ${won(w.benefit)}이 들어간 값이며, 사망보장이 없으면 ${w.plain.toFixed(0)}%입니다(보험으로 ${d >= 0.05 ? `+${d.toFixed(1)}%p` : '차이 거의 없음'}).`;
+  }
+  return '먼저 떠나는 사람의 사망보장이 보험 탭에 없어 보험금 없이 계산한 값입니다.';
+}
