@@ -1,6 +1,6 @@
 import { won, pct } from '../lib/format';
 import type { Goal, Level, Liability, Profile } from '../types';
-import { cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand, type PeakPlan } from './buckets';
+import { cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearPlan, type CashOnHand, type PeakPlan } from './buckets';
 import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
@@ -40,23 +40,54 @@ export interface ReportInput {
   now?: Date;
   /** 고점 부근 현금성 채우기(buckets.ts peakPlan): 시장 상태 문장에 금액을 덧붙임 */
   peak?: PeakPlan | null;
+  /** 하락장에 채권형에서 먼저 꺼낼 금액(buckets.ts bearPlan): 시장 상태 문장에 금액을 덧붙임 */
+  bear?: BearPlan | null;
+  /** 보통 구간에 1월 리밸런싱 때 채권형에서 옮길 금액(buckets.ts normalPlan): 시장 상태 문장에 금액을 덧붙임 */
+  normal?: BearPlan | null;
 }
 
 /**
  * 시장 상태 문장: 인출용 자산 배치 가이드에 저장한 등락률과 입력 날짜로 지금 시장 상태와 적용할 규칙.
- * 하락장이거나 넣은 지 30일이 지났으면 주의. 등락률을 넣지 않았으면 undefined
+ * 고점 부근·하락장·보통 구간에 바로 쓸 돈이 2년치에 못 미치면 지금 할 일 금액을 덧붙임.
+ * 하락장이거나 넣은 지 30일이 지났거나 할 일 금액이 붙으면 주의. 등락률을 넣지 않았으면 undefined
  */
-export function marketLine(p: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, now: Date, peak?: PeakPlan | null): ReportLine | undefined {
+export function marketLine(p: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, now: Date, peak?: PeakPlan | null, bear?: BearPlan | null, normal?: BearPlan | null): ReportLine | undefined {
   if (p.marketDrawdown === undefined) return undefined;
   const rule = marketRule(p.marketDrawdown);
   const date = marketDateNote(p.marketDrawdownDate, now);
   const stale = date?.stale ? ` 넣은 지 ${date.days}일이 지났으니 인출 계획 ‘인출용 자산 배치 가이드’에 지금 지수로 다시 넣어 주세요.` : '';
   // 고점 부근이고 바로 쓸 돈이 2년치에 못 미치면 맞춤 처방·이정표와 같은 금액(peakPlan)
-  const pk = rule.state === 'peak' && peak ? peakText(peak) : '';
+  // 하락장·보통 구간도 맞춤 처방·이정표·인출 바구니와 같은 금액(bearPlan·normalPlan)
+  const pk = rule.state === 'peak' && peak ? peakText(peak)
+    : rule.state === 'bear' && bear ? bearText(bear)
+      : rule.state === 'normal' && normal ? normalText(normal) : '';
   return {
     text: `인출용 자산 배치 가이드에 넣은 주식형 등락률은 고점 대비 ${p.marketDrawdown}%${date ? `(${date.label})` : ''}로 지금 시장 상태는 ${MARKET_STATE_LABEL[rule.state]}입니다. 지금 적용할 규칙: ${rule.text}${pk}${stale}`,
     level: rule.state === 'bear' || date?.stale || pk ? 'caution' : undefined,
   };
+}
+
+/** 2년치까지 모자란 금액과 지금 할 일 문장(앞에 띄어쓰기 포함) */
+const shortText = (b: { usable: number; goal: number; short: number }, how: string, out: string) =>
+  ` 바로 쓸 돈 ${won(b.usable)}이 첫해 인출 기준 2년치(${won(b.goal)})에 ${won(b.short)} 모자라니 지금 할 일: ${how}.${out}`;
+
+/** 55세 전이라 뺀 연금계좌 안 채권형 안내(앞에 띄어쓰기 포함) */
+const bondOut = (b: BearPlan) => b.out > 0.5 ? ` 55세 전 연금계좌 안 채권형 ${won(b.out)}은 연금계좌에서 꺼내기 어려워 옮길 금액에서 뺐습니다.` : '';
+
+/** 하락장 채권형에서 현금성 옮기기 문장(앞에 띄어쓰기 포함) */
+function bearText(b: BearPlan): string {
+  const how = b.fromBond > 0.5
+    ? `주식형은 팔지 말고 채권형에서 현금성 ${won(b.fromBond)} 옮기기${b.left > 0.5 ? `, 채권형을 다 옮겨도 모자란 ${won(b.left)}은 회복할 때까지 인출을 줄여서` : ''}`
+    : '옮길 채권형이 없어 회복할 때까지 인출 줄이기';
+  return shortText(b, how, bondOut(b));
+}
+
+/** 보통 구간 1월 리밸런싱 때 채권형에서 현금성 옮기기 문장(앞에 띄어쓰기 포함) */
+function normalText(b: BearPlan): string {
+  const how = b.fromBond > 0.5
+    ? `1월 리밸런싱 때 채권형에서 현금성 ${won(b.fromBond)} 옮기기${b.left > 0.5 ? `, 채권형을 다 옮겨도 모자란 ${won(b.left)}은 저축으로` : ''}`
+    : `1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 ${won(b.short)} 채우기`;
+  return shortText(b, how, bondOut(b));
 }
 
 /** 고점 부근 현금성 채우기 문장(앞에 띄어쓰기 포함) */
@@ -65,7 +96,7 @@ function peakText(b: PeakPlan): string {
     ? `주식형 일부 팔아 현금성 ${won(b.fromEquity)} 채우기${b.left > 0.5 ? `, 주식형을 다 팔아도 모자란 ${won(b.left)}은 저축으로` : ''}`
     : `팔 주식형이 없어 저축으로 현금성 ${won(b.short)} 채우기`;
   const out = b.out > 0.5 ? ` 55세 전 연금계좌 안 주식형 ${won(b.out)}은 연금계좌에서 꺼내기 어려워 팔 금액에서 뺐습니다.` : '';
-  return ` 바로 쓸 돈 ${won(b.usable)}이 첫해 인출 기준 2년치(${won(b.goal)})에 ${won(b.short)} 모자라니 지금 할 일: ${how}.${out}`;
+  return shortText(b, how, out);
 }
 
 /**
@@ -177,7 +208,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
       return { text: `${l.name}: 잔액 ${won(l.balance)}, 금리 ${l.rate}%, 월 ${won(l.monthlyPayment)} · ${how}.`, level: noEnd && !open ? ('caution' as Level) : undefined };
     });
   const cash = x.cash ? cashLine(x.cash, start.outflow, p) : undefined;
-  const market = marketLine(p, x.now ?? new Date(), x.peak);
+  const market = marketLine(p, x.now ?? new Date(), x.peak, x.bear, x.normal);
   const assetLines: ReportLine[] = [
     { text: `총자산 ${won(s.totalAssets)}, 부채 ${won(s.totalDebt)}, 순자산 ${won(s.netWorth)}입니다. 금융자산 ${won(s.financialAssets)}, 부동산 ${won(s.realEstate)}입니다.` },
     ...(s.financialAssets > 0 && s.byClass.length

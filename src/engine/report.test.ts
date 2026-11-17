@@ -5,7 +5,7 @@ import { insuranceGap } from './insurance';
 import { deterministicPath, retirementNeed, simulate, withdrawStart } from './montecarlo';
 import { summarize } from './portfolio';
 import { marketPrescription, peakPrescription, prescriptions, type Prescription } from './prescribe';
-import { bondsOnHand, cashOnHand, peakPlan, withPensionCash } from './buckets';
+import { bearPlan, bondsOnHand, cashOnHand, normalPlan, peakPlan, withPensionCash } from './buckets';
 import { buildReport, cashLine, depletionText, depletionWithReturn, livingText, marketLine } from './report';
 import { bulletChecks, marketChecks, retiredBasis, riskChecks } from './risk';
 
@@ -46,6 +46,39 @@ describe('요약 보고 시장 상태 문장', () => {
     const s = summarize(pp, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
     const inp = buildPlanInput(pp, d.assets, d.liabilities, d.goals, s);
     const rep = buildReport({ profile: pp, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [], nowYear: 2026, now, peak: plan });
+    expect(rep.find((x) => x.title === '2. 자산과 부채')!.lines.some((l) => l.text === line.text && l.level === 'caution')).toBe(true);
+  });
+
+  it('하락장이고 2년치에 못 미치면 채권형에서 현금성 옮길 금액과 55세 전 연금계좌 채권형 제외 금액', () => {
+    const p = { marketDrawdown: -18, marketDrawdownDate: '2026-11-10' };
+    // 본인 52세라 연금계좌 안 채권형 300만원은 빼고 700만원만 옮길 수 있음, 그래도 500만원 모자람
+    const plan = bearPlan(-18, 800, 1000, bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 }))!;
+    const line = marketLine(p, now, null, plan)!;
+    expect(line.level).toBe('caution');
+    expect(line.text.endsWith('현금성을 채웁니다. 바로 쓸 돈 800만원이 첫해 인출 기준 2년치(2,000만원)에 1,200만원 모자라니 지금 할 일: 주식형은 팔지 말고 채권형에서 현금성 700만원 옮기기, 채권형을 다 옮겨도 모자란 500만원은 회복할 때까지 인출을 줄여서. 55세 전 연금계좌 안 채권형 300만원은 연금계좌에서 꺼내기 어려워 옮길 금액에서 뺐습니다.')).toBe(true);
+    expect(marketLine(p, now, null, bearPlan(-18, 800, 1000, 5000))!.text.endsWith('지금 할 일: 주식형은 팔지 말고 채권형에서 현금성 1,200만원 옮기기.')).toBe(true);
+    expect(marketLine(p, now, null, bearPlan(-18, 0, 1000, 0))!.text).toContain('지금 할 일: 옮길 채권형이 없어 회복할 때까지 인출 줄이기.');
+    // 하락장 계획을 넘겨도 시장 상태가 하락장이 아니면 덧붙이지 않음
+    expect(marketLine({ marketDrawdown: -5 }, now, null, plan)!.text).not.toContain('지금 할 일');
+  });
+
+  it('보통 구간이고 2년치에 못 미치면 1월 리밸런싱 때 채권형에서 현금성 옮길 금액', () => {
+    const p = { marketDrawdown: -5, marketDrawdownDate: '2026-11-10' };
+    const plan = normalPlan(-5, 800, 1000, bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 }))!;
+    const line = marketLine(p, now, null, null, plan)!;
+    expect(line.level).toBe('caution');
+    expect(line.text).toContain('지금 시장 상태는 보통입니다.');
+    expect(line.text.endsWith(' 바로 쓸 돈 800만원이 첫해 인출 기준 2년치(2,000만원)에 1,200만원 모자라니 지금 할 일: 1월 리밸런싱 때 채권형에서 현금성 700만원 옮기기, 채권형을 다 옮겨도 모자란 500만원은 저축으로. 55세 전 연금계좌 안 채권형 300만원은 연금계좌에서 꺼내기 어려워 옮길 금액에서 뺐습니다.')).toBe(true);
+    expect(marketLine(p, now, null, null, normalPlan(-5, 800, 1000, 5000))!.text.endsWith('지금 할 일: 1월 리밸런싱 때 채권형에서 현금성 1,200만원 옮기기.')).toBe(true);
+    expect(marketLine(p, now, null, null, normalPlan(-5, 0, 1000, 0))!.text).toContain('지금 할 일: 1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기.');
+    // 계획이 없으면(2년치가 있음) 덧붙이지 않고 주의도 아님
+    expect(marketLine(p, now, null, null, null)!.level).toBeUndefined();
+    // 보고서 자산과 부채 섹션에도 같은 문장
+    const d = sampleData(2026);
+    const pp = { ...d.profile, ...p };
+    const s = summarize(pp, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+    const inp = buildPlanInput(pp, d.assets, d.liabilities, d.goals, s);
+    const rep = buildReport({ profile: pp, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [], nowYear: 2026, now, normal: plan });
     expect(rep.find((x) => x.title === '2. 자산과 부채')!.lines.some((l) => l.text === line.text && l.level === 'caution')).toBe(true);
   });
 
