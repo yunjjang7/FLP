@@ -3,12 +3,15 @@ import { fromCSV, toCSV } from '../db/csv';
 import { sampleData } from '../db/sample';
 import type { Asset, Cashflow } from '../types';
 import { canMaturity, emergencyLockedOf, goalTimingGaps, maturities, maturityLabel, monthsToMaturity } from './maturity';
-import { milestones, yearTodos } from './milestones';
+import { CASH_MOVE_TODO, cashFrom55Note, maturityTodo, milestones, yearTodos } from './milestones';
 import { summarize } from './portfolio';
 import { rebalance } from './rebalance';
-import { cashOnHand, cashYears } from './buckets';
-import { maturityPrescriptions } from './prescribe';
-import { emergencyDetail } from './risk';
+import { cashMoveRows, cashOnHand, cashRunway, cashSourceLabel, cashYears, pensionCash, pensionCashParts, pensionFrom55, pensionFrom55Note, pensionOutNote, startAges, withPensionCash } from './buckets';
+import { buildPlanInput } from './goals';
+import { insuranceGap } from './insurance';
+import { withdrawStart } from './montecarlo';
+import { cashBucketPrescription, maturityPrescriptions, pensionOutPrescription, prescriptions } from './prescribe';
+import { cashRunwayChecks, emergencyDetail } from './risk';
 
 const Y = 2026;
 const M = 11;
@@ -195,5 +198,274 @@ describe('인출 바구니: 만기 전 예금·적금은 바로 쓸 돈과 따�
     expect(cashYears(c, 0)).toBeUndefined();
     // 만기가 없으면 모두 바로 쓸 돈
     expect(cashOnHand(list.filter((a) => a.name !== '정기예금'), Y, M)).toMatchObject({ total: 2000, usable: 2000, locked: 0 });
+  });
+
+  const locked = (amt: number, free = 0) => cashOnHand([
+    asset('파킹통장', 'cash', 'short', free),
+    asset('정기예금', 'deposit', 'short', amt, { maturityYear: 2027, maturityMonth: 9 }),
+  ], Y, M);
+
+  it('버틸 햇수는 은퇴했거나 은퇴가 5년 안일 때만, 첫해 인출 기준', () => {
+    const c = locked(2000, 1000);
+    expect(cashRunway(c, { age: 60, retired: true, outflow: 1000 }, 60)).toEqual({ usable: 1, all: 3, yearDraw: 1000, retired: true });
+    expect(cashRunway(c, { age: 60, retired: false, outflow: 1000 }, 55)).toMatchObject({ usable: 1 });
+    expect(cashRunway(c, { age: 60, retired: false, outflow: 1000 }, 54)).toBeUndefined();
+    expect(cashRunway(c, { age: 60, retired: true, outflow: 0 }, 60)).toBeUndefined();
+    expect(cashRunway(cashOnHand([], Y, M), { age: 60, retired: true, outflow: 1000 }, 60)).toBeUndefined();
+  });
+
+  it('홈 점검: 바로 쓸 돈이 2년치에 못 미치면 주의, 만기 전 예금은 따로 적음', () => {
+    const c = locked(2000, 1000);
+    const [chk] = cashRunwayChecks(c, cashRunway(c, { age: 60, retired: true, outflow: 1000 }, 60));
+    expect(chk).toMatchObject({ key: 'cashRunway', label: '하락장 버틸 햇수(바로 쓸 돈)', value: '1.0년치', level: 'caution' });
+    expect(chk.detail).toContain('바로 쓸 수 있는 돈 1,000만원을 올해 인출(연 1,000만원)로 나눈 값');
+    expect(chk.detail).toContain('예금·적금 2,000만원은 넣지 않았습니다(깨면 중도해지 이율, 넣으면 약 3.0년치)');
+    const ok = locked(0, 2500);
+    expect(cashRunwayChecks(ok, cashRunway(ok, { age: 60, retired: false, outflow: 1000 }, 57))[0]).toMatchObject({ value: '2.5년치', level: 'good' });
+    expect(cashRunwayChecks(ok, undefined)).toEqual([]);
+  });
+
+  it('처방: 2년치에 못 미치고 만기 전 예금·적금이 있으면 만기 뒤 현금성 바구니로', () => {
+    const run = (c: ReturnType<typeof cashOnHand>) => cashRunway(c, { age: 60, retired: true, outflow: 1000 }, 60);
+    const a = locked(2000, 500);
+    const rx = cashBucketPrescription(a, run(a))!;
+    expect(rx).toMatchObject({ area: '노후', level: 'caution', title: '만기 전 예금·적금 2,000만원 — 만기 뒤 현금성 바구니로' });
+    expect(rx.detail).toContain('바로 쓸 수 있는 돈 500만원은 올해 인출(연 1,000만원) 기준 약 0.5년치로 2년치(2,000만원)에 못 미칩니다');
+    expect(rx.detail).toContain('정기예금(2027년 9월 만기, 2,000만원)');
+    expect(rx.detail).toContain('모두 옮기면 약 2.5년치가 됩니다');
+    // 다 옮겨도 모자라면 남는 금액
+    const b = locked(800, 200);
+    expect(cashBucketPrescription(b, run(b))!.detail).toContain('모두 옮겨도 약 1.0년치라, 나머지 1,000만원은 고점 부근에 주식형 일부를 팔아 채우세요');
+    // 이미 2년치이거나 만기 전 예금이 없으면 처방 없음
+    const c = locked(1000, 2000);
+    expect(cashBucketPrescription(c, run(c))).toBeNull();
+    const e = locked(0, 500);
+    expect(cashBucketPrescription(e, run(e))).toBeNull();
+  });
+
+  it('맞춤 처방 목록에 함께 나옴(현금성을 넘길 때만)', () => {
+    const d = sampleData(Y);
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance);
+    const inp = { ...buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s), retireAge: s.age };
+    const st = withdrawStart(inp);
+    expect(st.outflow).toBeGreaterThan(0);
+    const c = locked(st.outflow * 3);
+    const ins = insuranceGap(d.profile, s, d.insurance, d.goals);
+    const has = (cash?: ReturnType<typeof cashOnHand>) => prescriptions(d.profile, s, inp, 99, [], ins, undefined, cash).some((r) => r.title.endsWith('만기 뒤 현금성 바구니로'));
+    expect(has(c)).toBe(true);
+    expect(has()).toBe(false);
+  });
+
+  it('옵션: 연금계좌 안 현금성(계좌 안 자산배분 비율)도 바로 쓸 돈에 함께 셈', () => {
+    const irp = asset('IRP', 'pension', 'long', 5000, { alloc: { equity: 50, bond: 30, alt: 0, cash: 20 } });
+    const plain = asset('연금저축', 'pension', 'long', 3000);
+    expect(pensionCash([irp, plain, asset('파킹통장', 'cash', 'short', 700)])).toBe(1000);
+    expect(pensionCash([plain])).toBe(0);
+    const c = locked(2000, 500);
+    expect(withPensionCash(c, 0)).toBe(c);
+    const w = withPensionCash(c, pensionCash([irp]));
+    expect(w).toMatchObject({ total: 3500, usable: 1500, locked: 2000, pension: 1000 });
+    const run = cashRunway(w, { age: 60, retired: true, outflow: 1000 }, 60);
+    expect(run).toMatchObject({ usable: 1.5, all: 3.5 });
+    const [chk] = cashRunwayChecks(w, run);
+    expect(chk).toMatchObject({ value: '1.5년치', level: 'caution' });
+    expect(chk.detail).toContain('바로 쓸 수 있는 돈 500만원과 연금계좌 안 현금성 1,000만원, 모두 1,500만원을 올해 인출(연 1,000만원)로 나눈 값');
+    expect(cashBucketPrescription(w, run)!.detail).toContain('바로 쓸 수 있는 돈 1,500만원(연금계좌 안 현금성 1,000만원 포함)은 올해 인출');
+    // 연금계좌 안 현금성까지 더해 2년치가 넘으면 점검 양호, 처방 없음
+    const big = withPensionCash(c, 2000);
+    const run2 = cashRunway(big, { age: 60, retired: true, outflow: 1000 }, 60);
+    expect(cashRunwayChecks(big, run2)[0].level).toBe('good');
+    expect(cashBucketPrescription(big, run2)).toBeNull();
+    expect(cashMoveRows(big, run2)).toEqual([]);
+  });
+
+  it('55세 전 인출 시작이면 연금계좌 안 현금성은 버틸 햇수에서 빼고 안내', () => {
+    const c = locked(2000, 500);
+    const w = withPensionCash(c, 1000, 54);
+    expect(w).toMatchObject({ total: 2500, usable: 500, pensionOut: 1000 });
+    expect(w.pension).toBeUndefined();
+    expect(withPensionCash(c, 1000, 55)).toMatchObject({ usable: 1500, pension: 1000 });
+    expect(withPensionCash(c, 1000)).toMatchObject({ usable: 1500, pension: 1000 });
+    expect(withPensionCash(c, 0, 50)).toBe(c);
+    const note = ' 연금계좌 안 현금성 1,000만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.';
+    expect(pensionOutNote(w)).toBe(note);
+    expect(pensionOutNote(c)).toBe('');
+    expect(cashSourceLabel(w)).toBe('연금계좌 밖 현금성');
+    const run = cashRunway(w, { age: 54, retired: false, outflow: 1000 }, 50)!;
+    expect(run.usable).toBe(0.5);
+    const [chk] = cashRunwayChecks(w, run);
+    expect(chk.detail.endsWith(note)).toBe(true);
+    expect(chk.detail).not.toContain('연금계좌 안 현금성 1,000만원, 모두');
+    expect(cashBucketPrescription(w, run)!.detail.endsWith(note)).toBe(true);
+    // 인출 바구니도 같은 숫자(바로 쓸 돈만 0.5년치)
+    expect(cashYears(w, 1000)!.usable).toBe(0.5);
+  });
+
+  it('55세 기준은 연금계좌 주인별: 배우자 연금계좌는 배우자 나이로', () => {
+    const irp = asset('IRP', 'pension', 'long', 5000, { alloc: { equity: 50, bond: 30, alt: 0, cash: 20 } });
+    const sp = asset('배우자 IRP', 'pension', 'long', 3000, { owner: 'spouse', alloc: { equity: 50, bond: 0, alt: 0, cash: 50 } });
+    expect(pensionCashParts([irp, sp], true)).toEqual({ self: 1000, spouse: 1500 });
+    // 배우자가 없으면 명의가 배우자여도 본인 몫
+    expect(pensionCashParts([irp, sp], false)).toEqual({ self: 2500, spouse: 0 });
+    expect(pensionCash([irp, sp])).toBe(2500);
+    // 인출 시작 해 나이: 배우자는 나이 차만큼
+    expect(startAges(56, 1970, 1974)).toEqual({ self: 56, spouse: 52 });
+    expect(startAges(56, 1970, 0)).toEqual({ self: 56 });
+    const c = locked(2000, 500);
+    const parts = { self: 1000, spouse: 1500 };
+    // 본인 56세·배우자 52세: 본인 몫만 더하고 배우자 몫은 제외
+    const w = withPensionCash(c, parts, { self: 56, spouse: 52 });
+    expect(w).toMatchObject({ usable: 1500, pension: 1000, pensionOut: 1500, pensionOutParts: { self: 0, spouse: 1500 } });
+    expect(pensionOutNote(w)).toBe(' 배우자 연금계좌 안 현금성 1,500만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.');
+    // 두 사람 모두 55세 전이면 모두 제외, 주인별 금액을 함께 적음
+    const both = withPensionCash(c, parts, { self: 54, spouse: 52 });
+    expect(both).toMatchObject({ usable: 500, pensionOut: 2500 });
+    expect(both.pension).toBeUndefined();
+    expect(pensionOutNote(both)).toBe(' 연금계좌 안 현금성 2,500만원(본인 1,000만원, 배우자 1,500만원)은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.');
+    // 본인만 55세 전이면 본인 몫만 제외(안내는 예전과 같은 문구)
+    const self = withPensionCash(c, parts, { self: 54, spouse: 57 });
+    expect(self).toMatchObject({ usable: 2000, pension: 1500, pensionOut: 1000 });
+    expect(pensionOutNote(self)).toBe(' 연금계좌 안 현금성 1,000만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.');
+    // 모두 55세 이상이면 모두 더함
+    expect(withPensionCash(c, parts, { self: 58, spouse: 55 })).toMatchObject({ usable: 3000, pension: 2500 });
+    expect(withPensionCash(c, parts, { self: 58, spouse: 55 }).pensionOut).toBeUndefined();
+  });
+
+  it('인출 바구니 55세 연도: 뺀 몫마다 그 사람이 만 55세가 되는 해', () => {
+    const c = locked(2000, 500);
+    const both = withPensionCash(c, { self: 1000, spouse: 1500 }, { self: 50, spouse: 48 });
+    const rows = pensionFrom55(both, 1976, 1978);
+    expect(rows).toEqual([{ who: '본인', year: 2031, amount: 1000 }, { who: '배우자', year: 2033, amount: 1500 }]);
+    expect(pensionFrom55Note(rows)).toBe(' 본인 만 55세가 되는 2031년부터 1,000만원, 배우자 만 55세가 되는 2033년부터 1,500만원도 버틸 햇수에 셉니다.');
+    // 배우자 몫만 뺐으면 배우자만
+    const sp = withPensionCash(c, { self: 1000, spouse: 1500 }, { self: 56, spouse: 52 });
+    expect(pensionFrom55(sp, 1970, 1974)).toEqual([{ who: '배우자', year: 2029, amount: 1500 }]);
+    // 뺀 몫이 없으면 빈 목록·빈 문자열
+    expect(pensionFrom55(c, 1970, 1974)).toEqual([]);
+    expect(pensionFrom55Note([])).toBe('');
+  });
+
+  it('올해·내년 할 일 55세: 이정표 메모와 같은 문구', () => {
+    const p = { ...sampleData(Y).profile, birthYear: Y - 50, spouseBirthYear: Y - 48 };
+    const list = [
+      asset('IRP', 'pension', 'long', 5000, { alloc: { equity: 50, bond: 30, alt: 0, cash: 20 } }),
+      asset('배우자 IRP', 'pension', 'long', 3000, { owner: 'spouse', alloc: { equity: 50, bond: 0, alt: 0, cash: 50 } }),
+    ];
+    const parts = { self: 0, spouse: 1500 };
+    const todo = (year: number, who: string, from?: typeof parts) => yearTodos(p, list, Y, year, [], M, [], from).find((x) => x.startsWith(`${who} 만 55세`));
+    expect(todo(Y + 7, '배우자', parts)).toBe(`배우자 만 55세: 연금계좌 개시 가능(배우자 IRP) · ${cashFrom55Note(1500)}`);
+    // 이정표 메모와 같은 문구
+    const ms = milestones(p, list, [], [], Y, M, [], parts).find((x) => x.label === '배우자 만 55세 → 연금계좌 인출 가능')!;
+    expect(todo(Y + 7, '배우자', parts)!.endsWith(ms.note!.slice(ms.note!.indexOf(' · ')))).toBe(true);
+    // 뺀 몫이 없는 사람·넘기지 않았을 때는 원래 문구
+    expect(todo(Y + 5, '본인', parts)).toBe('본인 만 55세: 연금계좌 개시 가능(IRP)');
+    expect(todo(Y + 7, '배우자')).toBe('배우자 만 55세: 연금계좌 개시 가능(배우자 IRP)');
+  });
+
+  it('점검·처방에도 만 55세가 되는 해부터 셈 안내', () => {
+    const w = withPensionCash(locked(2000, 500), { self: 1000, spouse: 1500 }, { self: 50, spouse: 48 });
+    const run = cashRunway(w, { age: 50, retired: false, outflow: 1000 }, 48)!;
+    expect(run.usable).toBe(0.5);
+    const births = { birthYear: 1976, spouseBirthYear: 1978 };
+    const tail = `${pensionOutNote(w)}${pensionFrom55Note(pensionFrom55(w, 1976, 1978))}`;
+    expect(tail).toContain(' 본인 만 55세가 되는 2031년부터 1,000만원, 배우자 만 55세가 되는 2033년부터 1,500만원도 버틸 햇수에 셉니다.');
+    expect(cashRunwayChecks(w, run, births)[0].detail.endsWith(tail)).toBe(true);
+    expect(cashBucketPrescription(w, run, births)!.detail.endsWith(tail)).toBe(true);
+    // 출생연도를 넘기지 않으면 제외 안내만
+    expect(cashRunwayChecks(w, run)[0].detail).not.toContain('만 55세가 되는');
+    expect(cashBucketPrescription(w, run)!.detail.endsWith(pensionOutNote(w))).toBe(true);
+  });
+
+  it('55세 전 현금성 부족 처방: 만기 전 예금이 없어도 연금계좌 안 현금성을 빼서 2년치에 못 미치면', () => {
+    const c = cashOnHand([asset('파킹통장', 'cash', 'short', 500)], Y, M);
+    const w = withPensionCash(c, { self: 1000, spouse: 0 }, { self: 50 });
+    const st = { age: 50, retired: false, outflow: 1000 };
+    const run = cashRunway(w, st, 48)!;
+    expect(run.usable).toBe(0.5);
+    // 만기 전 예금이 없어 기존 처방은 없음
+    expect(cashBucketPrescription(w, run)).toBeNull();
+    const rx = pensionOutPrescription(w, run, { birthYear: 1976, spouseBirthYear: 0 })!;
+    expect(rx).toMatchObject({ area: '노후', level: 'caution', title: '55세 전 현금성 부족 — 연금계좌 밖 현금성 1,500만원 더 필요' });
+    expect(rx.detail).toContain('바로 쓸 수 있는 돈 500만원은 은퇴 첫해 인출(연 1,000만원) 기준 약 0.5년치로 2년치(2,000만원)에 못 미칩니다.');
+    expect(rx.detail).toContain(`${pensionOutNote(w)} 본인 만 55세가 되는 2031년부터 1,000만원도 버틸 햇수에 셉니다.`);
+    expect(rx.detail).toContain('모자란 1,500만원을');
+    // 2년치가 넘거나, 뺀 몫이 없거나, 만기 전 예금 처방이 나오면 없음
+    expect(pensionOutPrescription(w, cashRunway(w, { ...st, outflow: 200 }, 48))).toBeNull();
+    expect(pensionOutPrescription(c, cashRunway(c, st, 48))).toBeNull();
+    const lw = withPensionCash(locked(2000, 500), 1000, 50);
+    const lrun = cashRunway(lw, st, 48);
+    expect(cashBucketPrescription(lw, lrun)).not.toBeNull();
+    expect(pensionOutPrescription(lw, lrun)).toBeNull();
+    // 맞춤 처방 목록에 함께 나옴
+    const d = sampleData(Y);
+    const s = summarize(d.profile, d.assets, d.liabilities, d.cashflows, Y, d.insurance);
+    const inp = { ...buildPlanInput(d.profile, d.assets, d.liabilities, d.goals, s), retireAge: s.age };
+    const ws = withdrawStart(inp);
+    const ins = insuranceGap(d.profile, s, d.insurance, d.goals);
+    const few = withPensionCash(cashOnHand([asset('파킹통장', 'cash', 'short', ws.outflow)], Y, M), ws.outflow, 50);
+    const titles = prescriptions(d.profile, s, inp, 99, [], ins, undefined, few).map((r) => r.title);
+    expect(titles.some((t) => t.startsWith('55세 전 현금성 부족'))).toBe(true);
+    expect(titles.some((t) => t.endsWith('만기 뒤 현금성 바구니로'))).toBe(false);
+  });
+
+  it('55세 이정표 메모: 뺀 연금계좌 안 현금성을 이때부터 버틸 햇수에 셈', () => {
+    const p = { ...sampleData(Y).profile, birthYear: Y - 50, spouseBirthYear: Y - 48 };
+    const list = [
+      asset('IRP', 'pension', 'long', 5000, { alloc: { equity: 50, bond: 30, alt: 0, cash: 20 } }),
+      asset('배우자 IRP', 'pension', 'long', 3000, { owner: 'spouse', alloc: { equity: 50, bond: 0, alt: 0, cash: 50 } }),
+    ];
+    const open = (from?: { self: number; spouse: number }) => milestones(p, list, [], [], Y, M, [], from).filter((x) => x.kind === 'open');
+    const w = withPensionCash(locked(2000, 500), pensionCashParts(list, true), { self: 56, spouse: 54 });
+    const [me, sp] = open(w.pensionOutParts);
+    expect(me.label).toBe('본인 만 55세 → 연금계좌 인출 가능');
+    expect(me.note).toBe('IRP');
+    expect(sp.label).toBe('배우자 만 55세 → 연금계좌 인출 가능');
+    expect(sp.note).toBe(`배우자 IRP · ${cashFrom55Note(1500)}`);
+    expect(cashFrom55Note(1500)).toBe('이때부터 연금계좌 안 현금성 1,500만원도 버틸 햇수에 셈');
+    // 뺀 금액이 없으면 메모는 계좌 이름만
+    expect(open().map((x) => x.note)).toEqual(['IRP', '배우자 IRP']);
+  });
+
+  it('이정표 할 일: 처방 조건이면 만기 예금·적금 할 일을 현금성 바구니로 옮김으로', () => {
+    const p = sampleData(Y).profile;
+    const list = [asset('파킹통장', 'cash', 'short', 500), asset('정기예금', 'deposit', 'short', 2000, { maturityYear: 2027, maturityMonth: 9 })];
+    const c = cashOnHand(list, Y, M);
+    const move = cashMoveRows(c, cashRunway(c, { age: 60, retired: true, outflow: 1000 }, 60));
+    expect(move.map((r) => r.name)).toEqual(['정기예금']);
+    const todo = (m: typeof move) => yearTodos(p, list, Y, 2027, [], M, m).find((x) => x.includes('정기예금'));
+    expect(todo(move)).toBe(`9월 정기예금 만기(예금) 2,000만원 → ${CASH_MOVE_TODO}`);
+    expect(CASH_MOVE_TODO).toBe('다시 맡기지 말고 현금성 바구니로 옮김');
+    // 2년치가 넘으면 원래 할 일(비상금용)
+    const rich = cashMoveRows(c, cashRunway(c, { age: 60, retired: true, outflow: 100 }, 60));
+    expect(rich).toEqual([]);
+    expect(todo(rich)).toBe('9월 정기예금 만기(예금) 2,000만원 → 비상금은 바로 꺼낼 수 있는 통장이나 짧은 만기로');
+  });
+
+  it('인출 바구니 햇수: 옵션이 예면 연금계좌 안 현금성까지, 홈 점검과 같은 숫자', () => {
+    const irp = asset('IRP', 'pension', 'long', 5000, { alloc: { equity: 50, bond: 30, alt: 0, cash: 20 } });
+    const c = locked(2000, 500);
+    const st = { age: 60, retired: true, outflow: 1000 };
+    for (const run of [c, withPensionCash(c, pensionCash([irp]))]) {
+      // BucketGuide 는 cashYears(runCash, start.outflow), 홈 점검은 cashRunway → cashRunwayChecks
+      const guide = cashYears(run, st.outflow)!;
+      expect(cashRunwayChecks(run, cashRunway(run, st, 60))[0].value).toBe(`${guide.usable.toFixed(1)}년치`);
+    }
+    expect(cashYears(withPensionCash(c, 1000), 1000)).toEqual({ usable: 1.5, all: 3.5 });
+    expect(cashSourceLabel(c)).toBe('연금계좌 밖 현금성');
+    expect(cashSourceLabel(withPensionCash(c, 1000))).toBe('연금계좌 밖 현금성 + 연금계좌 안 현금성');
+  });
+
+  it('이정표 목록 메모도 위쪽 할 일과 같게 현금성 바구니로 옮김', () => {
+    const p = sampleData(Y).profile;
+    const list = [asset('파킹통장', 'cash', 'short', 500), asset('정기예금', 'deposit', 'short', 2000, { maturityYear: 2027, maturityMonth: 9 })];
+    const c = cashOnHand(list, Y, M);
+    const move = cashMoveRows(c, cashRunway(c, { age: 60, retired: true, outflow: 1000 }, 60));
+    const note = (m: typeof move) => milestones(p, list, [], [], Y, M, m).find((x) => x.kind === 'maturity' && x.label === '정기예금 만기(예금)')!.note;
+    expect(note(move)).toBe(`2,000만원 · ${CASH_MOVE_TODO}`);
+    expect(note([])).toBe('2,000만원 · 비상금은 바로 꺼낼 수 있는 통장이나 짧은 만기로');
+    // 위쪽 할 일과 같은 문구
+    expect(yearTodos(p, list, Y, 2027, [], M, move).find((x) => x.includes('정기예금'))).toContain(maturityTodo(c.lockedRows[0], move));
+    // 이름이 같아도 만기 연월이 다르면 바꾸지 않음
+    expect(maturityTodo(c.lockedRows[0], [{ name: '정기예금', year: 2028, month: 9 }])).toBe('비상금은 바로 꺼낼 수 있는 통장이나 짧은 만기로');
   });
 });

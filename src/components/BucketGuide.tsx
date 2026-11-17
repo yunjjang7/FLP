@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
-import { accountBuckets, BEAR_DROP, bucketGap, cashOnHand, cashYears, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
+import { accountBuckets, BEAR_DROP, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
 import { classAmounts, hasAlloc } from '../engine/allocation';
 import { useFlp } from '../store/FlpContext';
 import { SetupLink } from './SetupLink';
@@ -13,7 +13,7 @@ import { Card } from './ui';
  * 연금 세금 계산이 있으면 계좌마다 그 계좌에서 빠져나갈 금액으로 바구니 목표를 따로 보여 줌.
  */
 export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst = false }: { firstNeed: number; balance: number; tax: TaxResult | null; hasSpouse: boolean; partialFirst?: boolean }) {
-  const { assets } = useFlp();
+  const { assets, cash: hand, runCash, start, profile } = useFlp();
   // 대체자산 목표 비중 기본값: 연금계좌에 비율을 넣었으면 지금 대체자산 비중(반올림), 아니면 10%
   const [altPct, setAltPct] = useState(() => {
     const pen = assets.filter((a) => a.type === 'pension' && a.amount > 0);
@@ -24,10 +24,9 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
   });
   const [drawdown, setDrawdown] = useState(0);
   const rule = marketRule(drawdown);
-  const now = new Date();
-  // 연금계좌 밖 현금·예금·적금: 바로 쓸 돈과 만기가 3개월 넘게 남은 예금·적금
-  const hand = useMemo(() => cashOnHand(assets, now.getFullYear(), now.getMonth() + 1), [assets]); // eslint-disable-line react-hooks/exhaustive-deps
-  const handYears = cashYears(hand, firstNeed);
+  // 연금계좌 밖 현금·예금·적금(hand): 바로 쓸 돈과 만기가 3개월 넘게 남은 예금·적금.
+  // 버틸 햇수는 홈 점검과 같은 숫자: 점검기준 설정이 예면 연금계좌 안 현금성도 더한 runCash 를 노후 진단 첫해 인출(start.outflow)로 나눔
+  const handYears = cashYears(runCash, start.outflow);
   const alt0 = Math.min(50, Math.max(0, altPct)) / 100;
   const cash = Math.min(balance, firstNeed * 2);
   const bond = Math.min(balance - cash, firstNeed * 3);
@@ -60,7 +59,7 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
         ))}
       </div>
 
-      {hand.total > 0.5 && (
+      {runCash.total > 0.5 && (
         <p className="mt-3 rounded-lg bg-sunken px-3 py-2 text-sm">
           지금 연금계좌 밖 현금성(현금·예금·적금) <b>{won(hand.total)}</b> 가운데 바로 쓸 수 있는 돈 <b>{won(hand.usable)}</b>
           {hand.locked > 0.5 ? (
@@ -72,7 +71,9 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
           ) : (
             <>입니다.</>
           )}
-          {handYears && <span className="text-muted"> 첫해 인출 기준 바로 쓸 돈만으로 약 {handYears.usable.toFixed(1)}년치입니다.</span>}
+          {runCash.pension ? <> 점검기준 설정에 따라 연금계좌 안 현금성 <b>{won(runCash.pension)}</b>도 바로 쓸 돈에 더합니다(모두 {won(runCash.usable)}).</> : null}
+          {runCash.pensionOut ? <span className="text-muted">{pensionOutNote(runCash)}{pensionFrom55Note(pensionFrom55(runCash, profile.birthYear, profile.spouseBirthYear))}</span> : null}
+          {handYears && <span className="text-muted"> 노후 진단 첫해 인출(연 {won(start.outflow)}, 홈 점검과 같은 기준)로 나누면 바로 쓸 돈만으로 약 {handYears.usable.toFixed(1)}년치입니다.</span>}
         </p>
       )}
 
@@ -97,9 +98,9 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
               {bearYears.some((b) => b.years < 2) && ' — 2년이 안 되는 계좌는 회복을 기다리기 어려우니 다음 고점에 현금성을 먼저 채우세요.'}
             </div>
           )}
-          {rule.state === 'bear' && handYears && hand.total > 0.5 && (
+          {rule.state === 'bear' && handYears && runCash.total > 0.5 && (
             <div className="mt-1 text-xs">
-              연금계좌 밖 현금성으로 버틸 수 있는 기간(첫해 인출 기준): 바로 쓸 돈만 <b className={handYears.usable < 2 ? 'text-bad' : ''}>약 {handYears.usable.toFixed(1)}년</b>
+              {cashSourceLabel(runCash)}으로 버틸 수 있는 기간(첫해 인출 기준): 바로 쓸 돈만 <b className={handYears.usable < 2 ? 'text-bad' : ''}>약 {handYears.usable.toFixed(1)}년</b>
               {hand.locked > 0.5 && <>, 만기 전 예금·적금 {won(hand.locked)}까지 깨면 약 {handYears.all.toFixed(1)}년(중도해지 이율)</>}
             </div>
           )}

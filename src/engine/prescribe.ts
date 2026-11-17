@@ -8,6 +8,7 @@ import { RISK_PROFILES, type Summary } from './portfolio';
 import { emergencyMonths, emergencyRunway, withdrawLevel } from './risk';
 import { EMERGENCY_LOCK_MONTHS, goalTimingGaps, type MaturityRow } from './maturity';
 import { ISA_SEP_TAX, type IsaTax } from './account';
+import { CASH_YEARS_TARGET, cashMoveRows, cashRunway, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
 
 export interface Prescription {
   title: string;
@@ -94,6 +95,40 @@ export function maturityPrescriptions(
     });
   }
   return out;
+}
+
+/**
+ * 만기 전 예금 대응: 바로 쓸 수 있는 돈이 첫해 인출 기준 2년치에 못 미치고 만기가 3개월 넘게 남은 예금·적금이 있으면,
+ * 지금 깨지 말고 만기가 돌아오면 현금성 바구니(입출금·파킹통장·MMF)로 옮기라는 처방. 다 옮겨도 모자라면 남는 금액도 알려 줌
+ */
+export function cashBucketPrescription(c: CashOnHand, run?: { usable: number; all: number; yearDraw: number; retired: boolean }, births?: { birthYear: number; spouseBirthYear: number }): Prescription | null {
+  if (!run || !cashMoveRows(c, run).length) return null;
+  const goal = run.yearDraw * CASH_YEARS_TARGET;
+  const names = c.lockedRows.map((r) => `${r.name}(${matLabel(r)} 만기, ${fmt(r.amount)}원)`).join(', ');
+  const after = run.all >= CASH_YEARS_TARGET
+    ? `모두 옮기면 약 ${run.all.toFixed(1)}년치가 됩니다.`
+    : `모두 옮겨도 약 ${run.all.toFixed(1)}년치라, 나머지 ${fmt(goal - c.total)}원은 고점 부근에 주식형 일부를 팔아 채우세요.`;
+  return {
+    area: '노후', level: 'caution',
+    title: `만기 전 예금·적금 ${fmt(c.locked)}원 — 만기 뒤 현금성 바구니로`,
+    detail: `바로 쓸 수 있는 돈 ${fmt(c.usable)}원${c.pension ? `(연금계좌 안 현금성 ${fmt(c.pension)}원 포함)` : ''}은 ${run.retired ? '올해' : '은퇴 첫해'} 인출(연 ${fmt(run.yearDraw)}원) 기준 약 ${run.usable.toFixed(1)}년치로 ${CASH_YEARS_TARGET}년치(${fmt(goal)}원)에 못 미칩니다. ${names}은(는) 만기가 ${EMERGENCY_LOCK_MONTHS}개월 넘게 남아 지금 깨면 약정 이자 대신 중도해지 이율을 받으니 그대로 두고, 만기가 돌아오면 다시 맡기지 말고 입출금·파킹통장·MMF 같은 현금성 바구니로 옮기세요. ${after}${pensionOutNote(c)}${births ? pensionFrom55Note(pensionFrom55(c, births.birthYear, births.spouseBirthYear)) : ''}`,
+  };
+}
+
+/**
+ * 55세 전 현금성 부족: 점검기준 옵션으로 연금계좌 안 현금성을 세려 했지만 인출 시작 해에 계좌 주인이 55세 전이라 빼서(pensionOut)
+ * 바로 쓸 돈이 첫해 인출 기준 2년치에 못 미치면, 만기 전 예금이 없어도 연금계좌 밖 현금성을 채우라는 처방.
+ * 만기 전 예금 처방(cashBucketPrescription)이 나오는 경우는 그쪽에 같은 안내가 붙으므로 null
+ */
+export function pensionOutPrescription(c: CashOnHand, run?: { usable: number; all: number; yearDraw: number; retired: boolean }, births?: { birthYear: number; spouseBirthYear: number }): Prescription | null {
+  if (!run || !(run.usable < CASH_YEARS_TARGET) || !((c.pensionOut ?? 0) > 0.5) || cashMoveRows(c, run).length) return null;
+  const goal = run.yearDraw * CASH_YEARS_TARGET;
+  const from = births ? pensionFrom55Note(pensionFrom55(c, births.birthYear, births.spouseBirthYear)) : '';
+  return {
+    area: '노후', level: 'caution',
+    title: `55세 전 현금성 부족 — 연금계좌 밖 현금성 ${fmt(Math.max(0, goal - c.usable))}원 더 필요`,
+    detail: `바로 쓸 수 있는 돈 ${fmt(c.usable)}원은 ${run.retired ? '올해' : '은퇴 첫해'} 인출(연 ${fmt(run.yearDraw)}원) 기준 약 ${run.usable.toFixed(1)}년치로 ${CASH_YEARS_TARGET}년치(${fmt(goal)}원)에 못 미칩니다.${pensionOutNote(c)}${from} 그때까지 하락장에 주식을 팔지 않고 버티려면 모자란 ${fmt(Math.max(0, goal - c.usable))}원을 저축이나 고점 부근에 연금계좌 밖 주식형 일부를 팔아 입출금·파킹통장·MMF 같은 현금성 바구니에 채우세요.`,
+  };
 }
 
 /**
@@ -292,7 +327,7 @@ export function guardrailPrescription(input: PlanInput, successRate: number, tar
 }
 
 /** retax: 저축·수익률·은퇴 나이·생활비를 바꿔 역산할 때 연금 인출 세금도 바뀐 계획으로 다시 계산(없으면 지금 세금 그대로) */
-export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap, retax?: Retax): Prescription[] {
+export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap, retax?: Retax, cash?: CashOnHand): Prescription[] {
   const c = profile.criteria;
   const rt: Retax = retax ?? ((x) => x);
   const out: Prescription[] = [];
@@ -376,6 +411,12 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
   const emRx = emergencyPrescription(s, c.emergencyMonths, retired);
   if (emRx) out.push(emRx);
   out.push(...maturityPrescriptions(s, goalPlans, profile.birthYear + s.age, c.emergencyMonths));
+  const cashRx = cash ? cashBucketPrescription(cash, cashRunway(cash, st, input.currentAge), profile) : null;
+  if (cashRx) out.push(cashRx);
+  else {
+    const outRx = cash ? pensionOutPrescription(cash, cashRunway(cash, st, input.currentAge), profile) : null;
+    if (outRx) out.push(outRx);
+  }
 
   const debtRatio = s.totalAssets > 0 ? (s.totalDebt / s.totalAssets) * 100 : 0;
   if (debtRatio > c.debtRatioMax) {

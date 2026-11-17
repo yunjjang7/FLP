@@ -1,5 +1,6 @@
 import { won, pct } from '../lib/format';
 import type { Goal, Level, Liability, Profile } from '../types';
+import { cashYears, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
 import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
@@ -32,7 +33,32 @@ export interface ReportInput {
   nowYear: number;
   /** 배우자 사별 분석(배우자가 있을 때): 가장 어려운 경우와 사망보장 효과. worst 가 null 이면 아직 계산 중 */
   survivor?: { worst: SurvivorWorst | null; base: number; living: number; rate: number };
+  /** 연금계좌 밖 현금성(buckets.ts cashOnHand): 바로 쓸 수 있는 돈과 만기 전 예금·적금 */
+  cash?: CashOnHand;
   retax?: Retax; // 수익률 ±2%p 고갈 나이에서 연금 인출 세금을 바뀐 수익률로 다시 계산
+}
+
+/**
+ * 현금성 문장: 연금계좌 밖 현금·예금·적금 중 바로 쓸 수 있는 돈과 만기가 3개월 넘게 남은 예금·적금,
+ * 하락장에 주식을 팔지 않고 버틸 햇수(한 해 인출 yearDraw 기준). 바로 쓸 돈으로 2년치가 안 되면 주의. 현금성이 없으면 undefined
+ */
+export function cashLine(c: CashOnHand, yearDraw: number, births?: { birthYear: number; spouseBirthYear: number }): ReportLine | undefined {
+  if (!(c.total > 0.5)) return undefined;
+  // 55세 전이라 뺀 연금계좌 안 현금성: 제외 안내 뒤에 그 사람이 만 55세가 되는 해부터 셈을 덧붙임
+  const outNote = `${pensionOutNote(c)}${births ? pensionFrom55Note(pensionFrom55(c, births.birthYear, births.spouseBirthYear)) : ''}`;
+  // c 가 연금계좌 안 현금성을 더한 runCash 면 연금계좌 밖 금액은 그만큼 빼서 적음
+  const out = { total: c.total - (c.pension ?? 0), usable: c.usable - (c.pension ?? 0) };
+  const names = c.lockedRows.map((r) => `${r.name} ${maturityLabel({ maturityYear: r.year, maturityMonth: r.month })}`).join(', ');
+  const head = !(out.total > 0.5)
+    ? '연금계좌 밖 현금성(현금·예금·적금)은 없습니다.'
+    : c.locked > 0.5
+    ? `연금계좌 밖 현금성(현금·예금·적금) ${won(out.total)} 가운데 바로 쓸 수 있는 돈은 ${won(out.usable)}이고, 만기가 3개월 넘게 남은 예금·적금 ${won(c.locked)}(${names} 만기)은 깨면 중도해지 이율을 받습니다.`
+    : `연금계좌 밖 현금성(현금·예금·적금) ${won(out.total)}은 모두 바로 쓸 수 있는 돈입니다.`;
+  const pen = c.pension ? ` 점검기준 설정에 따라 연금계좌 안 현금성 ${won(c.pension)}도 바로 쓸 돈에 더합니다(모두 ${won(c.usable)}).` : '';
+  const y = cashYears(c, yearDraw);
+  if (!y) return { text: `${head}${pen}${outNote}` };
+  const years = `하락장에 주식을 팔지 않고 인출(연 ${won(yearDraw)}) 기준 바로 쓸 돈만으로 약 ${y.usable.toFixed(1)}년${c.locked > 0.5 ? `, 만기 전 예금·적금까지 깨면 약 ${y.all.toFixed(1)}년` : ''} 버틸 수 있습니다${y.usable < 2 ? '(2년치에 못 미침)' : ''}.`;
+  return { text: `${head}${pen} ${years}${outNote}`, level: y.usable >= 2 ? 'good' : 'caution' };
 }
 
 /** 고갈 나이 문장: 끝까지 남으면 ‘N세까지 유지’ */
@@ -120,6 +146,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
         : (l.endAge ?? 0) > 0 ? `${l.endAge}세에 상환 종료` : '상환 종료 나이 자동 계산';
       return { text: `${l.name}: 잔액 ${won(l.balance)}, 금리 ${l.rate}%, 월 ${won(l.monthlyPayment)} · ${how}.`, level: noEnd && !open ? ('caution' as Level) : undefined };
     });
+  const cash = x.cash ? cashLine(x.cash, start.outflow, p) : undefined;
   const assetLines: ReportLine[] = [
     { text: `총자산 ${won(s.totalAssets)}, 부채 ${won(s.totalDebt)}, 순자산 ${won(s.netWorth)}입니다. 금융자산 ${won(s.financialAssets)}, 부동산 ${won(s.realEstate)}입니다.` },
     ...(s.financialAssets > 0 && s.byClass.length
@@ -128,6 +155,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
     ...(s.byAcct.some((g) => g.key !== 'none')
       ? [{ text: `주식·펀드·ETF는 ${s.byAcct.map((g) => `${g.label} ${won(g.value)}`).join(', ')}입니다.` }]
       : []),
+    ...(cash ? [cash] : []),
     {
       text: `노후 계산은 지금 꺼내 쓸 수 있는 금융자산 ${won(inp.startBalance)}에서 시작합니다(기대수익률 ${inp.meanReturn.toFixed(1)}%, 변동성 ${inp.volatility.toFixed(1)}%${inp.retireMeanReturn !== undefined ? `, 은퇴 후 ${inp.retireMeanReturn.toFixed(1)}%` : ''}).`,
     },

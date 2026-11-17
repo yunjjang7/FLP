@@ -6,6 +6,7 @@ import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
 import { EMERGENCY_LOCK_MONTHS } from './maturity';
+import { CASH_YEARS_TARGET, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
 import { goalBreakdownAt, pensionAt, retireOutflowAt, type PlanInput } from './montecarlo';
 
 /**
@@ -173,6 +174,19 @@ export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdr
   }
   // 이미 은퇴해 인출 중이면 저축률 대신 인출률로 판단
   return items.filter((x) => !(withdraw?.retired && x.key === 'savings')).map(({ score, ...r }) => ({ ...r, level: level(score) }));
+}
+
+/**
+ * 하락장 현금성 점검(홈 주요 점검 사항): 연금계좌 밖 바로 쓸 수 있는 돈으로 첫해 인출을 몇 년 버티는지(buckets.ts cashRunway 결과).
+ * 2년치에 못 미치면 주의. 재무점수에는 넣지 않음. run 이 없으면(현금성·인출 없음, 은퇴가 5년보다 더 남음) 빈 목록
+ */
+export function cashRunwayChecks(c: CashOnHand, run?: { usable: number; all: number; yearDraw: number; retired: boolean }, births?: { birthYear: number; spouseBirthYear: number }): RiskCheck[] {
+  if (!run) return [];
+  const short = run.usable < CASH_YEARS_TARGET;
+  return [{
+    key: 'cashRunway', label: '하락장 버틸 햇수(바로 쓸 돈)', value: `${run.usable.toFixed(1)}년치`, level: short ? 'caution' : 'good',
+    detail: `${c.pension ? `연금계좌 밖 현금·예금·적금 가운데 바로 쓸 수 있는 돈 ${won(c.usable - c.pension)}과 연금계좌 안 현금성 ${won(c.pension)}, 모두 ${won(c.usable)}을` : `연금계좌 밖 현금·예금·적금 가운데 바로 쓸 수 있는 돈 ${won(c.usable)}을`} ${run.retired ? '올해' : '은퇴 첫해'} 인출(연 ${won(run.yearDraw)})로 나눈 값입니다. 하락장에 주식을 팔지 않고 버티려면 ${CASH_YEARS_TARGET}년치 이상 권장.${c.locked > 0.5 ? ` 만기가 ${EMERGENCY_LOCK_MONTHS}개월 넘게 남은 예금·적금 ${won(c.locked)}은 넣지 않았습니다(깨면 중도해지 이율, 넣으면 약 ${run.all.toFixed(1)}년치).` : ''}${pensionOutNote(c)}${births ? pensionFrom55Note(pensionFrom55(c, births.birthYear, births.spouseBirthYear)) : ''}`,
+  }];
 }
 
 export interface ScoreItem { label: string; weight: number; score: number }

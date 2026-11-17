@@ -6,7 +6,9 @@ import { insuranceGap, type InsuranceGap } from '../engine/insurance';
 import { retirementNeed, simulate, withdrawStart, type PathTax, type PlanInput, type SimResult } from '../engine/montecarlo';
 import { summarize, type Summary } from '../engine/portfolio';
 import { makePathTax, makeRetax, type Retax } from '../engine/pensionTaxPlan';
-import { bulletChecks, financialScore, retiredBasis, riskChecks, type RiskCheck } from '../engine/risk';
+import { bulletChecks, cashRunwayChecks, financialScore, retiredBasis, riskChecks, type RiskCheck } from '../engine/risk';
+import { cashMoveRows, cashOnHand, cashRunway, pensionCashParts, startAges, withPensionCash, type CashOnHand } from '../engine/buckets';
+import type { MaturityRow } from '../engine/maturity';
 import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd, Draw } from '../types';
 
 export interface FlpData {
@@ -33,6 +35,9 @@ export interface FlpData {
   goalPlans: GoalPlan[];
   ins: InsuranceGap;
   checks: RiskCheck[];
+  cash: CashOnHand; // 연금계좌 밖 현금성: 바로 쓸 수 있는 돈과 만기가 3개월 넘게 남은 예금·적금(요약 보고 현금성 문장)
+  runCash: CashOnHand; // 버틸 햇수 점검·처방용: 프로필 설정이 예면 연금계좌 안 현금성도 더함
+  cashMove: MaturityRow[]; // 바로 쓸 돈이 2년치에 못 미쳐 만기 뒤 현금성 바구니로 옮길 예금·적금(이정표 할 일)
   score: ReturnType<typeof financialScore>;
 }
 
@@ -71,6 +76,9 @@ export function FlpProvider({ children }: { children: ReactNode }) {
     const basis = retiredBasis(summary, planInput);
     const ins = insuranceGap(profile, basis, insurance, goals);
     const start = withdrawStart(planInput);
+    const cash = cashOnHand(assets, profile.birthYear + summary.age, new Date().getMonth() + 1);
+    const runCash = profile.cashRunwayPension ? withPensionCash(cash, pensionCashParts(assets, profile.spouseBirthYear > 0), startAges(start.age, profile.birthYear, profile.spouseBirthYear)) : cash;
+    const run = cashRunway(runCash, start, planInput.currentAge);
     return {
       loading: false,
       hasData: raw.hasProfile || assets.length > 0,
@@ -80,7 +88,8 @@ export function FlpProvider({ children }: { children: ReactNode }) {
       start,
       goalPlans: planGoals(goals, assets, summary.age),
       ins,
-      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start)],
+      cash, runCash, cashMove: cashMoveRows(runCash, run),
+      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start), ...cashRunwayChecks(runCash, run, profile)],
       score: financialScore(profile, assets, basis, sim.successRate, ins, start),
     };
   }, [raw]);

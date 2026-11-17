@@ -485,6 +485,9 @@ function CriteriaForm() {
         <Labeled label="유족 생활비 비율" hint="현재 지출 대비 · 이미 은퇴했으면 유족 생활비는 빼고 계산"><NumberField value={c.survivorRatio} unit="%" onChange={set('survivorRatio')} /></Labeled>
         <Labeled label="하락장 기준" hint="시장이 최고점보다 이만큼 떨어진 해"><NumberField value={c.guardrailDrop} unit="%" onChange={set('guardrailDrop')} /></Labeled>
         <Labeled label="하락장 생활비 감축" hint="그해 은퇴 후 생활비를 줄이는 비율 · 0이면 비교 안 함"><NumberField value={c.guardrailCut} unit="%" onChange={set('guardrailCut')} /></Labeled>
+        <Labeled label="버틸 햇수에 연금계좌 안 현금성" hint="홈 점검·처방·이정표 · 예: 자산 탭 계좌 안 자산배분 비율의 현금성도 셈">
+          <SelectField value={profile.cashRunwayPension ? 'on' : 'off'} onChange={(v) => save({ cashRunwayPension: v === 'on' })} options={{ off: '아니오(연금계좌 밖만)', on: '예(함께 셈)' }} />
+        </Labeled>
       </div>
     </Card>
   );

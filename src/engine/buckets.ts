@@ -1,7 +1,8 @@
 import type { Alloc, Asset } from '../types';
 import { accountName } from './portfolio';
 import { classAmounts, hasAlloc, IRP_RISK_CAP, isCappedAsset, isRiskCappedName } from './allocation';
-import type { TaxResult } from './tax';
+import { PENSION_OPEN_AGE, type TaxResult } from './tax';
+import { won } from '../lib/format';
 import { isLocked } from './goals';
 import { EMERGENCY_LOCK_MONTHS, maturities, maturityLabel, type MaturityRow } from './maturity';
 
@@ -99,7 +100,16 @@ export interface CashOnHand {
   usable: number; // 바로 쓸 수 있는 돈: 현금·만기 없는 예금·적금·만기가 3개월 안에 오거나 지난 예금·적금
   locked: number; // 만기가 3개월 넘게 남은 예금·적금(깨면 중도해지 이율)
   lockedRows: MaturityRow[];
+  /** 함께 센 연금계좌 안 현금성(withPensionCash): usable·total 에 이미 들어 있음 */
+  pension?: number;
+  /** 옵션은 예지만 인출 시작 나이가 55세 전이라 빼 둔 연금계좌 안 현금성(usable·total 에 없음) */
+  pensionOut?: number;
+  /** pensionOut 을 계좌 주인별로: 55세 이정표 메모에 씀 */
+  pensionOutParts?: PensionCashParts;
 }
+
+/** 연금계좌 안 현금성을 계좌 주인(명의)별로 */
+export interface PensionCashParts { self: number; spouse: number }
 
 /**
  * 인출 바구니 ① 현금성 가운데 연금계좌 밖 현금·예금·적금을 ‘바로 쓸 수 있는 돈’과 ‘만기 전 예금·적금’으로 나눔.
@@ -111,6 +121,102 @@ export function cashOnHand(assets: Asset[], nowYear: number, nowMonth = 1): Cash
   const lockedRows = maturities(rows, nowYear, nowMonth).filter((r) => r.monthsLeft > EMERGENCY_LOCK_MONTHS);
   const locked = lockedRows.reduce((s, r) => s + r.amount, 0);
   return { total, usable: total - locked, locked, lockedRows };
+}
+
+/**
+ * 연금계좌 안 현금성: 인출 바구니(accountBuckets)의 now.cash 와 같은 기준(계좌 안 자산배분 비율을 하나라도 넣은 연금계좌만, 같은 계좌로 묶인 줄은 함께).
+ * 인출 바구니는 첫해 평가액에 맞춰 늘리지만 여기서는 연금계좌 밖 현금성과 같게 지금 평가액 기준
+ */
+export function pensionCash(assets: Asset[]): number {
+  const p = pensionCashParts(assets, true);
+  return p.self + p.spouse;
+}
+
+/** pensionCash 를 계좌 주인별로 나눔: 명의가 배우자이고 배우자가 있으면 배우자, 아니면 본인(같은 계좌로 묶인 줄은 명의가 같음) */
+export function pensionCashParts(assets: Asset[], hasSpouse: boolean): PensionCashParts {
+  const rows = assets.filter((a) => a.type === 'pension' && a.amount > 0);
+  const names = [...new Set(rows.map(accountName))];
+  const out: PensionCashParts = { self: 0, spouse: 0 };
+  for (const n of names) {
+    const acct = rows.filter((a) => accountName(a) === n);
+    if (!acct.some(hasAlloc)) continue;
+    out[acct[0].owner === 'spouse' && hasSpouse ? 'spouse' : 'self'] += classAmounts(acct).cash;
+  }
+  return out;
+}
+
+/**
+ * 연금계좌 안 현금성을 바로 쓸 수 있는 돈에 더함(만기가 없어 바로 꺼낼 수 있는 돈으로 봄).
+ * 계좌 주인별로 인출 시작 해의 그 사람 나이(ages)가 55세(PENSION_OPEN_AGE) 전이면 연금계좌에서 꺼내기 어려워 더하지 않고 pensionOut 에만 적어 둠.
+ * pension 이 숫자면 본인 몫, ages 가 숫자면 두 사람 모두 그 나이로 봄. 나이가 없으면 제외하지 않음
+ */
+export function withPensionCash(c: CashOnHand, pension: number | PensionCashParts, ages?: number | { self: number; spouse?: number }): CashOnHand {
+  const p = typeof pension === 'number' ? { self: pension, spouse: 0 } : pension;
+  const a = typeof ages === 'number' ? { self: ages, spouse: ages } : ages;
+  const young = (age?: number) => age !== undefined && age < PENSION_OPEN_AGE;
+  const outParts = { self: young(a?.self) ? p.self : 0, spouse: young(a?.spouse) ? p.spouse : 0 };
+  const add = p.self + p.spouse - outParts.self - outParts.spouse;
+  const out = outParts.self + outParts.spouse;
+  let r = c;
+  if (add > 0.5) r = { ...r, total: r.total + add, usable: r.usable + add, pension: add };
+  if (out > 0.5) r = { ...r, pensionOut: out, pensionOutParts: outParts };
+  return r;
+}
+
+/** 55세 전이라 뺀 연금계좌 안 현금성 안내(앞에 띄어쓰기 포함). 뺀 금액이 없으면 빈 문자열 */
+export function pensionOutNote(c: Pick<CashOnHand, 'pensionOut' | 'pensionOutParts'>): string {
+  if (!c.pensionOut) return '';
+  const p = c.pensionOutParts;
+  const who = p && p.spouse > 0.5
+    ? p.self > 0.5 ? `연금계좌 안 현금성 ${won(c.pensionOut)}(본인 ${won(p.self)}, 배우자 ${won(p.spouse)})` : `배우자 연금계좌 안 현금성 ${won(c.pensionOut)}`
+    : `연금계좌 안 현금성 ${won(c.pensionOut)}`;
+  return ` ${who}은 ${PENSION_OPEN_AGE}세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.`;
+}
+
+/** 인출 시작 해 그 사람 나이(본인은 start.age, 배우자는 나이 차를 빼서) */
+export const startAges = (startAge: number, birthYear: number, spouseBirthYear: number) =>
+  ({ self: startAge, ...(spouseBirthYear > 0 ? { spouse: startAge + birthYear - spouseBirthYear } : {}) });
+
+export interface PensionFrom55 { who: '본인' | '배우자'; year: number; amount: number }
+
+/** 55세 전이라 뺀 연금계좌 안 현금성(pensionOutParts)을 사람별로, 그 사람이 만 55세가 되는 해(출생연도 + PENSION_OPEN_AGE)와 함께 */
+export function pensionFrom55(c: Pick<CashOnHand, 'pensionOutParts'>, birthYear: number, spouseBirthYear: number): PensionFrom55[] {
+  const p = c.pensionOutParts;
+  if (!p) return [];
+  return [
+    ...(p.self > 0.5 ? [{ who: '본인' as const, year: birthYear + PENSION_OPEN_AGE, amount: p.self }] : []),
+    ...(p.spouse > 0.5 && spouseBirthYear > 0 ? [{ who: '배우자' as const, year: spouseBirthYear + PENSION_OPEN_AGE, amount: p.spouse }] : []),
+  ];
+}
+
+/** 55세 이후 다시 세는 안내(앞에 띄어쓰기 포함): ‘본인 만 55세가 되는 ○년부터 ○원도 버틸 햇수에 셉니다.’ 없으면 빈 문자열 */
+export function pensionFrom55Note(rows: PensionFrom55[]): string {
+  if (!rows.length) return '';
+  return ` ${rows.map((r) => `${r.who} 만 ${PENSION_OPEN_AGE}세가 되는 ${r.year}년부터 ${won(r.amount)}`).join(', ')}도 버틸 햇수에 셉니다.`;
+}
+
+/** 하락장에 주식을 팔지 않고 버티려면 바로 쓸 돈으로 이만큼(년치) 이상 권장: 인출 바구니 ① 현금성(앞 2년 인출분)과 같은 기준 */
+export const CASH_YEARS_TARGET = 2;
+/** 은퇴 전이면 은퇴가 이 햇수 안으로 다가왔을 때만 버틸 햇수를 점검·처방(그 전에는 모아 가는 중이라 생략) */
+export const CASH_CHECK_LEAD = 5;
+
+/**
+ * 홈 점검·맞춤 처방용 버틸 햇수: 첫해 인출(st.outflow, 은퇴 전이면 은퇴 첫해) 기준.
+ * 연금계좌 밖 현금성이 없거나, 인출이 없거나, 은퇴가 CASH_CHECK_LEAD 년보다 더 남았으면 undefined
+ */
+export function cashRunway(c: CashOnHand, st: { age: number; retired: boolean; outflow: number }, currentAge: number) {
+  if (!(c.total > 0.5)) return undefined;
+  if (!st.retired && st.age - currentAge > CASH_CHECK_LEAD) return undefined;
+  const y = cashYears(c, st.outflow);
+  return y ? { ...y, yearDraw: st.outflow, retired: st.retired } : undefined;
+}
+
+/** 버틸 햇수에 센 현금성 이름: 점검기준 ‘버틸 햇수에 연금계좌 안 현금성’이 예라 연금계좌 안 현금성을 더했으면 함께 적음 */
+export const cashSourceLabel = (c: Pick<CashOnHand, 'pension'>) => (c.pension ? '연금계좌 밖 현금성 + 연금계좌 안 현금성' : '연금계좌 밖 현금성');
+
+/** 버틸 햇수가 2년치에 못 미칠 때 만기 뒤 현금성 바구니로 옮길 예금·적금(만기가 3개월 넘게 남은 것): 처방·이정표 할 일에 씀 */
+export function cashMoveRows(c: CashOnHand, run?: { usable: number }): MaturityRow[] {
+  return run && run.usable < CASH_YEARS_TARGET && c.locked > 0.5 ? c.lockedRows : [];
 }
 
 /** 하락장에 연금계좌 밖 현금성으로 버틸 햇수(한 해 인출 yearDraw 기준): 바로 쓸 돈만, 만기 전 예금·적금까지 깰 때. 인출이 없으면 undefined */

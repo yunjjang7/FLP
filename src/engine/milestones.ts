@@ -68,6 +68,16 @@ const MATURITY_TODO: Record<MaturityRow['purpose'], string> = {
   mid: '목표 시점에 맞춰 다시 맡길 기간을 정함',
   long: '다시 맡기거나 노후자금 배분에 맞춰 옮김',
 };
+/** 바로 쓸 돈이 첫해 인출 2년치에 못 미칠 때(맞춤 처방 ‘만기 뒤 현금성 바구니로’와 같은 조건) 만기 예금·적금 할 일 */
+export const CASH_MOVE_TODO = '다시 맡기지 말고 현금성 바구니로 옮김';
+type MoveRow = Pick<MaturityRow, 'name' | 'year' | 'month'>;
+/** 55세 이정표 메모: 인출 시작이 55세 전이라 버틸 햇수에서 뺀 연금계좌 안 현금성 */
+export const cashFrom55Note = (amount: number) => `이때부터 연금계좌 안 현금성 ${man(amount)}도 버틸 햇수에 셈`;
+/** 만기 예금·적금 할 일: 현금성 바구니로 옮길 줄(moveToCash)이면 CASH_MOVE_TODO, 아니면 용도별 할 일. 이정표 메모와 올해·내년 할 일이 같은 문구 */
+export function maturityTodo(r: MaturityRow, moveToCash: MoveRow[] = []) {
+  const move = moveToCash.some((m) => m.name === r.name && m.year === r.year && (m.month ?? 0) === (r.month ?? 0));
+  return move ? CASH_MOVE_TODO : MATURITY_TODO[r.purpose];
+}
 const maturityName = (r: MaturityRow) => `${r.name} 만기(${r.type === 'savings' ? '적금' : '예금'})`;
 
 /** ISA 만기 때 할 일: 연금계좌 이전 세액공제 + 납입 원금을 넣었으면 분리과세 추정 */
@@ -105,7 +115,7 @@ export function yuRefundRuns(rows: IncomeTaxRow[]): IncomeTaxRow[][] {
  * 국민연금 개시, 퇴직금 실수령 11년차(감면 40%), 70·80세 연금소득세율, 추가 납입·환급, 노란우산 절세 환급(납입 다음 해 5월), 부동산 매각·주택연금, 만기일시 대출, 일시 목표.
  * 지금(nowYear·nowMonth) 이후의 것만 시기순으로 돌려줌.
  */
-export function milestones(profile: Profile, assets: Asset[], liabilities: Liability[], goals: Goal[], nowYear: number, nowMonth: number): Milestone[] {
+export function milestones(profile: Profile, assets: Asset[], liabilities: Liability[], goals: Goal[], nowYear: number, nowMonth: number, moveToCash: MoveRow[] = [], cashFrom55?: { self: number; spouse: number }): Milestone[] {
   const out: Milestone[] = [];
   const hasSpouse = profile.spouseBirthYear > 0;
   const people = [
@@ -125,7 +135,9 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
     const mine = pensions.filter((a) => ownerOf(a) === p.key);
     if (mine.length === 0) continue;
     // 55세: 연금계좌 인출 가능
-    out.push({ year: p.birth + PENSION_OPEN_AGE, month: p.month, kind: 'open', label: `${p.who} 만 55세 → 연금계좌 인출 가능`, note: mine.map((a) => a.name).join(', ') });
+    // 인출 시작이 55세 전이라 버틸 햇수에서 뺀 연금계좌 안 현금성(buckets.ts withPensionCash)이 있으면 이때부터 셈
+    const later = cashFrom55?.[p.key] ?? 0;
+    out.push({ year: p.birth + PENSION_OPEN_AGE, month: p.month, kind: 'open', label: `${p.who} 만 55세 → 연금계좌 인출 가능`, note: `${mine.map((a) => a.name).join(', ')}${later > 0.5 ? ` · ${cashFrom55Note(later)}` : ''}` });
     // 연금소득세율이 내려가는 나이
     out.push({ year: p.birth + 70, month: p.month, kind: 'tax', label: `${p.who} 만 70세 → 연금소득세 5.5% → 4.4%` });
     out.push({ year: p.birth + 80, month: p.month, kind: 'tax', label: `${p.who} 만 80세 → 연금소득세 4.4% → 3.3%` });
@@ -211,7 +223,7 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
 
   // 예금·적금 만기(만기 월을 비우면 그 해 중), ISA 만기(연도만)
   for (const r of maturities(assets, nowYear, nowMonth)) {
-    out.push({ year: r.year, month: r.month ?? 0, kind: 'maturity', label: maturityName(r), note: `${man(r.amount)} · ${MATURITY_TODO[r.purpose]}` });
+    out.push({ year: r.year, month: r.month ?? 0, kind: 'maturity', label: maturityName(r), note: `${man(r.amount)} · ${maturityTodo(r, moveToCash)}` });
   }
   for (const x of isaMaturities(assets, profile, nowYear)) {
     out.push({ year: x.endYear, month: 0, kind: 'maturity', label: `${isaName(x)} → ${isaTodo(x)}`, note: `지금 평가액 ${man(x.amount)} · ${isaTaxNote(x)}` });
@@ -225,8 +237,9 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
 /**
  * 엑셀 대시보드 ‘올해·내년 할 일’: 그 해에 챙길 연금 개시 신청·추가 납입·환급(노란우산 절세 포함)·일시금 수령·최소 인출·연말결산.
  * liabilities·nowMonth: 노란우산 절세 환급 금액을 이정표와 같은 기준(올해 남은 달)으로 계산할 때
+ * moveToCash: 만기 뒤 현금성 바구니로 옮길 예금·적금(buckets.ts cashMoveRows): 그 만기 할 일을 ‘다시 맡기지 말고 현금성 바구니로 옮김’으로
  */
-export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, year: number, liabilities: Liability[] = [], nowMonth?: number): string[] {
+export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, year: number, liabilities: Liability[] = [], nowMonth?: number, moveToCash: MoveRow[] = [], cashFrom55?: { self: number; spouse: number }): string[] {
   const out: string[] = [];
   const hasSpouse = profile.spouseBirthYear > 0;
   const pensions = mergeAccounts(assets).filter((a) => a.type === 'pension' && a.amount > 0); // 같은 계좌로 묶인 줄은 한 계좌
@@ -236,7 +249,9 @@ export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, ye
   if (starting.length) out.push(`${starting.map((a) => a.name || '연금').join('·')} 연금 개시 신청`);
   for (const p of [{ who: '본인', key: 'self', birth: profile.birthYear }, ...(hasSpouse ? [{ who: '배우자', key: 'spouse', birth: profile.spouseBirthYear }] : [])]) {
     const mine = pensions.filter((a) => (a.owner === 'spouse' && hasSpouse ? 'spouse' : 'self') === p.key && !(a.drawStartYear === year));
-    if (mine.length && p.birth + PENSION_OPEN_AGE === year) out.push(`${p.who} 만 55세: 연금계좌 개시 가능(${mine.map((a) => a.name || '연금').join('·')})`);
+    // 55세 이정표 메모와 같은 문구: 인출 시작이 55세 전이라 버틸 햇수에서 뺀 연금계좌 안 현금성
+    const later = cashFrom55?.[p.key as 'self' | 'spouse'] ?? 0;
+    if (mine.length && p.birth + PENSION_OPEN_AGE === year) out.push(`${p.who} 만 55세: 연금계좌 개시 가능(${mine.map((a) => a.name || '연금').join('·')})${later > 0.5 ? ` · ${cashFrom55Note(later)}` : ''}`);
   }
   const c = { ...DEFAULT_CONTRIB, ...(profile.contrib ?? {}) };
   const to = c.to || c.from;
@@ -258,7 +273,7 @@ export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, ye
   // 그 해 예금·적금 만기(올해는 이번 달 이후), ISA 만기
   if (year >= nowYear) {
     for (const r of maturities(assets, nowYear, nowMonth ?? 1).filter((r) => r.year === year && r.monthsLeft >= 0)) {
-      out.push(`${r.month ? `${r.month}월 ` : ''}${maturityName(r)} ${man(r.amount)} → ${MATURITY_TODO[r.purpose]}`);
+      out.push(`${r.month ? `${r.month}월 ` : ''}${maturityName(r)} ${man(r.amount)} → ${maturityTodo(r, moveToCash)}`);
     }
     for (const x of isaMaturities(assets, profile, nowYear).filter((x) => x.endYear === year)) out.push(`${isaName(x)} → ${isaTodo(x)}`);
   }
