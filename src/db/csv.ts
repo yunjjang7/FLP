@@ -1,6 +1,8 @@
 import Papa from 'papaparse';
 import { parseMonth } from '../engine/drawLog';
 import { ASSET_TYPES } from '../engine/portfolio';
+import { allocSum, canAlloc, natureOfAlloc, normalizeAlloc } from '../engine/allocation';
+import type { AssetType } from '../types';
 import type { Draw } from '../types';
 import type { ListTable } from './db';
 import { ORDER_FIELD, TABLES, type FieldDef } from './schema';
@@ -17,13 +19,25 @@ const allFields = (table: ListTable) => [...TABLES[table].fields, ...extras(tabl
 const yuRow = (r: Row) => r.yu === true || r.yu === 'true' || r.yu === '예';
 /** 부동산·연금 계좌·노란우산 전용 열인데 그 유형이 아닌 행 */
 const notFor = (f: FieldDef, r: Row) =>
-  (f.reOnly && r.type !== 'realestate') || (f.penOnly && r.type !== 'pension') || (f.yuOnly && !yuRow(r)) || (f.penOrYu && r.type !== 'pension' && !yuRow(r));
+  (f.reOnly && r.type !== 'realestate') || (f.penOnly && r.type !== 'pension') || (f.yuOnly && !yuRow(r)) || (f.penOrYu && r.type !== 'pension' && !yuRow(r)) ||
+  (f.allocOnly && !canAlloc({ type: r.type as AssetType }));
+
+/** 'alloc.equity' 처럼 점으로 나눈 키 읽기·쓰기(자산배분 비율 열) */
+const getKey = (r: Row, key: string) => {
+  const [a, b] = key.split('.');
+  return b === undefined ? r[a] : (r[a] as Row | undefined)?.[b];
+};
+const setKey = (r: Row, key: string, v: unknown) => {
+  const [a, b] = key.split('.');
+  if (b === undefined) r[a] = v;
+  else r[a] = { ...((r[a] as Row | undefined) ?? {}), [b]: v };
+};
 
 /** 레코드 배열 → CSV 문자열(한글 헤더, 선택값은 한글 라벨). 선택 열은 값이 없거나 부동산 전용인데 부동산이 아니면 빈칸 */
 export function toCSV(table: ListTable, rows: Row[]) {
   const fields = allFields(table);
   const cell = (r: Row, f: FieldDef) => {
-    const v = r[f.key];
+    const v = getKey(r, f.key);
     if (notFor(f, r) || v === undefined || v === null) return '';
     return f.kind === 'select' ? f.options?.[String(v)] ?? v : v;
   };
@@ -66,7 +80,7 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
     for (const f of extras(table)) {
       const s = String(raw[f.label] ?? raw[f.key] ?? '').trim();
       if (!s || notFor(f, kind)) continue;
-      if (f.kind === 'number') rec[f.key] = num(s);
+      if (f.kind === 'number') setKey(rec, f.key, num(s));
       else if (f.kind === 'text') rec[f.key] = s;
       else {
         const code = Object.entries(f.options ?? {}).find(([k, lbl]) => k === s || lbl === s)?.[0];
@@ -80,6 +94,17 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
         rec.owner = 'self';
       }
       if (rec.type === 'realestate') rec.reUse ??= 'home';
+      // 자산배분 비율: 넣은 칸만 읽고 빈칸은 0. 합계가 0이면 지우고, 있으면 성격을 비율로 맞춤
+      if (rec.alloc) {
+        const x = { equity: 0, bond: 0, alt: 0, cash: 0, ...(rec.alloc as Row) } as Record<string, number>;
+        const s = allocSum(x);
+        if (s <= 0) delete rec.alloc;
+        else {
+          rec.alloc = x;
+          if (Math.abs(s - 100) > 0.05) errors.push(`${i + 2}행: 자산배분 비율 합계가 ${Math.round(s * 10) / 10}%라 100으로 보고 비례로 계산합니다.`);
+          rec.nature = natureOfAlloc(normalizeAlloc(x)!);
+        }
+      }
       if (rec.yu === 'true') rec.yu = true;
       if (rec.yu && (rec.type === 'pension' || rec.type === 'realestate')) delete rec.yu;
       // 노란우산 월·개월 수 열은 1~12 정수만(그 밖은 빈칸으로 읽음)

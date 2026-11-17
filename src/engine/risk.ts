@@ -1,4 +1,5 @@
 import type { Asset, Level, Liability, Profile } from '../types';
+import { hasAlloc } from './allocation';
 import { won } from '../lib/format';
 import { bulletMissingMaturity } from './goals';
 import { scale } from './finance';
@@ -100,6 +101,11 @@ export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdr
   const target = RISK_PROFILES[profile.riskProfile];
   const fitDiff = Math.abs(s.investShare - target.investShare);
   const typeCount = new Set(assets.filter((a) => a.type !== 'realestate').map((a) => a.type)).size;
+  // 자산배분 비율을 넣은 자산이 있으면 자산군(주식형·채권형·대체·현금성) 분산도 함께 봄: 금융자산의 5% 이상인 자산군 수
+  const allocUsed = assets.some(hasAlloc);
+  const classShare = (k: string) => (s.financialAssets > 0 ? ((s.byClass.find((c) => c.key === k)?.value ?? 0) / s.financialAssets) * 100 : 0);
+  const classCount = s.byClass.filter((c) => s.financialAssets > 0 && c.value / s.financialAssets >= 0.05).length;
+  const equityShare = classShare('equity');
 
   const items: (RiskCheck & { score: number })[] = [
     {
@@ -142,11 +148,17 @@ export function riskChecks(profile: Profile, assets: Asset[], s: Summary, withdr
       score: scale(fitDiff, 25, 10), level: 'good',
       detail: `${target.label} 기준 투자형 권장 비중 ${target.investShare}% (차이 ${fitDiff.toFixed(0)}%p).`,
     },
-    {
-      key: 'diversification', label: '금융자산 분산', value: `${typeCount}종`,
-      score: scale(typeCount, 1, 4), level: 'good',
-      detail: '금융자산 유형 수. 4종 이상 분산 권장.',
-    },
+    allocUsed
+      ? {
+          key: 'diversification', label: '금융자산 분산', value: `${typeCount}종 · 자산군 ${classCount}개`,
+          score: Math.min((scale(typeCount, 1, 4) + scale(classCount, 1, 3)) / 2, scale(equityShare, 90, 75)), level: 'good',
+          detail: `금융자산 유형 수(4종 이상 권장)와 금융자산의 5% 이상을 담은 자산군 수(주식형·채권형·대체·현금성 중 3개 이상 권장). 주식형이 ${equityShare.toFixed(0)}%${equityShare > 75 ? '로 한쪽에 쏠려 있어 하락장에 함께 떨어질 몫이 큽니다(75% 이하 권장)' : '입니다'}.`,
+        }
+      : {
+          key: 'diversification', label: '금융자산 분산', value: `${typeCount}종`,
+          score: scale(typeCount, 1, 4), level: 'good',
+          detail: '금융자산 유형 수. 4종 이상 분산 권장. 자산 탭에 계좌 안 자산배분 비율을 넣으면 자산군(주식형·채권형·대체·현금성) 분산도 함께 봅니다.',
+        },
   ];
   if (withdraw && Number.isFinite(withdraw.rate)) {
     const wl = withdrawLevel(withdraw.rate, c.withdrawRateMax);

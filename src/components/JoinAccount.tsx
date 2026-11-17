@@ -2,6 +2,7 @@ import { useSyncExternalStore } from 'react';
 import { clearUndo, joinInDb, subscribeUndo, undoEntry, undoLast } from '../db/accountOps';
 import { groupOf, NATURE_LABEL } from '../engine/portfolio';
 import { joinPlan } from '../engine/rebalance';
+import { allocOf, allocText, hasAlloc } from '../engine/allocation';
 import { won } from '../lib/format';
 import type { Asset } from '../types';
 
@@ -10,6 +11,7 @@ export function joinSummary(m: Asset) {
   return [
     won(m.amount),
     NATURE_LABEL[m.nature],
+    ...(hasAlloc(m) ? [`비율 ${allocText(allocOf(m))}`] : []),
     `기대수익률 ${m.expectedReturn}%`,
     `변동성 ${m.volatility}`,
     `과세제외 ${won(m.taxFree ?? 0)}`,
@@ -25,7 +27,7 @@ export function joinConfirmText(a: Asset, assets: Asset[]): string | null {
     `‘${groupOf(a)}’ 계좌로 묶인 ${plan.remove.length + 1}줄을 한 줄로 합칠까요?`,
     `합친 결과: ${joinSummary(plan.put[0])}`,
     '',
-    '금액·과세제외·퇴직금 재원은 더하고, 기대수익률·변동성은 금액가중 평균, 성격은 금액이 많은 쪽을 따릅니다.',
+    '금액·과세제외·퇴직금 재원은 더하고, 기대수익률·변동성은 금액가중 평균, 성격은 금액이 많은 쪽을 따릅니다(자산배분 비율을 넣은 줄이 있으면 비율을 금액가중으로 합치고 성격은 그 비율로).',
     '나눌 때 새 줄에는 가진 같은 성격 자산의 평균 수익률·변동성을 넣었으므로, 나누기 전 값과 다를 수 있습니다. 필요하면 합친 뒤 고치세요.',
     '합친 바로 뒤에는 ‘되돌리기’로 되돌릴 수 있습니다.',
   ].join('\n');

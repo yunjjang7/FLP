@@ -1,5 +1,6 @@
 import { ASSET_TYPES, NATURE_LABEL, PURPOSE_LABEL } from '../engine/portfolio';
 import { RE_USE } from '../engine/realestate';
+import { PENSION_KIND_LABEL } from '../engine/allocation';
 import type { ListTable } from './db';
 
 export interface FieldDef {
@@ -21,6 +22,8 @@ export interface FieldDef {
   penOrYu?: boolean;
   /** CSV 선택 열: 노란우산 행에만 쓰는 값 */
   yuOnly?: boolean;
+  /** CSV 선택 열: 자산배분 비율을 넣을 수 있는 유형(주식·펀드·ETF·연금·기타)에만 쓰는 값. key 는 'alloc.equity' 처럼 점으로 나눔 */
+  allocOnly?: boolean;
 }
 
 export const GOAL_CATEGORY: Record<string, string> = {
@@ -55,6 +58,11 @@ const assetCsvExtra: FieldDef[] = [
   { key: 'drawOrder', label: '꺼내는 순서', kind: 'number', penOnly: true },
   { key: 'compareOrder', label: '비교 기준 순서', kind: 'number', penOnly: true },
   { key: 'group', label: '같은 계좌', kind: 'text', penOnly: true },
+  { key: 'pensionKind', label: '연금 계좌 종류', kind: 'select', options: PENSION_KIND_LABEL, penOnly: true },
+  { key: 'alloc.equity', label: '주식형 비율', kind: 'number', unit: '%', allocOnly: true },
+  { key: 'alloc.bond', label: '채권형 비율', kind: 'number', unit: '%', allocOnly: true },
+  { key: 'alloc.alt', label: '대체자산 비율', kind: 'number', unit: '%', allocOnly: true },
+  { key: 'alloc.cash', label: '현금성 비율', kind: 'number', unit: '%', allocOnly: true },
   { key: 'yu', label: '노란우산공제', kind: 'select', options: { true: '예' } },
   { key: 'yuPay', label: '노란우산 연 납입액', kind: 'number', unit: '만원', yuOnly: true },
   { key: 'yuPayTo', label: '노란우산 마지막 납입 연도', kind: 'number', yuOnly: true },
@@ -91,6 +99,7 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
     csvExamples: [
       { name: '정기예금', type: 'deposit', amount: 1000, purpose: 'short', nature: 'safe', expectedReturn: 3, volatility: 0.5 },
       { name: '임대 오피스텔', type: 'realestate', amount: 30000, purpose: 'long', nature: 'invest', expectedReturn: 3, volatility: 8, owner: 'joint', ownerShare: 50, reUse: 'rental', rent: 100, deposit: 5000, renewCycle: 2, renewRate: 5, rentCost: 10, lockYear: 2045, lockTax: 5 },
+      { name: '퇴직 IRP', type: 'pension', amount: 5000, purpose: 'long', nature: 'invest', expectedReturn: 5.6, volatility: 11.7, pensionKind: 'irp', alloc: { equity: 60, bond: 25, alt: 5, cash: 10 } },
       { name: '노란우산', type: 'other', amount: 3000, purpose: 'long', nature: 'safe', expectedReturn: 3, volatility: 0.5, lockYear: 2040, yu: true, yuPay: 600, yuPayTo: 2039, yuLastMonths: 3, yuJoin: 2016, yuJoinMonth: 9, yuPayoutMonth: 3 },
     ],
   },

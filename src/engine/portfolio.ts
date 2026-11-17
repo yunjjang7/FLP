@@ -1,5 +1,7 @@
 import type { Asset, AssetType, Cashflow, Insurance, Liability, Nature, Profile, Purpose, ReUse, RiskProfile } from '../types';
 import { depositOf, RE_USE, reUseOf } from './realestate';
+import { ASSET_CLASSES, CLASS_LABEL, classAmounts, hasAlloc, investAmountOf, mixAlloc, natureOfAlloc } from './allocation';
+import type { AssetClass } from '../types';
 
 export const ASSET_TYPES: Record<AssetType, { label: string; ret: number; vol: number; purpose: Purpose; nature: Nature; liquid: boolean }> = {
   cash: { label: '현금·입출금', ret: 1.5, vol: 0, purpose: 'short', nature: 'safe', liquid: true },
@@ -40,10 +42,11 @@ export const groupOf = (a: Asset) => (a.type === 'pension' ? a.group?.trim() || 
 export const accountName = (a: Asset) => groupOf(a) || a.name;
 
 /** 같은 계좌로 묶인 줄끼리 같아야 하는 계좌 속성(한 줄을 고치면 묶인 줄도 함께 고침) */
-export const ACCOUNT_KEYS = ['owner', 'pensionYear1', 'drawStartYear', 'drawOrder', 'compareOrder', 'lockYear', 'lockTax'] as const;
+export const ACCOUNT_KEYS = ['owner', 'pensionKind', 'pensionYear1', 'drawStartYear', 'drawOrder', 'compareOrder', 'lockYear', 'lockTax'] as const;
 export type AccountKey = (typeof ACCOUNT_KEYS)[number];
 export const ACCOUNT_KEY_LABEL: Record<AccountKey, string> = {
   owner: '명의',
+  pensionKind: '계좌 종류',
   pensionYear1: '연금수령 1년차 연도',
   drawStartYear: '인출 시작 연도',
   drawOrder: '꺼내는 순서',
@@ -51,7 +54,7 @@ export const ACCOUNT_KEY_LABEL: Record<AccountKey, string> = {
   lockYear: '수령 연도',
   lockTax: '수령 시 세율',
 };
-const keyValue = (a: Asset, k: AccountKey) => (k === 'owner' ? a.owner ?? 'self' : a[k] ?? 0);
+const keyValue = (a: Asset, k: AccountKey) => (k === 'owner' ? a.owner ?? 'self' : k === 'pensionKind' ? a.pensionKind ?? '' : a[k] ?? 0);
 const sameRow = (a: Asset, b: Asset) => a === b || (a.id !== undefined && a.id === b.id);
 
 /** 연금계좌 a 와 같은 계좌로 묶인 줄(a 포함, 자산 탭 순서). 묶이지 않았으면 [a] */
@@ -117,7 +120,9 @@ export function mergeAccounts(assets: Asset[]): Asset[] {
     }
     const amount = sum(rows.map((r) => r.amount));
     const avg = (f: (r: Asset) => number) => (amount > 0 ? sum(rows.map((r) => r.amount * (f(r) || 0))) / amount : f(a));
-    const invest = sum(rows.filter((r) => r.nature === 'invest').map((r) => r.amount));
+    const invest = sum(rows.map(investAmountOf));
+    // 비율을 넣은 줄이 하나라도 있으면 합친 줄도 비율(금액가중, 비율 없는 줄은 성격대로 주식형·현금성 등으로 셈)
+    const alloc = rows.some(hasAlloc) ? mixAlloc(rows) : undefined;
     const minPos = (key: 'drawOrder' | 'compareOrder') => {
       const v = rows.map((r) => r[key] ?? 0).filter((n) => n > 0);
       return v.length ? { [key]: Math.min(...v) } : {};
@@ -129,7 +134,8 @@ export function mergeAccounts(assets: Asset[]): Asset[] {
       amount,
       expectedReturn: avg((r) => r.expectedReturn),
       volatility: avg((r) => r.volatility),
-      nature: invest * 2 > amount ? 'invest' : invest * 2 < amount ? 'safe' : a.nature,
+      nature: alloc ? natureOfAlloc(alloc) : invest * 2 > amount ? 'invest' : invest * 2 < amount ? 'safe' : a.nature,
+      ...(alloc ? { alloc } : {}),
       ...fund('taxFree'),
       ...fund('retirePart'),
       ...minPos('drawOrder'),
@@ -200,6 +206,8 @@ export interface Summary {
   byPurpose: { key: Purpose; label: string; value: number }[]; // 금융자산만
   byReUse: { key: ReUse; label: string; value: number }[]; // 부동산 용도별
   byNature: { key: Nature; label: string; value: number }[];
+  /** 금융자산의 자산군별 금액(비율 없는 자산은 유형·성격으로 분류) */
+  byClass: { key: AssetClass; label: string; value: number }[];
   portfolioReturn: number; // 금융자산 가중 기대수익률 %
   portfolioVol: number; // 금융자산 가중 변동성 % (단순 가중, 보수적)
   investShare: number; // 금융자산 중 투자형 비중 %
@@ -266,7 +274,8 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
   const typeLabels = Object.fromEntries(Object.entries(ASSET_TYPES).map(([k, v]) => [k, v.label])) as Record<AssetType, string>;
 
   const w = (f: (a: Asset) => number) => (financialAssets > 0 ? sum(fin.map((a) => (a.amount / financialAssets) * f(a))) : 0);
-  const investAmt = sum(fin.filter((a) => a.nature === 'invest').map((a) => a.amount));
+  const investAmt = sum(fin.map(investAmountOf));
+  const cls = classAmounts(fin);
   const liquidAssets = sum(assets.filter((a) => ASSET_TYPES[a.type].liquid).map((a) => a.amount));
   const emergencyFund = sum(fin.filter((a) => a.purpose === 'short' && ASSET_TYPES[a.type].liquid).map((a) => a.amount));
 
@@ -293,7 +302,11 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
     byType: group((a) => a.type, typeLabels),
     byPurpose: group((a) => a.purpose, PURPOSE_LABEL, fin),
     byReUse: group(reUseOf, Object.fromEntries(Object.entries(RE_USE).map(([k, v]) => [k, `부동산·${v}`])) as Record<ReUse, string>, assets.filter((a) => !isFinancial(a))),
-    byNature: group((a) => a.nature, NATURE_LABEL, fin),
+    // 비율을 넣은 자산은 한 줄 안에서 위험자산 몫만 투자형
+    byNature: (['safe', 'invest'] as Nature[])
+      .map((k) => ({ key: k, label: NATURE_LABEL[k], value: k === 'invest' ? investAmt : financialAssets - investAmt }))
+      .filter((g) => g.value > 0.005),
+    byClass: ASSET_CLASSES.map((k) => ({ key: k, label: CLASS_LABEL[k], value: cls[k] })).filter((g) => g.value > 0.005),
     portfolioReturn: financialAssets > 0 ? w((a) => a.expectedReturn) : 3,
     portfolioVol: financialAssets > 0 ? w((a) => a.volatility) : 5,
     investShare: financialAssets > 0 ? (investAmt / financialAssets) * 100 : 0,

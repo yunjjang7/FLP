@@ -1,5 +1,5 @@
-import type { Asset, Nature } from '../types';
-import { IRP_RISK_CAP, isRiskCapped } from './buckets';
+import type { Alloc, Asset, Nature } from '../types';
+import { allocOf, allocReturn, hasAlloc, investAmountOf, IRP_RISK_CAP, isCappedAsset, natureOfAlloc, shiftAlloc } from './allocation';
 import { isLocked } from './goals';
 import { accountName, ASSET_TYPES, groupOf, isFinancial, mergeAccounts, NATURE_LABEL } from './portfolio';
 
@@ -23,6 +23,9 @@ export interface RebalanceSwitch {
   keep: number; // 지금 성격으로 남는 금액
   limit: number; // 이 계좌에서 바꿀 수 있는 최대 금액
   capped: boolean; // 퇴직연금 위험자산 70% 한도 때문에 limit 이 평가액보다 작은 계좌
+  /** 자산배분 비율을 넣은 줄: 지금 비율과 바꾼 뒤 비율(줄을 나누지 않고 비율만 고침) */
+  alloc?: Alloc;
+  next?: Alloc;
 }
 
 export interface Rebalance {
@@ -38,6 +41,8 @@ export interface Rebalance {
   general: { amount: number; sell: RebalanceMove[]; buy: RebalanceMove[] };
   /** 연금계좌별로 계좌 안에서 바꾸는 몫(바꿀 금액이 있는 계좌만) */
   pensions: RebalanceSwitch[];
+  /** 자산배분 비율을 넣은 연금 밖 계좌(주식·펀드·ETF 등): 계좌 안에서 비율만 바꿈(팔 때 세금·수수료는 생길 수 있음) */
+  accounts: RebalanceSwitch[];
   /** 계좌 안 교체만으로는 못 맞춰, 연금계좌에서 돈을 빼 계좌 밖에서 사야 맞춰지는 금액 */
   outside: number;
   /** 움직일 수 있는 자산이 모자라 어떻게 해도 맞추지 못하는 금액 */
@@ -57,10 +62,13 @@ export type RebalanceMode = 'ratio' | 'pensionFirst';
  *   퇴직연금 계좌(IRP·DC)는 투자형을 평가액의 70%까지만 담을 수 있어, 넘는 몫은 계좌 밖으로 빼야 맞춰짐(outside).
  * - 수령 연도 전이라 묶인 자산(노란우산 등)은 비중에는 넣되 사고팔지 않음.
  */
-export function rebalance(assets: Asset[], target: number, nowYear: number, band = REBALANCE_BAND, mode: RebalanceMode = 'ratio'): Rebalance {
+export function rebalance(assets: Asset[], target: number, nowYear: number, band = REBALANCE_BAND, mode: RebalanceMode = 'ratio', prefer?: Alloc): Rebalance {
   const fin = assets.filter((a) => isFinancial(a) && a.amount > 0);
   const total = fin.reduce((s, a) => s + a.amount, 0);
-  const invest = fin.filter((a) => a.nature === 'invest').reduce((s, a) => s + a.amount, 0);
+  // 자산배분 비율을 넣은 줄은 한 줄 안에서 위험자산(주식형+대체) 몫만 투자형
+  const invOf = investAmountOf;
+  const safeOf = (a: Asset) => a.amount - invOf(a);
+  const invest = fin.reduce((s, a) => s + invOf(a), 0);
   const t = Math.min(100, Math.max(0, target));
   const current = total > 0 ? (invest / total) * 100 : 0;
   const gap = current - t;
@@ -68,18 +76,22 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
   const needed = total > 0 && Math.abs(gap) > band;
   const toInvest = want < 0;
   const movable = fin.filter((a) => !isLocked(a, nowYear));
-  const from = movable.filter((a) => (a.nature === 'invest') !== toInvest);
+  // 넘치는 쪽 몫: 투자형으로 옮길 땐 안전형 몫, 안전형으로 옮길 땐 투자형 몫
+  const side = (a: Asset) => (toInvest ? safeOf(a) : invOf(a));
+  const from = movable.filter((a) => side(a) > 0.005);
+  // 계좌 안에서 바꾸는 줄: 연금계좌, 비율을 넣은 계좌. 나머지는 일반계좌끼리 사고팖
+  const inAcct = (a: Asset) => a.type === 'pension' || hasAlloc(a);
   // 계좌 안에서 바꿀 수 있는 금액: 퇴직연금 계좌의 안전형을 투자형으로 바꿀 때만 70% 한도.
   // 한도는 계좌 단위: 같은 계좌로 묶인 줄(리밸런싱으로 나눈 줄)은 합계의 70%에서 이미 담은 투자형을 뺀 만큼을 안전형 줄에 금액 비례로 나눔
-  const hits = (a: Asset) => toInvest && a.type === 'pension' && isRiskCapped(accountName(a));
+  const hits = (a: Asset) => toInvest && isCappedAsset(a);
   const sameAcct = (a: Asset) => (groupOf(a) ? fin.filter((x) => groupOf(x) === groupOf(a)) : [a]);
   const limit = (a: Asset) => {
-    if (!hits(a)) return a.amount;
+    if (!hits(a)) return side(a);
     const rows = sameAcct(a);
     const all = rows.reduce((s, x) => s + x.amount, 0);
-    const inv = rows.filter((x) => x.nature === 'invest').reduce((s, x) => s + x.amount, 0);
-    const safe = rows.filter((x) => x.nature !== 'invest').reduce((s, x) => s + x.amount, 0);
-    return safe > 0 ? (Math.max(0, all * IRP_RISK_CAP - inv) * a.amount) / safe : 0;
+    const inv = rows.reduce((s, x) => s + invOf(x), 0);
+    const safe = rows.reduce((s, x) => s + safeOf(x), 0);
+    return safe > 0 ? Math.min(safeOf(a), (Math.max(0, all * IRP_RISK_CAP - inv) * safeOf(a)) / safe) : 0;
   };
   const room = from.reduce((s, a) => s + limit(a), 0);
   const size = needed ? Math.min(Math.abs(want), room) : 0;
@@ -96,14 +108,22 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
     return room > 0 ? (size * limit(a)) / room : 0;
   };
 
-  const genFrom = from.filter((a) => a.type !== 'pension');
-  const genTo = movable.filter((a) => a.type !== 'pension' && (a.nature === 'invest') === toInvest);
+  const genFrom = from.filter((a) => !inAcct(a));
+  const genTo = movable.filter((a) => !inAcct(a) && (a.nature === 'invest') === toInvest);
   const genAmount = genFrom.reduce((s, a) => s + part(a), 0);
   const genToSum = genTo.reduce((s, a) => s + a.amount, 0);
   const row = (a: Asset, change: number): RebalanceMove => ({ name: a.name || '자산', amount: a.amount, change, after: a.amount + change });
 
+  // 계좌 안 교체 한 줄. 비율을 넣은 줄은 amount = 평가액, keep = 넘치는 쪽에 남는 몫, next = 바꾼 뒤 비율
+  const sw = (a: Asset): RebalanceSwitch => {
+    const move = part(a);
+    const base = { ...(a.id !== undefined ? { id: a.id } : {}), name: a.name || (a.type === 'pension' ? '연금계좌' : '계좌'), move, limit: limit(a), capped: hits(a) };
+    if (!hasAlloc(a)) return { ...base, amount: a.amount, keep: a.amount - move };
+    const alloc = allocOf(a);
+    return { ...base, amount: a.amount, keep: side(a) - move, alloc, next: shiftAlloc(alloc, ((toInvest ? 1 : -1) * move * 100) / a.amount, prefer) };
+  };
   const rest = needed ? Math.max(0, Math.abs(want) - room) : 0;
-  const blocked = from.reduce((s, a) => s + (a.amount - limit(a)), 0); // 한도에 걸려 계좌 안에서는 못 바꾸는 금액
+  const blocked = from.reduce((s, a) => s + (side(a) - limit(a)), 0); // 한도에 걸려 계좌 안에서는 못 바꾸는 금액
   const outside = Math.min(rest, blocked);
   return {
     total,
@@ -118,12 +138,8 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
       sell: genAmount > 0 ? genFrom.map((a) => row(a, -part(a))) : [],
       buy: genAmount > 0 && genToSum > 0 ? genTo.map((a) => row(a, (genAmount * a.amount) / genToSum)) : [],
     },
-    pensions:
-      size > 0
-        ? from
-            .filter((a) => a.type === 'pension')
-            .map((a) => ({ ...(a.id !== undefined ? { id: a.id } : {}), name: a.name || '연금계좌', amount: a.amount, move: part(a), keep: a.amount - part(a), limit: limit(a), capped: hits(a) }))
-        : [],
+    pensions: size > 0 ? from.filter((a) => a.type === 'pension').map(sw) : [],
+    accounts: size > 0 ? from.filter((a) => a.type !== 'pension' && hasAlloc(a)).map(sw) : [],
     outside,
     short: rest - outside,
   };
@@ -141,6 +157,17 @@ export const NATURE_DEFAULTS: Record<Nature, { ret: number; vol: number }> = {
 
 /** 금액(만원)은 만원 단위, 비율·세금 재원은 0.1만원 단위로 맞춤 */
 const round1 = (v: number) => Math.round(v * 10) / 10;
+
+/**
+ * 비율을 넣은 줄의 ‘자산 탭에 반영’: 비율을 next 로 바꾸고 성격도 비율로 맞춤.
+ * 기대수익률·변동성이 지금 비율로 계산한 값(‘배분으로 계산’)과 같으면 새 비율로 다시 계산하고, 직접 넣은 값이면 그대로 둠.
+ */
+export function allocSwitch(a: Asset, next: Alloc): Asset {
+  const was = allocReturn(allocOf(a));
+  const auto = Math.abs(was.ret - a.expectedReturn) < 0.051 && Math.abs(was.vol - a.volatility) < 0.051;
+  const now = allocReturn(next);
+  return { ...a, alloc: next, nature: natureOfAlloc(next), ...(auto ? { expectedReturn: now.ret, volatility: now.vol } : {}) };
+}
 
 /**
  * 성격 nature 의 기대수익률·변동성: 같은 성격의 금융자산(평가액 > 0)이 있으면 그 금액가중 평균,

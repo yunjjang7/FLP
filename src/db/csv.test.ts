@@ -91,11 +91,13 @@ describe('CSV 입출력', () => {
     expect(errors).toEqual([]);
     expect(rows).toEqual(ins);
   });
-  it('양식에 부동산·노란우산 예시 행 포함', () => {
+  it('양식에 부동산·연금(자산배분)·노란우산 예시 행 포함', () => {
     const { rows, errors } = fromCSV('assets', templateCSV('assets'));
     expect(errors).toEqual([]);
-    expect(rows.map((r) => r.type)).toEqual(['deposit', 'realestate', 'other']);
-    expect(rows[2]).toMatchObject({ yu: true, yuPay: 600, yuPayTo: 2039, yuLastMonths: 3, yuJoin: 2016, yuJoinMonth: 9, yuPayoutMonth: 3 });
+    expect(rows.map((r) => r.type)).toEqual(['deposit', 'realestate', 'pension', 'other']);
+    expect(rows[2]).toMatchObject({ pensionKind: 'irp', alloc: { equity: 60, bond: 25, alt: 5, cash: 10 }, nature: 'invest' });
+    expect(rows[0].alloc).toBeUndefined(); // 예금은 비율 열을 읽지 않음
+    expect(rows[3]).toMatchObject({ yu: true, yuPay: 600, yuPayTo: 2039, yuLastMonths: 3, yuJoin: 2016, yuJoinMonth: 9, yuPayoutMonth: 3 });
     expect(rows[1]).toMatchObject({ reUse: 'rental', rent: 100, deposit: 5000, owner: 'joint', ownerShare: 50 });
   });
   it('템플릿과 영문 키·쉼표 금액 허용', () => {
@@ -156,6 +158,25 @@ describe('월별 실제 인출 기록 CSV', () => {
       expect(rows[0].taxFree).toBeUndefined();
       expect(rows[0].drawOrder).toBeUndefined();
       expect(templateCSV('assets')).toContain('과세제외 금액');
+    });
+  });
+
+  describe('자산배분 비율·연금 계좌 종류 CSV', () => {
+    it('비율과 계좌 종류가 내보내기·가져오기에서 유지되고 성격은 비율로 맞춤', () => {
+      const a = { name: '연금저축', type: 'pension', amount: 3000, purpose: 'long', nature: 'safe', expectedReturn: 5, volatility: 10, pensionKind: 'savings', alloc: { equity: 70, bond: 20, alt: 10, cash: 0 } };
+      const csv = toCSV('assets', [a]);
+      expect(csv).toContain('주식형 비율');
+      const { rows, errors } = fromCSV('assets', csv);
+      expect(errors).toEqual([]);
+      expect(rows[0]).toMatchObject({ pensionKind: 'savings', alloc: { equity: 70, bond: 20, alt: 10, cash: 0 }, nature: 'invest' });
+    });
+    it('합계가 100이 아니면 경고, 0이면 비율을 지움, 비율을 못 넣는 유형은 읽지 않음', () => {
+      const head = '이름,유형,금액,주식형 비율,채권형 비율,대체자산 비율,현금성 비율';
+      const { rows, errors } = fromCSV('assets', [head, 'ETF 계좌,ETF,100,30,30,,', '빈 비율,주식,100,0,0,0,0', '예금,예금,100,50,50,,'].join('\n'));
+      expect(errors).toEqual(['2행: 자산배분 비율 합계가 60%라 100으로 보고 비례로 계산합니다.']);
+      expect(rows[0]).toMatchObject({ alloc: { equity: 30, bond: 30, alt: 0, cash: 0 }, nature: 'invest' });
+      expect(rows[1].alloc).toBeUndefined();
+      expect(rows[2].alloc).toBeUndefined();
     });
   });
 });

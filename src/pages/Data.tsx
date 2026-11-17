@@ -5,6 +5,8 @@ import { db, exportBackup, importBackup, loadSample, resetAll, type ListTable } 
 import { INSURED_WHO, TABLES, type FieldDef } from '../db/schema';
 import { housePension, HP_LOAN, HP_MARKET_CAP, hpEstate, hpEstimate, hpLoanOf, netRentOf, RE_USE, RE_USE_HINT, RENT_DEFAULT, rentDuplicates, rentYield, reUseOf, saleInflow, usesHp, willSell } from '../engine/realestate';
 import { JoinAccount, UndoBar } from '../components/JoinAccount';
+import { AllocEditor } from '../components/AllocEditor';
+import { canAlloc, hasAlloc, isRiskCappedName, PENSION_KIND_LABEL } from '../engine/allocation';
 import { alignAccount, setAccountKey, setGroupInDb } from '../db/accountOps';
 import { ACCOUNT_KEY_LABEL, ACCOUNT_KEYS, accountMismatch, ASSET_TYPES, groupNames, groupNotes, groupOf, insuredBirthYear, type AccountKey, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
@@ -875,6 +877,9 @@ function ListEditor({ table }: { table: ListTable }) {
             : f,
           )
           .concat({ key: 'reUse', label: '부동산 용도', kind: 'select', options: RE_USE, hint: RE_USE_HINT[(r.reUse as ReUse) ?? 'home'] })
+      : table === 'assets' && hasAlloc(r as unknown as Asset)
+        ? // 자산배분 비율을 넣은 자산: 성격은 비율로 자동
+          fields.filter((f) => f.key !== 'nature')
       : table === 'insurance'
         ? // 상품명 다음에 피보험자, 자녀면 출생연도까지(납입 종료 나이를 그 사람 나이로 입력)
           [fields[0], { key: 'insured', label: '피보험자', kind: 'select', options: INSURED_WHO } as FieldDef]
@@ -947,6 +952,7 @@ function ListEditor({ table }: { table: ListTable }) {
               </div>
             ))}
           </div>
+          {table === 'assets' && canAlloc(r as unknown as Asset) && !isYu(r as unknown as Asset) && <AllocEditor a={r as unknown as Asset} assets={data.assets} />}
           {table === 'assets' && (r.type === 'realestate'
             ? <RealEstateExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />
             : <AssetExtra a={r as unknown as Asset} onChange={(k, v) => update(r, k, v)} />)}
@@ -1154,6 +1160,9 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
         )}
         {pension && (
           <>
+            <Labeled label="계좌 종류" hint={a.pensionKind ? (a.pensionKind === 'savings' ? '위험자산 한도 없음' : '위험자산 70% 한도') : `비우면 이름으로 판단(지금 ${isRiskCappedName(a.group?.trim() || a.name) ? 'IRP·DC로 봄 · 70% 한도' : '한도 없음'})`}>
+              <SelectField value={a.pensionKind ?? ''} onChange={(v) => onChange('pensionKind', v || undefined)} options={{ '': '이름으로 판단', ...PENSION_KIND_LABEL }} />
+            </Labeled>
             <Labeled label="과세제외(만원)" hint="세액공제 안 받은 원금">
               <NumberField value={a.taxFree ?? 0} onChange={(v) => onChange('taxFree', v)} />
             </Labeled>

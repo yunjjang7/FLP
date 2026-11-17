@@ -4,6 +4,7 @@ import { RebalanceCard } from '../components/RebalanceCard';
 import { SetupLink } from '../components/SetupLink';
 import { Badge, Bar, CHART_COLORS, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { ASSET_TYPES, NATURE_LABEL, PURPOSE_LABEL, RISK_PROFILES } from '../engine/portfolio';
+import { ASSET_CLASSES, allocOf, CLASS_LABEL, hasAlloc, IRP_RISK_CAP, isCappedAsset, riskPct } from '../engine/allocation';
 import { RE_USE, reUseOf } from '../engine/realestate';
 import { pct, won } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -75,6 +76,8 @@ export default function Invest() {
           <Donut data={s.byPurpose} />
         </Card>
       </div>
+
+      <ClassCard />
 
       <RebalanceCard />
 
@@ -156,5 +159,51 @@ export default function Invest() {
       </Card>
       <Disclaimer />
     </>
+  );
+}
+
+/** 자산군(주식형·채권형·대체·현금성) 구성: 금융자산 전체와 비율을 넣은 계좌별 */
+function ClassCard() {
+  const { assets, summary: s } = useFlp();
+  const rows = assets.filter((a) => a.type !== 'realestate' && a.amount > 0 && hasAlloc(a));
+  return (
+    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+      <Card title="자산군 구성 (금융자산)">
+        <Donut data={s.byClass} />
+        <p className="mt-3 text-xs text-muted">
+          계좌 안 자산배분 비율을 넣은 자산은 그 비율로, 넣지 않은 자산은 유형·성격으로 나눴습니다(현금·예금·적금·안전형 → 현금성, 채권 → 채권형, 투자형 → 주식형, 투자형 기타 → 대체). 비율은 <SetupLink tab="assets">기본 정보 → 자산</SetupLink>의 주식·펀드·ETF·연금·기타 자산에서 넣습니다.
+        </p>
+      </Card>
+      <Card title="계좌별 자산배분">
+        {rows.length ? (
+          <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
+            <table className="w-full min-w-[480px] text-sm num-table">
+              <thead>
+                <tr className="border-b border-line text-right text-xs text-muted">
+                  <th className="py-1.5 text-left font-medium">계좌</th>
+                  {ASSET_CLASSES.map((k) => <th key={k} className="font-medium">{CLASS_LABEL[k]}</th>)}
+                  <th className="font-medium">위험자산</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((a) => {
+                  const x = allocOf(a);
+                  const over = isCappedAsset(a) && riskPct(x) > IRP_RISK_CAP * 100 + 0.05;
+                  return (
+                    <tr key={a.id} className="border-b border-line text-right">
+                      <td className="py-1.5 text-left">{a.name}<div className="text-xs text-muted">{won(a.amount)}</div></td>
+                      {ASSET_CLASSES.map((k) => <td key={k}>{pct(x[k])}</td>)}
+                      <td className={over ? 'font-semibold text-bad' : ''}>{pct(riskPct(x))}{over && <div className="text-xs">{IRP_RISK_CAP * 100}% 한도 초과</div>}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-sm text-muted">아직 자산배분 비율을 넣은 계좌가 없습니다. 주식·연금 계좌처럼 한 계좌에 여러 자산군을 담았다면 <SetupLink tab="assets">자산 탭</SetupLink>에서 ‘자산배분 비율’을 넣으세요. 넣으면 투자형 비중·리밸런싱·인출 바구니가 실제 배분을 씁니다.</p>
+        )}
+      </Card>
+    </div>
   );
 }

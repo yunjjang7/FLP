@@ -1,12 +1,14 @@
+import type { Alloc, Asset } from '../types';
+import { accountName } from './portfolio';
+import { classAmounts, hasAlloc, IRP_RISK_CAP, isCappedAsset, isRiskCappedName } from './allocation';
 import type { TaxResult } from './tax';
 
-/** IRP·DC 등 퇴직연금 계좌의 위험자산 한도(평가액 대비) */
-export const IRP_RISK_CAP = 0.7;
+export { IRP_RISK_CAP };
 /** 하락장 기준: 주식형 지수가 고점보다 이만큼(%) 넘게 떨어지면 주식 매도를 멈춤 */
 export const BEAR_DROP = 15;
 
-/** 이름으로 퇴직연금 계좌(IRP·DC·퇴직연금) 여부를 판단: 위험자산 70% 한도 적용 */
-export const isRiskCapped = (name: string) => /IRP|DC|퇴직/i.test(name);
+/** 이름으로 퇴직연금 계좌(IRP·DC·퇴직연금) 여부를 판단: 위험자산 70% 한도 적용(계좌 종류를 고르지 않았을 때) */
+export const isRiskCapped = isRiskCappedName;
 
 export interface AccountBucket {
   name: string;
@@ -18,6 +20,20 @@ export interface AccountBucket {
   alt: number; // ④ 대체자산(금·리츠 ETF 등)
   capped: boolean; // 위험자산 70% 한도 계좌
   riskShare: number; // 위험자산 비중(③+④) %
+  /** 지금 계좌 안 자산군 금액(자산 탭 비율, 첫해 평가액 기준으로 맞춤). 그 계좌 줄에 비율을 하나도 넣지 않았으면 없음 */
+  now?: Alloc;
+  /** 그 계좌에서 한 해에 빠져나가는 금액(앞 2년 평균, 명목): 하락장에 버틸 햇수 계산용 */
+  yearDraw: number;
+}
+
+/** 바구니 목표와 지금 배분의 차이: + 면 더 채워야 함, − 면 넘침 */
+export const bucketGap = (b: AccountBucket) =>
+  b.now ? { cash: b.cash - b.now.cash, bond: b.bond - b.now.bond, growth: b.growth - b.now.equity, alt: b.alt - b.now.alt } : undefined;
+
+/** 하락장에 주식을 팔지 않고 지금 현금성+채권형으로 버틸 수 있는 햇수(그 계좌 한 해 인출 기준). 비율이 없으면 undefined, 인출이 없으면 Infinity */
+export function safeYears(b: AccountBucket) {
+  if (!b.now) return undefined;
+  return b.yearDraw > 0 ? (b.now.cash + b.now.bond) / b.yearDraw : Infinity;
 }
 
 /**
@@ -27,22 +43,35 @@ export interface AccountBucket {
  * 금액은 그 해 금액(명목), 연금 세금 계산(tax)의 계좌별 세전 인출 계획을 씀.
  * partialFirst: 첫 행이 올해 남은 달만 계산한 해면 ‘앞 2년’에 그 다음 2년까지(엑셀처럼 3행), ‘3~5년차’는 그 뒤 3년.
  */
-export function accountBuckets(tax: TaxResult, altShare = 0.1, partialFirst = false): AccountBucket[] {
+export function accountBuckets(tax: TaxResult, altShare = 0.1, partialFirst = false, assets: Asset[] = []): AccountBucket[] {
   const first = tax.rows[0];
   if (!first) return [];
   const k = partialFirst ? 1 : 0;
   const drawn = (i: number, from: number, to: number) => tax.rows.slice(from, to).reduce((a, r) => a + (r.accounts[i]?.drawn ?? 0), 0);
   return first.accounts.map((a, i) => {
     const balance = a.start;
-    const cash = Math.min(balance, drawn(i, 0, 2 + k));
+    const two = drawn(i, 0, 2 + k);
+    const cash = Math.min(balance, two);
     const later = Math.min(balance - cash, drawn(i, 2 + k, 5 + k));
     const free = Math.max(0, balance - cash - later);
     const alt = Math.min(Math.max(0, altShare) * balance, free);
-    const capped = isRiskCapped(a.name);
+    const rows = assets.filter((x) => x.type === 'pension' && accountName(x) === a.name);
+    const capped = rows.length ? rows.some(isCappedAsset) : isRiskCapped(a.name);
+    const now = nowAlloc(rows, balance);
     const growth = Math.max(0, capped ? Math.min(free - alt, IRP_RISK_CAP * balance - alt) : free - alt);
     const bond = Math.max(0, balance - cash - growth - alt);
-    return { name: a.name, owner: a.owner, balance, cash, bond, growth, alt, capped, riskShare: balance > 0 ? ((growth + alt) / balance) * 100 : 0 };
+    return { name: a.name, owner: a.owner, balance, cash, bond, growth, alt, capped, riskShare: balance > 0 ? ((growth + alt) / balance) * 100 : 0, yearDraw: drawn(i, k, 2 + k) / 2, ...(now ? { now } : {}) };
   });
+}
+
+/** 계좌 줄들의 지금 자산군 금액을 balance(첫해 평가액)에 맞춰 늘리거나 줄임. 비율을 넣은 줄이 없으면 undefined */
+function nowAlloc(rows: Asset[], balance: number): Alloc | undefined {
+  if (!rows.some(hasAlloc)) return undefined;
+  const amt = classAmounts(rows);
+  const total = amt.equity + amt.bond + amt.alt + amt.cash;
+  if (!(total > 0)) return undefined;
+  const k = balance / total;
+  return { equity: amt.equity * k, bond: amt.bond * k, alt: amt.alt * k, cash: amt.cash * k };
 }
 
 export type MarketState = 'bear' | 'peak' | 'normal';

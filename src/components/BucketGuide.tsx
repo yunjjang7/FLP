@@ -1,5 +1,8 @@
-import { useMemo, useState } from 'react';
-import { accountBuckets, BEAR_DROP, IRP_RISK_CAP, marketRule } from '../engine/buckets';
+import { Fragment, useMemo, useState } from 'react';
+import { accountBuckets, BEAR_DROP, bucketGap, IRP_RISK_CAP, marketRule, safeYears } from '../engine/buckets';
+import { classAmounts, hasAlloc } from '../engine/allocation';
+import { useFlp } from '../store/FlpContext';
+import { SetupLink } from './SetupLink';
 import type { TaxResult } from '../engine/tax';
 import { pct, won } from '../lib/format';
 import { Labeled, NumberField } from './fields';
@@ -10,8 +13,17 @@ import { Card } from './ui';
  * 연금 세금 계산이 있으면 계좌마다 그 계좌에서 빠져나갈 금액으로 바구니 목표를 따로 보여 줌.
  */
 export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst = false }: { firstNeed: number; balance: number; tax: TaxResult | null; hasSpouse: boolean; partialFirst?: boolean }) {
-  const [altPct, setAltPct] = useState(10);
+  const { assets } = useFlp();
+  // 대체자산 목표 비중 기본값: 연금계좌에 비율을 넣었으면 지금 대체자산 비중(반올림), 아니면 10%
+  const [altPct, setAltPct] = useState(() => {
+    const pen = assets.filter((a) => a.type === 'pension' && a.amount > 0);
+    const withAlloc = pen.filter(hasAlloc);
+    if (!withAlloc.length) return 10;
+    const amt = withAlloc.reduce((s, a) => s + a.amount, 0);
+    return amt > 0 ? Math.round((classAmounts(withAlloc).alt / amt) * 100) : 10;
+  });
   const [drawdown, setDrawdown] = useState(0);
+  const rule = marketRule(drawdown);
   const alt0 = Math.min(50, Math.max(0, altPct)) / 100;
   const cash = Math.min(balance, firstNeed * 2);
   const bond = Math.min(balance - cash, firstNeed * 3);
@@ -23,10 +35,15 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
     { label: '대체자산(금·리츠 등)', amount: alt, note: `전체의 약 ${altPct}%. 주식과 다르게 움직이는 완충재` },
     { label: '성장자산(주식형)', amount: growth, note: '6년차 이후 몫. 오른 해에 일부 팔아 앞 바구니를 채움' },
   ];
-  const accounts = useMemo(() => (tax ? accountBuckets(tax, alt0, partialFirst).filter((a) => a.balance > 0.5) : []), [tax, alt0, partialFirst]);
+  const accounts = useMemo(() => (tax ? accountBuckets(tax, alt0, partialFirst, assets).filter((a) => a.balance > 0.5) : []), [tax, alt0, partialFirst, assets]);
+  const anyNow = accounts.some((a) => a.now);
+  const noAlloc = accounts.filter((a) => !a.now).map((a) => a.name);
+  // 하락장: 비율을 넣은 계좌마다 지금 현금성+채권형으로 몇 년치 인출을 버티는지
+  const bearYears = rule.state === 'bear' ? accounts.filter((a) => a.now && a.yearDraw > 0.5).map((a) => ({ name: a.name, years: safeYears(a)! })) : [];
+  const sign = (v: number) => (Math.abs(v) < 0.5 ? '0' : `${v > 0 ? '+' : '−'}${won(Math.abs(v))}`);
+  const gapCls = (v: number) => (Math.abs(v) < 0.5 ? 'text-muted' : v > 0 ? 'text-warn' : 'text-muted');
   const total = (f: (a: (typeof accounts)[number]) => number) => accounts.reduce((s, a) => s + f(a), 0);
   const year = tax?.rows[0]?.year;
-  const rule = marketRule(drawdown);
   return (
     <Card title="인출용 자산 배치 가이드" className="mt-4" action={<span className="text-xs text-muted">첫해 인출 연 {won(firstNeed)} 기준</span>}>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -48,6 +65,18 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
         </Labeled>
         <div className={`self-start rounded-xl px-3 py-2.5 text-sm ${rule.state === 'bear' ? 'bg-bad-soft' : rule.state === 'peak' ? 'bg-good-soft' : 'bg-sunken'}`}>
           <b>지금 적용할 규칙</b> — {rule.text}
+          {bearYears.length > 0 && (
+            <div className="mt-1 text-xs">
+              지금 담은 현금성+채권형으로 주식을 팔지 않고 버틸 수 있는 기간:{' '}
+              {bearYears.map((b, i) => (
+                <span key={b.name}>
+                  {i > 0 && ' · '}
+                  {b.name} <b className={b.years < 2 ? 'text-bad' : ''}>{Number.isFinite(b.years) ? `약 ${b.years.toFixed(1)}년` : '인출 없음'}</b>
+                </span>
+              ))}
+              {bearYears.some((b) => b.years < 2) && ' — 2년이 안 되는 계좌는 회복을 기다리기 어려우니 다음 고점에 현금성을 먼저 채우세요.'}
+            </div>
+          )}
         </div>
       </div>
 
@@ -68,8 +97,11 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
                 </tr>
               </thead>
               <tbody>
-                {accounts.map((a) => (
-                  <tr key={a.name} className="border-b border-line text-right">
+                {accounts.map((a) => {
+                  const g = bucketGap(a);
+                  return (
+                  <Fragment key={a.name}>
+                  <tr className={`${a.now ? '' : 'border-b'} border-line text-right`}>
                     <td className="py-1.5 text-left">
                       {a.name}
                       {hasSpouse && <span className="ml-1 text-xs text-muted">{a.owner === 'spouse' ? '배우자' : '본인'}</span>}
@@ -82,7 +114,20 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
                     <td>{won(a.alt)}</td>
                     <td className={a.capped && a.riskShare >= IRP_RISK_CAP * 100 - 0.05 ? 'text-warn' : ''}>{pct(a.riskShare)}</td>
                   </tr>
-                ))}
+                  {a.now && g && (
+                    <tr className="border-b border-line text-right text-xs">
+                      <td className="py-1 pl-3 text-left text-muted">지금 배분 · 목표와 차이</td>
+                      <td />
+                      <td>{won(a.now.cash)}<div className={gapCls(g.cash)}>{sign(g.cash)}</div></td>
+                      <td>{won(a.now.bond)}<div className={gapCls(g.bond)}>{sign(g.bond)}</div></td>
+                      <td>{won(a.now.equity)}<div className={gapCls(g.growth)}>{sign(g.growth)}</div></td>
+                      <td>{won(a.now.alt)}<div className={gapCls(g.alt)}>{sign(g.alt)}</div></td>
+                      <td className={a.capped && ((a.now.equity + a.now.alt) / a.balance) * 100 > IRP_RISK_CAP * 100 + 0.05 ? 'text-bad' : ''}>{pct(((a.now.equity + a.now.alt) / a.balance) * 100)}</td>
+                    </tr>
+                  )}
+                  </Fragment>
+                  );
+                })}
                 <tr className="text-right font-semibold">
                   <td className="py-1.5 text-left">합계</td>
                   <td>{won(total((a) => a.balance))}</td>
@@ -95,8 +140,19 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
               </tbody>
             </table>
           </div>
+          {anyNow && (
+            <p className="mt-1 text-xs text-muted">
+              ‘지금 배분’은 자산 탭에 넣은 계좌 안 자산배분 비율로 나눈 금액이고, 아래 숫자는 목표 − 지금입니다(+ 는 더 채울 금액, − 는 넘치는 금액). 비율이 없는 줄은 성격대로(투자형 = 주식형, 안전형 = 현금성) 셉니다.
+              {noAlloc.length > 0 && <> 비율을 넣지 않은 계좌({noAlloc.join('·')})는 목표만 보여 줍니다.</>}
+            </p>
+          )}
+          {!anyNow && (
+            <p className="mt-1 text-xs text-muted">
+              <SetupLink tab="assets">자산 탭</SetupLink>에서 연금계좌의 자산배분 비율(주식형·채권형·대체·현금성)을 넣으면 계좌마다 지금 배분과 목표의 차이를 함께 보여 줍니다.
+            </p>
+          )}
           <p className="mt-1 text-xs text-muted">
-            ‘연금 세금 점검’의 계좌별 인출 계획으로 계산했습니다. 인출 시작 전이라 5년 안에 꺼내지 않는 계좌는 현금성 없이 대부분 성장자산으로 둡니다. 이름에 IRP·DC·퇴직이 들어간 계좌는 퇴직연금으로 보고 위험자산(③+④, ETF는 주식형으로 봄)을 평가액의 {IRP_RISK_CAP * 100}%까지만 잡고 넘는 몫은 ②로 돌렸습니다. 상품 추천이 아닌 금액 배분 기준입니다.
+            ‘연금 세금 점검’의 계좌별 인출 계획으로 계산했습니다. 인출 시작 전이라 5년 안에 꺼내지 않는 계좌는 현금성 없이 대부분 성장자산으로 둡니다. 계좌 종류가 IRP·DC이거나(비우면 이름에 IRP·DC·퇴직이 들어간 계좌) 퇴직연금으로 보고 위험자산(③+④, ETF는 주식형으로 봄)을 평가액의 {IRP_RISK_CAP * 100}%까지만 잡고 넘는 몫은 ②로 돌렸습니다. 상품 추천이 아닌 금액 배분 기준입니다.
           </p>
         </div>
       )}

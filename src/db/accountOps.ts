@@ -1,7 +1,8 @@
 import { drawAliases, drawRenamePlan } from '../engine/drawLog';
 import { accountAttrs, groupOf, groupRows, type AccountKey } from '../engine/portfolio';
-import { joinPlan, switchPlan } from '../engine/rebalance';
-import type { Asset, Draw } from '../types';
+import { allocOf } from '../engine/allocation';
+import { allocSwitch, joinPlan, switchPlan } from '../engine/rebalance';
+import type { Alloc, Asset, Draw } from '../types';
 import { db } from './db';
 
 /**
@@ -125,6 +126,21 @@ export async function switchInDb(id: number | undefined, amount: number, fromInv
     for (const v of plan.add) await db.assets.add(v);
     for (const x of plan.remove) await db.assets.delete(x);
     await moveDraws(await db.assets.toArray());
+    return true;
+  });
+}
+
+/**
+ * 리밸런싱 ‘자산 탭에 반영’(비율을 넣은 줄): 줄을 나누지 않고 비율만 next 로 바꿔 저장(allocSwitch).
+ * 계산할 때와 금액·비율이 달라졌으면 저장하지 않고 false.
+ */
+export async function allocInDb(id: number | undefined, amount: number, alloc: Alloc, next: Alloc, name: string): Promise<boolean> {
+  return withUndo(`‘${name}’ 비율 자산 탭에 반영`, async () => {
+    const a = id !== undefined ? await db.assets.get(id) : undefined;
+    if (!a || Math.abs(a.amount - amount) > 0.5) return false;
+    const cur = allocOf(a);
+    if ((Object.keys(cur) as (keyof Alloc)[]).some((k) => Math.abs(cur[k] - alloc[k]) > 0.05)) return false;
+    await db.assets.put(allocSwitch(a, next));
     return true;
   });
 }

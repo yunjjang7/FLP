@@ -9,6 +9,12 @@ export type RiskProfile = 'conservative' | 'moderate' | 'balanced' | 'growth' | 
 export type ReUse = 'home' | 'rental' | 'land';
 /** 자산 명의: 공동명의는 부동산만 */
 export type AssetOwner = IncomeOwner | 'joint';
+/** 계좌 안 자산군: 주식형 · 채권형 · 대체자산(금·리츠) · 현금성 */
+export type AssetClass = 'equity' | 'bond' | 'alt' | 'cash';
+/** 자산군별 비율(%, 합계 100) */
+export type Alloc = Record<AssetClass, number>;
+/** 연금계좌 종류: 연금저축 · IRP · DC형 퇴직연금(IRP·DC는 위험자산 70% 한도) */
+export type PensionKind = 'savings' | 'irp' | 'dc';
 
 export interface Asset {
   id?: number;
@@ -50,6 +56,8 @@ export interface Asset {
   yuJoinMonth?: number; // 노란우산 가입 월(1~12). 가입 월·수령 월을 둘 다 비우면 근속연수를 연도 차이로 셈
   yuPayoutMonth?: number; // 노란우산 수령 월(1~12). 하나만 넣으면 비운 쪽은 1월로 봄
   order?: number; // 기본 정보 화면 카드 순서(작을수록 위, 없으면 id 순). 계산에는 쓰지 않음
+  alloc?: Partial<Alloc>; // 계좌 안 자산배분(주식·펀드·ETF·연금·기타): 비율을 넣으면 위험자산(주식형+대체) 몫만 투자형으로 셈, 성격은 비율로 자동
+  pensionKind?: PensionKind; // 연금계좌 종류(비우면 이름에 IRP·DC·퇴직이 들어가는지로 70% 한도 판단)
   group?: string; // 연금계좌: 같은 계좌 이름(리밸런싱 ‘자산 탭에 반영’으로 나눈 줄). 값이 같은 줄은 한 계좌로 합쳐 세금·한도·인출 순서·이정표를 계산
 }
 
@@ -207,6 +215,7 @@ export interface Profile {
   spouseWageGross?: number; // 배우자 은퇴 전 세전 총급여(연, 오늘 기준, 만원)
   inflation: number;
   riskProfile: RiskProfile;
+  targetAlloc?: Alloc; // 리밸런싱 목표 자산군 비율(%, 있으면 목표 투자형 비중 = 주식형 + 대체)
   targetInvest?: number; // 리밸런싱 목표 투자형 비중(%, 0·없음이면 투자 성향 권장값)
   rebalanceMode?: 'ratio' | 'pensionFirst'; // 리밸런싱 배분 방식(없음이면 'ratio': 바꿀 수 있는 금액 비례, 'pensionFirst': 연금계좌부터)
   retireMonthlyExpense: number; // 은퇴 후 월 생활비(현재가치)
