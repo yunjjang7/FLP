@@ -9,7 +9,7 @@ import { contribSchedule, creditInflows, hiDependent, hiPropMonthly, hiPropShare
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
-import { accountBuckets, isRiskCapped, marketRule, marketState } from './buckets';
+import { accountBuckets, isRiskCapped, MARKET_INPUT_HELP, marketRule, marketState } from './buckets';
 import { milestones, monthsUntil, pensionOpenMonth, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
@@ -1477,6 +1477,12 @@ describe('다가오는 이정표·할 일, 계좌별 자산 배치', () => {
     expect(marketState(0)).toBe('peak');
     expect(marketState(-7)).toBe('normal');
     expect(marketRule(-18).text).toContain('주식형 매도를 멈추고');
+    // 경계: −15% 이하 하락장, 0% 이상 고점 부근
+    expect(marketState(-15)).toBe('bear');
+    expect(marketState(-14.9)).toBe('normal');
+    expect(marketState(3)).toBe('peak');
+    expect(MARKET_INPUT_HELP).toContain('0% 이상은 고점 부근, 0%와 −15% 사이는 보통, −15% 이하는 하락장');
+    expect(MARKET_INPUT_HELP).toContain('노후 진단·인출 스케줄 계산에는 쓰지 않습니다');
   });
 });
 

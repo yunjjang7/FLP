@@ -84,6 +84,9 @@ export type MarketState = 'bear' | 'peak' | 'normal';
 /** 주식형 지수의 고점 대비 등락률(%, 음수 = 하락)로 시장 상태 판단 */
 export const marketState = (drawdown: number): MarketState => (drawdown <= -BEAR_DROP ? 'bear' : drawdown >= 0 ? 'peak' : 'normal');
 
+/** 등락률 칸 설명: 어떤 값이 어느 규칙이 되고 무엇에 쓰이는지 */
+export const MARKET_INPUT_HELP = `시세를 자동으로 가져오지 않아 직접 넣는 값입니다. 쓰는 주식형 지수(예: 코스피·S&P500)가 그동안의 최고점보다 몇 % 아래인지 넣으면 0% 이상은 고점 부근, 0%와 −${BEAR_DROP}% 사이는 보통, −${BEAR_DROP}% 이하는 하락장으로 보고 ‘지금 적용할 규칙’을 바꿉니다. 하락장이면 지금 가진 현금성으로 버틸 햇수도 함께 보여 줍니다. 바구니 목표 금액·노후 진단·인출 스케줄 계산에는 쓰지 않습니다.`;
+
 /** 시장 상태별 지금 적용할 규칙(엑셀 ‘투자배분’ 시트) */
 export function marketRule(drawdown: number) {
   const state = marketState(drawdown);

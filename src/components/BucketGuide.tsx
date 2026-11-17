@@ -1,5 +1,6 @@
-import { Fragment, useMemo, useState } from 'react';
-import { accountBuckets, BEAR_DROP, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
+import { Fragment, useMemo } from 'react';
+import { db } from '../db/db';
+import { accountBuckets, BEAR_DROP, MARKET_INPUT_HELP, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
 import { classAmounts, hasAlloc } from '../engine/allocation';
 import { useFlp } from '../store/FlpContext';
 import { SetupLink } from './SetupLink';
@@ -15,14 +16,18 @@ import { Card } from './ui';
 export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst = false }: { firstNeed: number; balance: number; tax: TaxResult | null; hasSpouse: boolean; partialFirst?: boolean }) {
   const { assets, cash: hand, runCash, start, profile } = useFlp();
   // 대체자산 목표 비중 기본값: 연금계좌에 비율을 넣었으면 지금 대체자산 비중(반올림), 아니면 10%
-  const [altPct, setAltPct] = useState(() => {
+  // 두 칸은 프로필에 저장(화면을 옮겨도 유지). 넣은 적이 없으면 기본값
+  const altDefault = useMemo(() => {
     const pen = assets.filter((a) => a.type === 'pension' && a.amount > 0);
     const withAlloc = pen.filter(hasAlloc);
     if (!withAlloc.length) return 10;
     const amt = withAlloc.reduce((s, a) => s + a.amount, 0);
     return amt > 0 ? Math.round((classAmounts(withAlloc).alt / amt) * 100) : 10;
-  });
-  const [drawdown, setDrawdown] = useState(0);
+  }, [assets]);
+  const altPct = profile.bucketAltPct ?? altDefault;
+  const drawdown = profile.marketDrawdown ?? 0;
+  const setAltPct = (v: number) => db.profile.put({ ...profile, bucketAltPct: Math.min(50, Math.max(0, v)) });
+  const setDrawdown = (v: number) => db.profile.put({ ...profile, marketDrawdown: Math.max(-100, Math.min(100, v)) });
   const rule = marketRule(drawdown);
   // 연금계좌 밖 현금·예금·적금(hand): 바로 쓸 돈과 만기가 3개월 넘게 남은 예금·적금.
   // 버틸 햇수는 홈 점검과 같은 숫자: 점검기준 설정이 예면 연금계좌 안 현금성도 더한 runCash 를 노후 진단 첫해 인출(start.outflow)로 나눔
@@ -77,14 +82,14 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
         </p>
       )}
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,180px)_minmax(0,220px)_minmax(0,1fr)]">
-        <Labeled label="대체자산 목표 비중" hint="금·리츠 ETF 등, 평가액 대비">
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <Labeled label="대체자산 목표 비중" hint="금·리츠 ETF 등, 평가액 대비. 위 ④ 대체자산 금액과 아래 계좌별 목표에 씀(0~50%)">
           <NumberField value={altPct} unit="%" min={0} onChange={setAltPct} />
         </Labeled>
-        <Labeled label="주식형 지수 고점 대비 등락률" hint="예: −18 = 고점보다 18% 하락">
+        <Labeled label="주식형 지수 고점 대비 등락률" hint={`예: −18 = 고점보다 18% 하락. ${MARKET_INPUT_HELP}`}>
           <NumberField value={drawdown} unit="%" onChange={setDrawdown} />
         </Labeled>
-        <div className={`self-start rounded-xl px-3 py-2.5 text-sm ${rule.state === 'bear' ? 'bg-bad-soft' : rule.state === 'peak' ? 'bg-good-soft' : 'bg-sunken'}`}>
+        <div className={`self-start rounded-xl px-3 py-2.5 text-sm sm:col-span-2 ${rule.state === 'bear' ? 'bg-bad-soft' : rule.state === 'peak' ? 'bg-good-soft' : 'bg-sunken'}`}>
           <b>지금 적용할 규칙</b> — {rule.text}
           {bearYears.length > 0 && (
             <div className="mt-1 text-xs">
