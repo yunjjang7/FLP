@@ -14,7 +14,7 @@ import { Card } from './ui';
  * 연금 세금 계산이 있으면 계좌마다 그 계좌에서 빠져나갈 금액으로 바구니 목표를 따로 보여 줌.
  */
 export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst = false }: { firstNeed: number; balance: number; tax: TaxResult | null; hasSpouse: boolean; partialFirst?: boolean }) {
-  const { assets, cash: hand, runCash, start, profile, bear, peak } = useFlp();
+  const { assets, cash: hand, runCash, start, profile, bear, peak, normal } = useFlp();
   // 대체자산 목표 비중 기본값: 연금계좌에 비율을 넣었으면 지금 대체자산 비중(반올림), 아니면 10%
   // 두 칸은 프로필에 저장(화면을 옮겨도 유지). 넣은 적이 없으면 기본값
   const altDefault = useMemo(() => {
@@ -105,6 +105,12 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
             <div className="mt-1">
               {peak.fromEquity > 0.5 ? <>주식형 일부 팔아 현금성 <b>{won(peak.fromEquity)}</b> 채우기</> : <>팔 주식형이 없어 저축으로 현금성 <b>{won(peak.short)}</b> 채우기</>}
               <span className="text-xs"> — 바로 쓸 돈 {won(peak.usable)}이 첫해 인출 기준 2년치({won(peak.goal)})에 {won(peak.short)} 모자랍니다.{peak.left > 0.5 && peak.fromEquity > 0.5 ? ` 주식형을 다 팔아도 ${won(peak.left)} 모자라니 나머지는 저축으로 채우세요.` : ''}{pensionEquityOutNote(peak)}</span>
+            </div>
+          )}
+          {rule.state === 'normal' && normal && (
+            <div className="mt-1">
+              {normal.fromBond > 0.5 ? <>1월 리밸런싱 때 채권형에서 현금성 <b>{won(normal.fromBond)}</b> 옮기기</> : <>1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 <b>{won(normal.short)}</b> 채우기</>}
+              <span className="text-xs"> — 바로 쓸 돈 {won(normal.usable)}이 첫해 인출 기준 2년치({won(normal.goal)})에 {won(normal.short)} 모자랍니다.{normal.left > 0.5 && normal.fromBond > 0.5 ? ` 채권형을 다 옮겨도 ${won(normal.left)} 모자라니 나머지는 저축으로 채우세요.` : ''}{pensionBondOutNote(normal)}</span>
             </div>
           )}
           {bearYears.length > 0 && (

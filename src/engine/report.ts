@@ -1,11 +1,11 @@
 import { won, pct } from '../lib/format';
 import type { Goal, Level, Liability, Profile } from '../types';
-import { cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
+import { cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand, type PeakPlan } from './buckets';
 import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
 import type { Retax } from './pensionTaxPlan';
-import { BEAR_RX_TITLE, type Prescription } from './prescribe';
+import { BEAR_RX_TITLE, PEAK_RX_NONE, PEAK_RX_TITLE, type Prescription } from './prescribe';
 import type { RiskCheck } from './risk';
 import { round1, survivorBenefitText, type SurvivorWorst } from './survivor';
 
@@ -38,21 +38,34 @@ export interface ReportInput {
   retax?: Retax; // 수익률 ±2%p 고갈 나이에서 연금 인출 세금을 바뀐 수익률로 다시 계산
   /** 오늘 날짜(등락률 입력이 30일 지났는지 판단). 없으면 지금 */
   now?: Date;
+  /** 고점 부근 현금성 채우기(buckets.ts peakPlan): 시장 상태 문장에 금액을 덧붙임 */
+  peak?: PeakPlan | null;
 }
 
 /**
  * 시장 상태 문장: 인출용 자산 배치 가이드에 저장한 등락률과 입력 날짜로 지금 시장 상태와 적용할 규칙.
  * 하락장이거나 넣은 지 30일이 지났으면 주의. 등락률을 넣지 않았으면 undefined
  */
-export function marketLine(p: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, now: Date): ReportLine | undefined {
+export function marketLine(p: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, now: Date, peak?: PeakPlan | null): ReportLine | undefined {
   if (p.marketDrawdown === undefined) return undefined;
   const rule = marketRule(p.marketDrawdown);
   const date = marketDateNote(p.marketDrawdownDate, now);
   const stale = date?.stale ? ` 넣은 지 ${date.days}일이 지났으니 인출 계획 ‘인출용 자산 배치 가이드’에 지금 지수로 다시 넣어 주세요.` : '';
+  // 고점 부근이고 바로 쓸 돈이 2년치에 못 미치면 맞춤 처방·이정표와 같은 금액(peakPlan)
+  const pk = rule.state === 'peak' && peak ? peakText(peak) : '';
   return {
-    text: `인출용 자산 배치 가이드에 넣은 주식형 등락률은 고점 대비 ${p.marketDrawdown}%${date ? `(${date.label})` : ''}로 지금 시장 상태는 ${MARKET_STATE_LABEL[rule.state]}입니다. 지금 적용할 규칙: ${rule.text}${stale}`,
-    level: rule.state === 'bear' || date?.stale ? 'caution' : undefined,
+    text: `인출용 자산 배치 가이드에 넣은 주식형 등락률은 고점 대비 ${p.marketDrawdown}%${date ? `(${date.label})` : ''}로 지금 시장 상태는 ${MARKET_STATE_LABEL[rule.state]}입니다. 지금 적용할 규칙: ${rule.text}${pk}${stale}`,
+    level: rule.state === 'bear' || date?.stale || pk ? 'caution' : undefined,
   };
+}
+
+/** 고점 부근 현금성 채우기 문장(앞에 띄어쓰기 포함) */
+function peakText(b: PeakPlan): string {
+  const how = b.fromEquity > 0.5
+    ? `주식형 일부 팔아 현금성 ${won(b.fromEquity)} 채우기${b.left > 0.5 ? `, 주식형을 다 팔아도 모자란 ${won(b.left)}은 저축으로` : ''}`
+    : `팔 주식형이 없어 저축으로 현금성 ${won(b.short)} 채우기`;
+  const out = b.out > 0.5 ? ` 55세 전 연금계좌 안 주식형 ${won(b.out)}은 연금계좌에서 꺼내기 어려워 팔 금액에서 뺐습니다.` : '';
+  return ` 바로 쓸 돈 ${won(b.usable)}이 첫해 인출 기준 2년치(${won(b.goal)})에 ${won(b.short)} 모자라니 지금 할 일: ${how}.${out}`;
 }
 
 /**
@@ -164,7 +177,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
       return { text: `${l.name}: 잔액 ${won(l.balance)}, 금리 ${l.rate}%, 월 ${won(l.monthlyPayment)} · ${how}.`, level: noEnd && !open ? ('caution' as Level) : undefined };
     });
   const cash = x.cash ? cashLine(x.cash, start.outflow, p) : undefined;
-  const market = marketLine(p, x.now ?? new Date());
+  const market = marketLine(p, x.now ?? new Date(), x.peak);
   const assetLines: ReportLine[] = [
     { text: `총자산 ${won(s.totalAssets)}, 부채 ${won(s.totalDebt)}, 순자산 ${won(s.netWorth)}입니다. 금융자산 ${won(s.financialAssets)}, 부동산 ${won(s.realEstate)}입니다.` },
     ...(s.financialAssets > 0 && s.byClass.length
@@ -224,9 +237,8 @@ export function buildReport(x: ReportInput): ReportSection[] {
     .filter((r) => r.level !== 'good' && !r.badge && !shown.has(r.title))
     .sort((a, b) => (a.level === 'danger' ? 0 : 1) - (b.level === 'danger' ? 0 : 1));
   const top = pending.slice(0, 6);
-  // 하락장 처방은 지금 바로 할 일이라 6개를 넘어도 잘리지 않게 덧붙임
-  const bear = pending.find((r) => r.title.startsWith(BEAR_RX_TITLE));
-  if (bear && !top.includes(bear)) top.push(bear);
+  // 하락장·고점 부근 처방은 지금 시장 상태에 맞춰 바로 할 일이라 6개를 넘어도 잘리지 않게 덧붙임
+  for (const r of pending.filter((x) => x.title.startsWith(BEAR_RX_TITLE) || x.title.startsWith(PEAK_RX_TITLE) || x.title.startsWith(PEAK_RX_NONE))) if (!top.includes(r)) top.push(r);
   const actions: ReportLine[] = top.map((r) => ({ text: `${r.title}: ${r.detail}`, level: r.level }));
 
   const limits: ReportLine[] = [

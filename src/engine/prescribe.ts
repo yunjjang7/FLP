@@ -162,6 +162,8 @@ export function marketPrescription(profile: Pick<Profile, 'marketDrawdown' | 'ma
 
 /** 고점 부근 처방 제목 앞부분 */
 export const PEAK_RX_TITLE = '고점 부근: 주식형 일부 팔아 현금성';
+/** 팔 주식형이 없을 때 고점 부근 처방 제목 앞부분 */
+export const PEAK_RX_NONE = '고점 부근: 팔 주식형이 없어';
 
 /**
  * 고점 부근 처방: 저장한 등락률이 0% 이상(고점 부근)이고 바로 쓸 돈(c.usable)이 첫해 인출(yearDraw) 기준 2년치에 못 미치면,
@@ -181,7 +183,7 @@ export function peakPrescription(profile: Pick<Profile, 'marketDrawdown' | 'mark
     : ' 팔 주식형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요.';
   return {
     area: '노후', level: 'caution',
-    title: fromEquity > 0.5 ? `${PEAK_RX_TITLE} ${fmt(fromEquity)}원 채우기` : `고점 부근: 팔 주식형이 없어 저축으로 현금성 ${fmt(short)}원 채우기`,
+    title: fromEquity > 0.5 ? `${PEAK_RX_TITLE} ${fmt(fromEquity)}원 채우기` : `${PEAK_RX_NONE} 저축으로 현금성 ${fmt(short)}원 채우기`,
     detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${profile.marketDrawdown}%${date ? `, ${date.text}` : ''})이 고점 부근(0% 이상)입니다. ${have}${how}${pensionEquityOutNote(b)}`,
   };
 }

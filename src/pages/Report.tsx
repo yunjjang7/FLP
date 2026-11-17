@@ -17,7 +17,7 @@ export default function Report() {
   const sections = useMemo(() => {
     if (!d.hasData) return [];
     const rx = prescriptions(d.profile, d.basis, d.planInput, d.sim.successRate, d.goalPlans, d.ins, d.retax, d.runCash, d.bonds, d.equity);
-    return buildReport({ profile: d.profile, summary: d.summary, planInput: d.planInput, sim: d.sim, start: d.start, need: d.need, liabilities: d.liabilities, goals: d.goals, checks: d.checks, rx, nowYear, retax: d.retax, cash: d.runCash, ...(sv.hasSpouse && sv.cases.length ? { survivor: { worst: sv.worst, base: d.simFlat.successRate, living: sv.living, rate: sv.rate } } : {}) });
+    return buildReport({ profile: d.profile, summary: d.summary, planInput: d.planInput, sim: d.sim, start: d.start, need: d.need, liabilities: d.liabilities, goals: d.goals, checks: d.checks, rx, nowYear, retax: d.retax, cash: d.runCash, peak: d.peak, ...(sv.hasSpouse && sv.cases.length ? { survivor: { worst: sv.worst, base: d.simFlat.successRate, living: sv.living, rate: sv.rate } } : {}) });
   }, [d, nowYear, sv.hasSpouse, sv.cases.length, sv.worst, sv.living, sv.rate]);
   if (!d.hasData) return <><PageHeader title="요약 보고" /><EmptyState /></>;
   const today = new Date().toLocaleDateString('ko-KR', { year: 'numeric', month: 'long', day: 'numeric' });

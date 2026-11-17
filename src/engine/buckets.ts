@@ -258,6 +258,23 @@ export function bearPlan(drawdown: number | undefined, usable: number, yearDraw:
   return { goal, usable: have, short, bond, fromBond, left: short - fromBond, out: b.out, outParts: b.outParts };
 }
 
+/**
+ * 보통 구간 현금성 채우기: 등락률이 0%와 −15% 사이(보통)이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면,
+ * 1월 리밸런싱 때 모자란 금액을 채권형에서 현금성 바구니로 옮김(bearPlan 과 같은 계산, 55세 전 연금계좌 안 채권형 뺌).
+ * 등락률을 넣지 않았거나 보통이 아니거나 인출이 없거나 2년치가 있으면 null
+ */
+export function normalPlan(drawdown: number | undefined, usable: number, yearDraw: number, bonds: number | BondsOnHand): BearPlan | null {
+  if (drawdown === undefined || marketState(drawdown) !== 'normal' || !(yearDraw > 0)) return null;
+  const goal = yearDraw * CASH_YEARS_TARGET;
+  const have = Math.max(0, usable);
+  if (have >= goal) return null;
+  const b = typeof bonds === 'number' ? { usable: bonds, out: 0, outParts: { self: 0, spouse: 0 } } : bonds;
+  const short = goal - have;
+  const bond = Math.max(0, b.usable);
+  const fromBond = Math.min(short, bond);
+  return { goal, usable: have, short, bond, fromBond, left: short - fromBond, out: b.out, outParts: b.outParts };
+}
+
 /** 55세 전이라 뺀 연금계좌 안 채권형 안내(뺀 금액이 없으면 빈 문자열) */
 export const pensionBondOutNote = (b: Pick<BondsOnHand, 'out' | 'outParts'>) => outNote('채권형', b.out, b.outParts);
 

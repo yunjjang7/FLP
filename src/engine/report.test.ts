@@ -4,8 +4,8 @@ import { buildPlanInput, planGoals } from './goals';
 import { insuranceGap } from './insurance';
 import { deterministicPath, retirementNeed, simulate, withdrawStart } from './montecarlo';
 import { summarize } from './portfolio';
-import { marketPrescription, prescriptions, type Prescription } from './prescribe';
-import { bondsOnHand, cashOnHand, withPensionCash } from './buckets';
+import { marketPrescription, peakPrescription, prescriptions, type Prescription } from './prescribe';
+import { bondsOnHand, cashOnHand, peakPlan, withPensionCash } from './buckets';
 import { buildReport, cashLine, depletionText, depletionWithReturn, livingText, marketLine } from './report';
 import { bulletChecks, marketChecks, retiredBasis, riskChecks } from './risk';
 
@@ -24,6 +24,29 @@ describe('요약 보고 시장 상태 문장', () => {
     expect(old.level).toBe('caution');
     expect(old.text).toContain('(9월 1일 기준)로');
     expect(old.text).toContain('넣은 지 77일이 지났으니 인출 계획 ‘인출용 자산 배치 가이드’에 지금 지수로 다시 넣어 주세요.');
+  });
+
+  it('고점 부근이고 2년치에 못 미치면 주식형 일부 팔아 채울 금액과 55세 전 연금계좌 주식형 제외 금액', () => {
+    const p = { marketDrawdown: 2, marketDrawdownDate: '2026-11-10' };
+    // 본인 52세라 연금계좌 안 주식형 400만원은 빼고 600만원만 팔 수 있음, 그래도 600만원 모자람
+    const plan = peakPlan(2, 800, 1000, bondsOnHand(1000, { self: 400, spouse: 0 }, { self: 52 }))!;
+    const line = marketLine(p, now, plan)!;
+    expect(line.level).toBe('caution');
+    expect(line.text).toBe('인출용 자산 배치 가이드에 넣은 주식형 등락률은 고점 대비 2%(11월 10일 기준)로 지금 시장 상태는 고점 부근입니다. 지금 적용할 규칙: 고점 부근: 주식형 일부를 팔아 현금성 바구니를 목표(약 2년치)까지 채웁니다. 바로 쓸 돈 800만원이 첫해 인출 기준 2년치(2,000만원)에 1,200만원 모자라니 지금 할 일: 주식형 일부 팔아 현금성 600만원 채우기, 주식형을 다 팔아도 모자란 600만원은 저축으로. 55세 전 연금계좌 안 주식형 400만원은 연금계좌에서 꺼내기 어려워 팔 금액에서 뺐습니다.');
+    // 주식형이 넉넉하면 모자란 금액만, 제외 금액이 없으면 그 문장 없음
+    expect(marketLine(p, now, peakPlan(2, 800, 1000, 5000))!.text.endsWith('지금 할 일: 주식형 일부 팔아 현금성 1,200만원 채우기.')).toBe(true);
+    expect(marketLine(p, now, peakPlan(2, 0, 1000, 0))!.text).toContain('지금 할 일: 팔 주식형이 없어 저축으로 현금성 2,000만원 채우기.');
+    // 계획이 없으면(2년치가 있음) 덧붙이지 않고 주의도 아님
+    const plain = marketLine(p, now, null)!;
+    expect(plain.level).toBeUndefined();
+    expect(plain.text).not.toContain('지금 할 일');
+    // 보고서 자산과 부채 섹션에도 같은 문장
+    const d = sampleData(2026);
+    const pp = { ...d.profile, ...p };
+    const s = summarize(pp, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+    const inp = buildPlanInput(pp, d.assets, d.liabilities, d.goals, s);
+    const rep = buildReport({ profile: pp, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [], nowYear: 2026, now, peak: plan });
+    expect(rep.find((x) => x.title === '2. 자산과 부채')!.lines.some((l) => l.text === line.text && l.level === 'caution')).toBe(true);
   });
 
   it('등락률 다시 입력 필요 점검은 점검 항목에서 빼고 자산과 부채의 시장 상태 문장에만', () => {
@@ -63,6 +86,29 @@ describe('요약 보고 시장 상태 문장', () => {
     // 6개 안에 들면 덧붙이지 않고 한 번만
     const few = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [others[0], bear], nowYear: 2026, now });
     expect(few.find((x) => x.title === '5. 권장 대응')!.lines.map((l) => l.text)).toEqual(['위험 처방 1: 설명', `${bear.title}: ${bear.detail}`]);
+  });
+
+  it('권장 대응: 고점 부근 처방도 6개가 넘어도 잘리지 않고 55세 전 주식형 제외 안내까지', () => {
+    const d = sampleData(2026);
+    const p = { ...d.profile, marketDrawdown: 2, marketDrawdownDate: '2026-11-10' };
+    const s = summarize(p, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+    const inp = buildPlanInput(p, d.assets, d.liabilities, d.goals, s);
+    // 본인 52세라 연금계좌 안 주식형 400만원은 빼고 600만원만 팔 수 있음
+    const peak = peakPrescription(p, { usable: 800 }, 1000, bondsOnHand(1000, { self: 400, spouse: 0 }, { self: 52 }), now)!;
+    const others: Prescription[] = Array.from({ length: 7 }, (_, i) => ({ area: '노후', level: 'danger', title: `위험 처방 ${i + 1}`, detail: '설명' }));
+    const rep = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [...others, peak], nowYear: 2026, now });
+    const lines = rep.find((x) => x.title === '5. 권장 대응')!.lines;
+    expect(lines).toHaveLength(7);
+    expect(lines.slice(0, 6).map((l) => l.text)).toEqual(others.slice(0, 6).map((r) => `${r.title}: 설명`));
+    expect(lines[6].level).toBe('caution');
+    expect(lines[6].text).toBe(`${peak.title}: ${peak.detail}`);
+    expect(lines[6].text.startsWith('고점 부근: 주식형 일부 팔아 현금성 600만원 채우기: ')).toBe(true);
+    expect(lines[6].text).toContain('주식형(지금 600만원) 가운데 600만원을 팔아');
+    expect(lines[6].text.endsWith(' 연금계좌 안 주식형 400만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.')).toBe(true);
+    // 팔 주식형이 없는 제목도 잘리지 않음
+    const none = peakPrescription(p, { usable: 0 }, 1000, 0, now)!;
+    const rep2 = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [...others, none], nowYear: 2026, now });
+    expect(rep2.find((x) => x.title === '5. 권장 대응')!.lines.at(-1)!.text.startsWith('고점 부근: 팔 주식형이 없어 저축으로 현금성 2,000만원 채우기: ')).toBe(true);
   });
 
   it('자산과 부채 섹션에 들어감', () => {

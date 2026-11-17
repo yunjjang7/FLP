@@ -256,12 +256,22 @@ export function peakTodo(b: PeakPlan): string {
   return `${head}${b.out > 0.5 ? `(55세 전 연금계좌 주식형 ${man(b.out)} 제외)` : ''}`;
 }
 
-export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, year: number, liabilities: Liability[] = [], nowMonth?: number, moveToCash: MoveRow[] = [], cashFrom55?: { self: number; spouse: number }, bear?: BearPlan | null, peak?: PeakPlan | null): string[] {
+/** 보통 구간 할 일 문구: 1월 리밸런싱 때 채권형에서 현금성으로 옮길 금액, 모자라면 저축으로, 55세 전이라 뺀 연금계좌 채권형 */
+export function normalTodo(b: BearPlan): string {
+  const head = b.fromBond > 0.5
+    ? `1월 리밸런싱 때 채권형에서 현금성 ${man(b.fromBond)} 옮기기${b.left > 0.5 ? ` · 그래도 ${man(b.left)} 모자라 저축으로 채우기` : ''}`
+    : `1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 ${man(b.short)} 채우기`;
+  return `${head}${b.out > 0.5 ? `(55세 전 연금계좌 채권형 ${man(b.out)} 제외)` : ''}`;
+}
+
+export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, year: number, liabilities: Liability[] = [], nowMonth?: number, moveToCash: MoveRow[] = [], cashFrom55?: { self: number; spouse: number }, bear?: BearPlan | null, peak?: PeakPlan | null, normal?: BearPlan | null): string[] {
   const out: string[] = [];
   // 하락장(저장한 등락률 −15% 이하)이고 바로 쓸 돈이 2년치에 못 미치면 올해 할 일 맨 앞에: 맞춤 처방과 같은 금액
   if (bear && year === nowYear) out.push(bearTodo(bear));
   // 고점 부근(0% 이상)이고 바로 쓸 돈이 2년치에 못 미치면 올해 할 일 맨 앞에: 맞춤 처방과 같은 금액
   if (peak && year === nowYear) out.push(peakTodo(peak));
+  // 보통(0%와 −15% 사이)이고 바로 쓸 돈이 2년치에 못 미치면 올해 할 일 맨 앞에: 1월 리밸런싱 때 채권형에서 옮길 금액
+  if (normal && year === nowYear) out.push(normalTodo(normal));
   const hasSpouse = profile.spouseBirthYear > 0;
   const pensions = mergeAccounts(assets).filter((a) => a.type === 'pension' && a.amount > 0); // 같은 계좌로 묶인 줄은 한 계좌
   const age = year - profile.birthYear;

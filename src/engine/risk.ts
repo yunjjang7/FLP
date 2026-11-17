@@ -6,7 +6,7 @@ import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
 import { EMERGENCY_LOCK_MONTHS } from './maturity';
-import { CASH_YEARS_TARGET, cashSourceLabel, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
+import { CASH_YEARS_TARGET, cashSourceLabel, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, peakPlan, pensionEquityOutNote, pensionFrom55, pensionFrom55Note, pensionOutNote, type BondsOnHand, type CashOnHand } from './buckets';
 import { goalBreakdownAt, pensionAt, retireOutflowAt, type PlanInput } from './montecarlo';
 
 /**
@@ -200,12 +200,27 @@ export function cashRunwayChecks(c: CashOnHand, run?: { usable: number; all: num
  * 하락장 안내(홈 주요 점검 사항): 인출용 자산 배치 가이드에 저장한 등락률(profile.marketDrawdown)이 −15% 이하이면
  * ‘하락장: 주식형 매도 멈춤’ 주의와 함께 바로 쓸 돈으로 버틸 햇수(첫해 인출 yearDraw 기준)를 보여 줌. 재무점수에는 넣지 않음.
  * 넣은 지 30일이 지났으면 다시 넣으라는 안내를 붙임. 하락장이 아니어도 30일이 지났으면 ‘등락률 다시 입력 필요’(참고)를 띄움.
- * 두 항목 모두 인출용 자산 배치 가이드로 가는 링크를 붙임
+ * 고점 부근(0% 이상)이고 바로 쓸 돈이 2년치에 못 미치면 ‘고점 부근: 현금성 채우기’ 주의(equity 를 넘길 때, 이때는 재입력 안내를 설명에 붙이고 따로 띄우지 않음).
+ * 모든 항목에 인출용 자산 배치 가이드로 가는 링크를 붙임
  */
-export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: CashOnHand, yearDraw: number, now: Date): RiskCheck[] {
+export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: CashOnHand, yearDraw: number, now: Date, equity?: number | BondsOnHand): RiskCheck[] {
   const dd = profile.marketDrawdown ?? 0;
   const rule = marketRule(dd);
   const date = marketDateNote(profile.marketDrawdownDate, now);
+  // 고점 부근(0% 이상)이고 바로 쓸 돈이 2년치에 못 미치면: 맞춤 처방·이정표와 같은 peakPlan 금액(equity 를 넘길 때만)
+  const peak = equity !== undefined ? peakPlan(profile.marketDrawdown, c.usable, yearDraw, equity) : null;
+  if (peak) {
+    const have = peak.usable > 0.5
+      ? `바로 쓸 돈 ${won(peak.usable)}은 첫해 인출(연 ${won(yearDraw)}) 기준 약 ${(peak.usable / yearDraw).toFixed(1)}년치로 ${CASH_YEARS_TARGET}년치(${won(peak.goal)})에 ${won(peak.short)} 모자랍니다.`
+      : `바로 쓸 현금성이 없어 첫해 인출(연 ${won(yearDraw)}) 기준 ${CASH_YEARS_TARGET}년치(${won(peak.goal)})가 모두 모자랍니다.`;
+    const how = peak.fromEquity > 0.5
+      ? ` 값이 오른 지금 주식형 가운데 ${won(peak.fromEquity)}을 팔아 현금성 바구니에 채우세요.${peak.left > 0.5 ? ` 주식형을 다 팔아도 ${won(peak.left)} 모자라니 나머지는 저축으로 채우세요.` : ''}`
+      : ' 팔 주식형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요.';
+    return [{
+      key: 'marketPeak', label: '고점 부근: 현금성 채우기', value: peak.fromEquity > 0.5 ? `주식형 ${won(peak.fromEquity)} 매도` : `저축 ${won(peak.short)}`, level: 'caution', link: BUCKET_GUIDE_LINK,
+      detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${dd}%${date ? `, ${date.text}` : ''}) 기준 ${rule.text} ${have}${how}${pensionEquityOutNote(peak)}`,
+    }];
+  }
   if (rule.state !== 'bear') {
     if (!date?.stale) return [];
     return [{
