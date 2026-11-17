@@ -6,7 +6,7 @@ import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
 import { EMERGENCY_LOCK_MONTHS } from './maturity';
-import { CASH_YEARS_TARGET, cashSourceLabel, cashYears, marketDateNote, marketRule, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
+import { CASH_YEARS_TARGET, cashSourceLabel, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
 import { goalBreakdownAt, pensionAt, retireOutflowAt, type PlanInput } from './montecarlo';
 
 /**
@@ -29,7 +29,14 @@ export interface RiskCheck {
   value: string;
   level: Level;
   detail: string;
+  /** 배지 문구를 바꿀 때(예: 참고 항목은 ‘참고’). 홈 주요 점검에서는 뒤로 보냄 */
+  badge?: string;
+  /** 설명 아래에 붙일 다른 화면 카드 링크(CardLink) */
+  link?: { to: string; card: string; text: string };
 }
+
+/** 인출용 자산 배치 가이드로 가는 링크(등락률 칸이 있는 곳) */
+export const BUCKET_GUIDE_LINK = { to: '/withdraw', card: '인출용 자산 배치 가이드', text: '인출용 자산 배치 가이드로 가기' };
 
 const level = (score: number): Level => (score >= 0.999 ? 'good' : score >= 0.5 ? 'caution' : 'danger');
 
@@ -192,19 +199,26 @@ export function cashRunwayChecks(c: CashOnHand, run?: { usable: number; all: num
 /**
  * 하락장 안내(홈 주요 점검 사항): 인출용 자산 배치 가이드에 저장한 등락률(profile.marketDrawdown)이 −15% 이하이면
  * ‘하락장: 주식형 매도 멈춤’ 주의와 함께 바로 쓸 돈으로 버틸 햇수(첫해 인출 yearDraw 기준)를 보여 줌. 재무점수에는 넣지 않음.
- * 넣은 지 30일이 지났으면 다시 넣으라는 안내를 붙임
+ * 넣은 지 30일이 지났으면 다시 넣으라는 안내를 붙임. 하락장이 아니어도 30일이 지났으면 ‘등락률 다시 입력 필요’(참고)를 띄움.
+ * 두 항목 모두 인출용 자산 배치 가이드로 가는 링크를 붙임
  */
 export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: CashOnHand, yearDraw: number, now: Date): RiskCheck[] {
   const dd = profile.marketDrawdown ?? 0;
   const rule = marketRule(dd);
-  if (rule.state !== 'bear') return [];
-  const y = cashYears(c, yearDraw);
   const date = marketDateNote(profile.marketDrawdownDate, now);
+  if (rule.state !== 'bear') {
+    if (!date?.stale) return [];
+    return [{
+      key: 'marketStale', label: '등락률 다시 입력 필요', value: `${date.days}일 전 입력`, level: 'caution', badge: '참고', link: BUCKET_GUIDE_LINK,
+      detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 주식형 등락률(고점 대비 ${dd}%, ${date.label})을 넣은 지 ${date.days}일이 지났습니다. 지금 시장 상태(${MARKET_STATE_LABEL[rule.state]})와 적용할 규칙, 하락장 점검·처방이 이 값으로 정해지니 지금 지수로 다시 넣어 주세요.`,
+    }];
+  }
+  const y = cashYears(c, yearDraw);
   const years = c.total > 0.5 && y
     ? ` 지금 ${cashSourceLabel(c)} 가운데 바로 쓸 돈 ${won(c.usable)}으로 첫해 인출(연 ${won(yearDraw)}) 기준 약 ${y.usable.toFixed(1)}년치 버틸 수 있습니다${y.usable < CASH_YEARS_TARGET ? `(${CASH_YEARS_TARGET}년치에 못 미침)` : ''}.`
     : ' 바로 쓸 현금성이 없어 인출할 때 주식형을 팔아야 할 수 있으니 채권형부터 꺼내세요.';
   return [{
-    key: 'marketBear', label: '하락장: 주식형 매도 멈춤', value: `고점 대비 ${dd}%`, level: 'caution',
+    key: 'marketBear', label: '하락장: 주식형 매도 멈춤', value: `고점 대비 ${dd}%`, level: 'caution', link: BUCKET_GUIDE_LINK,
     detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률${date ? `(${date.text})` : ''} 기준 ${rule.text}${years}`,
   }];
 }

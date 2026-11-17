@@ -11,7 +11,7 @@ import { ScenarioTable } from '../components/ScenarioTable';
 import { Milestones } from '../components/Milestones';
 import { IncomeTaxCard } from '../components/IncomeTaxCard';
 import { OrderCompare } from '../components/OrderCompare';
-import { CardLink, SetupLink } from '../components/SetupLink';
+import { CardLink, SetupLink, useCardTarget } from '../components/SetupLink';
 import type { CompareBase } from '../engine/orderCompare';
 import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
 import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
@@ -37,6 +37,7 @@ export default function Withdraw() {
 
 function WithdrawInner() {
   const d = useFlp();
+  useCardTarget(); // 홈 점검 ‘인출용 자산 배치 가이드로 가기’ 등 ?card= 로 들어오면 그 카드로 스크롤
   const { profile: p, sim, planInput, start } = d;
   const retired = start.retired;
   const startAge = start.age;

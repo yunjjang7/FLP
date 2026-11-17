@@ -192,13 +192,106 @@ export function withPensionCash(c: CashOnHand, pension: number | PensionCashPart
 
 /** 55세 전이라 뺀 연금계좌 안 현금성 안내(앞에 띄어쓰기 포함). 뺀 금액이 없으면 빈 문자열 */
 export function pensionOutNote(c: Pick<CashOnHand, 'pensionOut' | 'pensionOutParts'>): string {
-  if (!c.pensionOut) return '';
-  const p = c.pensionOutParts;
+  return outNote('현금성', c.pensionOut, c.pensionOutParts);
+}
+
+/** 55세 전이라 뺀 연금계좌 안 자산(현금성·채권형) 안내: 배우자 몫만이면 ‘배우자 연금계좌’, 두 사람 몫이면 본인·배우자 금액을 함께 */
+function outNote(kind: string, out?: number, p?: PensionCashParts): string {
+  if (!out || !(out > 0.5)) return '';
   const who = p && p.spouse > 0.5
-    ? p.self > 0.5 ? `연금계좌 안 현금성 ${won(c.pensionOut)}(본인 ${won(p.self)}, 배우자 ${won(p.spouse)})` : `배우자 연금계좌 안 현금성 ${won(c.pensionOut)}`
-    : `연금계좌 안 현금성 ${won(c.pensionOut)}`;
+    ? p.self > 0.5 ? `연금계좌 안 ${kind} ${won(out)}(본인 ${won(p.self)}, 배우자 ${won(p.spouse)})` : `배우자 연금계좌 안 ${kind} ${won(out)}`
+    : `연금계좌 안 ${kind} ${won(out)}`;
   return ` ${who}은 ${PENSION_OPEN_AGE}세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.`;
 }
+
+/** 계좌 주인별 연금계좌 안 자산군(채권형·주식형) 금액: 투자 점검 자산군 구성과 같은 기준(자산 탭 비율, 비율이 없으면 유형·성격 기본 분류) */
+export function pensionClassParts(assets: Asset[], hasSpouse: boolean, key: 'bond' | 'equity'): PensionCashParts {
+  const out: PensionCashParts = { self: 0, spouse: 0 };
+  for (const a of assets.filter((x) => x.type === 'pension' && x.amount > 0)) out[a.owner === 'spouse' && hasSpouse ? 'spouse' : 'self'] += classAmounts([a])[key];
+  return out;
+}
+
+/** 계좌 주인별 연금계좌 안 채권형 금액 */
+export const pensionBondParts = (assets: Asset[], hasSpouse: boolean) => pensionClassParts(assets, hasSpouse, 'bond');
+
+/** 하락장에 꺼낼 수 있는 채권형: total(금융자산 안 채권형 합계)에서 인출 시작 해에 55세 전인 계좌 주인의 연금계좌 안 채권형을 뺀 금액 */
+export interface BondsOnHand {
+  total: number;
+  usable: number;
+  out: number;
+  outParts: PensionCashParts;
+}
+
+/** 채권형 합계에서 55세 전 연금계좌 안 채권형을 뺌(ages 는 startAges, 나이가 없으면 빼지 않음) */
+export function bondsOnHand(total: number, pension: PensionCashParts, ages?: { self: number; spouse?: number }): BondsOnHand {
+  const young = (age?: number) => age !== undefined && age < PENSION_OPEN_AGE;
+  const outParts = { self: young(ages?.self) ? pension.self : 0, spouse: young(ages?.spouse) ? pension.spouse : 0 };
+  const out = Math.min(Math.max(0, total), outParts.self + outParts.spouse);
+  return { total, usable: Math.max(0, total - out), out, outParts };
+}
+
+/** 하락장에 2년치 현금성까지 모자란 금액과 채권형에서 먼저 꺼낼 금액(맞춤 처방·이정표 할 일 공통) */
+export interface BearPlan {
+  goal: number; // 첫해 인출 기준 2년치
+  usable: number; // 바로 쓸 돈
+  short: number; // 2년치까지 모자란 금액
+  bond: number; // 꺼낼 수 있는 채권형(55세 전 연금계좌 안 채권형 뺌)
+  fromBond: number; // 채권형에서 먼저 꺼낼 금액
+  left: number; // 채권형을 다 꺼내도 모자란 금액
+  out: number; // 55세 전이라 뺀 연금계좌 안 채권형
+  outParts: PensionCashParts;
+}
+
+/**
+ * 하락장 인출 계획: 등락률이 −15% 이하이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면 모자란 금액을 채권형에서 먼저 꺼냄.
+ * bonds 가 숫자면 모두 꺼낼 수 있다고 봄. 하락장이 아니거나 인출이 없거나 2년치가 있으면 null
+ */
+export function bearPlan(drawdown: number | undefined, usable: number, yearDraw: number, bonds: number | BondsOnHand): BearPlan | null {
+  if (marketState(drawdown ?? 0) !== 'bear' || !(yearDraw > 0)) return null;
+  const goal = yearDraw * CASH_YEARS_TARGET;
+  const have = Math.max(0, usable);
+  if (have >= goal) return null;
+  const b = typeof bonds === 'number' ? { usable: bonds, out: 0, outParts: { self: 0, spouse: 0 } } : bonds;
+  const short = goal - have;
+  const bond = Math.max(0, b.usable);
+  const fromBond = Math.min(short, bond);
+  return { goal, usable: have, short, bond, fromBond, left: short - fromBond, out: b.out, outParts: b.outParts };
+}
+
+/** 55세 전이라 뺀 연금계좌 안 채권형 안내(뺀 금액이 없으면 빈 문자열) */
+export const pensionBondOutNote = (b: Pick<BondsOnHand, 'out' | 'outParts'>) => outNote('채권형', b.out, b.outParts);
+
+/** 고점 부근에 주식형을 팔아 2년치 현금성까지 채울 금액(맞춤 처방·이정표 할 일·인출 바구니 공통) */
+export interface PeakPlan {
+  goal: number; // 첫해 인출 기준 2년치
+  usable: number; // 바로 쓸 돈
+  short: number; // 2년치까지 모자란 금액
+  equity: number; // 팔 수 있는 주식형(55세 전 연금계좌 안 주식형 뺌)
+  fromEquity: number; // 주식형을 팔아 채울 금액
+  left: number; // 주식형을 다 팔아도 모자란 금액(저축으로)
+  out: number; // 55세 전이라 뺀 연금계좌 안 주식형
+  outParts: PensionCashParts;
+}
+
+/**
+ * 고점 부근 현금성 채우기: 등락률이 0% 이상(고점 부근)이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면 모자란 금액을 주식형 일부를 팔아 채움.
+ * equity 는 bondsOnHand 와 같은 방식(주식형 합계에서 55세 전 연금계좌 안 주식형을 뺌), 숫자면 모두 팔 수 있다고 봄.
+ * 고점 부근이 아니거나 인출이 없거나 2년치가 있으면 null
+ */
+export function peakPlan(drawdown: number | undefined, usable: number, yearDraw: number, equity: number | BondsOnHand): PeakPlan | null {
+  if (drawdown === undefined || marketState(drawdown) !== 'peak' || !(yearDraw > 0)) return null;
+  const goal = yearDraw * CASH_YEARS_TARGET;
+  const have = Math.max(0, usable);
+  if (have >= goal) return null;
+  const e = typeof equity === 'number' ? { usable: equity, out: 0, outParts: { self: 0, spouse: 0 } } : equity;
+  const short = goal - have;
+  const sell = Math.max(0, e.usable);
+  const fromEquity = Math.min(short, sell);
+  return { goal, usable: have, short, equity: sell, fromEquity, left: short - fromEquity, out: e.out, outParts: e.outParts };
+}
+
+/** 55세 전이라 뺀 연금계좌 안 주식형 안내(뺀 금액이 없으면 빈 문자열) */
+export const pensionEquityOutNote = (b: Pick<PeakPlan, 'out' | 'outParts'>) => outNote('주식형', b.out, b.outParts);
 
 /** 인출 시작 해 그 사람 나이(본인은 start.age, 배우자는 나이 차를 빼서) */
 export const startAges = (startAge: number, birthYear: number, spouseBirthYear: number) =>

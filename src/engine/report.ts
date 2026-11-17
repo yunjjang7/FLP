@@ -5,7 +5,7 @@ import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
 import type { Retax } from './pensionTaxPlan';
-import type { Prescription } from './prescribe';
+import { BEAR_RX_TITLE, type Prescription } from './prescribe';
 import type { RiskCheck } from './risk';
 import { round1, survivorBenefitText, type SurvivorWorst } from './survivor';
 
@@ -216,14 +216,18 @@ export function buildReport(x: ReportInput): ReportSection[] {
     ...(skipped.length ? [{ text: `목표 나이가 비어 있는 ${skipped.map((g) => g.name).join(', ')}은(는) 계산에 넣지 않았습니다.`, level: 'caution' as Level }] : []),
   ];
 
-  const risks: ReportLine[] = x.checks.filter((c) => c.level !== 'good').map((c) => ({ text: `${c.label}(${c.value}): ${c.detail}`, level: c.level }));
+  // 등락률 다시 입력 필요(marketStale)는 ‘2. 자산과 부채’의 시장 상태 문장에 같은 안내가 있어 뺌
+  const risks: ReportLine[] = x.checks.filter((c) => c.level !== 'good' && c.key !== 'marketStale').map((c) => ({ text: `${c.label}(${c.value}): ${c.detail}`, level: c.level }));
   // 점검 항목과 같은 제목(만기 나이 입력 등)은 한 번만
   const shown = new Set(x.checks.map((c) => c.label));
-  const actions: ReportLine[] = x.rx
+  const pending = x.rx
     .filter((r) => r.level !== 'good' && !r.badge && !shown.has(r.title))
-    .sort((a, b) => (a.level === 'danger' ? 0 : 1) - (b.level === 'danger' ? 0 : 1))
-    .slice(0, 6)
-    .map((r) => ({ text: `${r.title}: ${r.detail}`, level: r.level }));
+    .sort((a, b) => (a.level === 'danger' ? 0 : 1) - (b.level === 'danger' ? 0 : 1));
+  const top = pending.slice(0, 6);
+  // 하락장 처방은 지금 바로 할 일이라 6개를 넘어도 잘리지 않게 덧붙임
+  const bear = pending.find((r) => r.title.startsWith(BEAR_RX_TITLE));
+  if (bear && !top.includes(bear)) top.push(bear);
+  const actions: ReportLine[] = top.map((r) => ({ text: `${r.title}: ${r.detail}`, level: r.level }));
 
   const limits: ReportLine[] = [
     { text: `금액은 모두 오늘 물가 기준이며 물가상승률은 연 ${p.inflation}%로 봤습니다. 대출 상환액·보험료처럼 계약 금액이 정해진 지출은 물가만큼 실제 부담이 줄어듭니다.` },

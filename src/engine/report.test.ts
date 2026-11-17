@@ -4,10 +4,10 @@ import { buildPlanInput, planGoals } from './goals';
 import { insuranceGap } from './insurance';
 import { deterministicPath, retirementNeed, simulate, withdrawStart } from './montecarlo';
 import { summarize } from './portfolio';
-import { prescriptions } from './prescribe';
-import { cashOnHand, withPensionCash } from './buckets';
+import { marketPrescription, prescriptions, type Prescription } from './prescribe';
+import { bondsOnHand, cashOnHand, withPensionCash } from './buckets';
 import { buildReport, cashLine, depletionText, depletionWithReturn, livingText, marketLine } from './report';
-import { bulletChecks, retiredBasis, riskChecks } from './risk';
+import { bulletChecks, marketChecks, retiredBasis, riskChecks } from './risk';
 
 describe('요약 보고 시장 상태 문장', () => {
   const now = new Date(2026, 10, 17);
@@ -24,6 +24,45 @@ describe('요약 보고 시장 상태 문장', () => {
     expect(old.level).toBe('caution');
     expect(old.text).toContain('(9월 1일 기준)로');
     expect(old.text).toContain('넣은 지 77일이 지났으니 인출 계획 ‘인출용 자산 배치 가이드’에 지금 지수로 다시 넣어 주세요.');
+  });
+
+  it('등락률 다시 입력 필요 점검은 점검 항목에서 빼고 자산과 부채의 시장 상태 문장에만', () => {
+    const d = sampleData(2026);
+    const p = { ...d.profile, marketDrawdown: -5, marketDrawdownDate: '2026-09-01' };
+    const s = summarize(p, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+    const inp = buildPlanInput(p, d.assets, d.liabilities, d.goals, s);
+    const checks = marketChecks(p, cashOnHand([], 2026, 11), 1000, now);
+    expect(checks.map((c) => c.key)).toEqual(['marketStale']);
+    const rep = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks, rx: [], nowYear: 2026, now });
+    const risk = rep.find((x) => x.title === '4. 점검이 필요한 항목')!;
+    expect(risk.lines.some((l) => l.text.includes('등락률 다시 입력 필요'))).toBe(false);
+    expect(risk.lines[0].text).toBe('주의나 위험으로 나온 점검 항목이 없습니다.');
+    const asset = rep.find((x) => x.title === '2. 자산과 부채')!;
+    expect(asset.lines.some((l) => l.level === 'caution' && l.text.includes('넣은 지 77일이 지났으니'))).toBe(true);
+  });
+
+  it('권장 대응: 하락장 처방은 6개가 넘어도 잘리지 않고 55세 전 채권형 제외 안내까지', () => {
+    const d = sampleData(2026);
+    const p = { ...d.profile, marketDrawdown: -18, marketDrawdownDate: '2026-11-10' };
+    const s = summarize(p, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+    const inp = buildPlanInput(p, d.assets, d.liabilities, d.goals, s);
+    // 본인 52세라 연금계좌 안 채권형 300만원은 빼고 700만원만 꺼낼 수 있음
+    const bear = marketPrescription(p, { usable: 800 }, 1000, bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 }), now)!;
+    const others: Prescription[] = Array.from({ length: 7 }, (_, i) => ({ area: '노후', level: 'danger', title: `위험 처방 ${i + 1}`, detail: '설명' }));
+    const rep = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [...others, bear], nowYear: 2026, now });
+    const lines = rep.find((x) => x.title === '5. 권장 대응')!.lines;
+    expect(lines).toHaveLength(7);
+    expect(lines.slice(0, 6).map((l) => l.text)).toEqual(others.slice(0, 6).map((r) => `${r.title}: 설명`));
+    const last = lines[6];
+    expect(last.level).toBe('caution');
+    expect(last.text).toBe(`${bear.title}: ${bear.detail}`);
+    expect(last.text.startsWith('하락장: 주식형 매도 멈춤 — 채권형에서 700만원 먼저 꺼내기: ')).toBe(true);
+    expect(last.text).toContain('채권형(지금 700만원)에서 700만원을 먼저 꺼내 쓰세요.');
+    expect(last.text).toContain(' 연금계좌 안 채권형 300만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.');
+    expect(last.text.endsWith('주식형이 회복하면 고점 부근에서 일부를 팔아 현금성 바구니를 다시 채웁니다.')).toBe(true);
+    // 6개 안에 들면 덧붙이지 않고 한 번만
+    const few = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [others[0], bear], nowYear: 2026, now });
+    expect(few.find((x) => x.title === '5. 권장 대응')!.lines.map((l) => l.text)).toEqual(['위험 처방 1: 설명', `${bear.title}: ${bear.detail}`]);
   });
 
   it('자산과 부채 섹션에 들어감', () => {

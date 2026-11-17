@@ -7,15 +7,15 @@ const SHOWN = 8;
 
 /** 엑셀 대시보드 ‘올해·내년 할 일’과 ‘다가오는 이정표’ */
 export function Milestones() {
-  const { profile, assets, liabilities, goals, cashMove, runCash } = useFlp();
+  const { profile, assets, liabilities, goals, cashMove, runCash, bear, peak } = useFlp();
   const [all, setAll] = useState(false);
   const now = new Date();
   const nowYear = now.getFullYear();
   const nowMonth = now.getMonth() + 1;
   const list = useMemo(() => milestones(profile, assets, liabilities, goals, nowYear, nowMonth, cashMove, runCash.pensionOutParts), [profile, assets, liabilities, goals, nowYear, nowMonth, cashMove, runCash.pensionOutParts]);
   const todos = useMemo(
-    () => [nowYear, nowYear + 1].map((y) => ({ year: y, items: yearTodos(profile, assets, nowYear, y, liabilities, nowMonth, cashMove, runCash.pensionOutParts) })).filter((t) => t.items.length > 0),
-    [profile, assets, liabilities, nowYear, nowMonth, cashMove, runCash.pensionOutParts],
+    () => [nowYear, nowYear + 1].map((y) => ({ year: y, items: yearTodos(profile, assets, nowYear, y, liabilities, nowMonth, cashMove, runCash.pensionOutParts, bear, peak) })).filter((t) => t.items.length > 0),
+    [profile, assets, liabilities, nowYear, nowMonth, cashMove, runCash.pensionOutParts, bear, peak],
   );
   if (list.length === 0 && todos.length === 0) return null;
   const shown = all ? list : list.slice(0, SHOWN);

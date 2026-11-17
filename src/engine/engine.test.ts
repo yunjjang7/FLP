@@ -9,10 +9,10 @@ import { contribSchedule, creditInflows, hiDependent, hiPropMonthly, hiPropShare
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
-import { accountBuckets, cashOnHand, isRiskCapped, MARKET_INPUT_HELP, marketDateNote, marketRule, marketState, ymd } from './buckets';
-import { milestones, monthsUntil, pensionOpenMonth, untilLabel, yearTodos } from './milestones';
+import { accountBuckets, bearPlan, bondsOnHand, cashOnHand, peakPlan, pensionBondOutNote, pensionBondParts, pensionClassParts, isRiskCapped, MARKET_INPUT_HELP, marketDateNote, marketRule, marketState, ymd } from './buckets';
+import { bearTodo, milestones, peakTodo, monthsUntil, pensionOpenMonth, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
-import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, marketPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
+import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, marketPrescription, peakPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
 import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, marketChecks, retiredBasis, riskChecks } from './risk';
 import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, rebaseDiff, refixBase, restoreBase, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
 import type { Draw, Goal, PlanBase } from '../types';
@@ -1511,6 +1511,92 @@ describe('인출 바구니 등락률: 입력 날짜·하락장 홈 점검', () =
     const [old] = marketChecks({ marketDrawdown: -20, marketDrawdownDate: '2026-09-01' }, cashOnHand([], 2026, 11), 1000, now);
     expect(old.detail).toContain('지났으니 지금 지수로 다시 넣어 주세요.');
     expect(old.detail).toContain('채권형부터 꺼내세요');
+    // 하락장이면 따로 ‘다시 입력 필요’를 띄우지 않고, 인출용 자산 배치 가이드 링크를 붙임
+    expect(marketChecks({ marketDrawdown: -20, marketDrawdownDate: '2026-09-01' }, c, 1000, now).map((x) => x.key)).toEqual(['marketBear']);
+    expect(old.link).toEqual({ to: '/withdraw', card: '인출용 자산 배치 가이드', text: '인출용 자산 배치 가이드로 가기' });
+  });
+
+  it('하락장이 아니어도 30일이 지나면 홈 점검에 ‘등락률 다시 입력 필요’(참고)', () => {
+    const c = cashOnHand([], 2026, 11);
+    expect(marketChecks({ marketDrawdown: -5, marketDrawdownDate: '2026-10-18' }, c, 1000, now)).toEqual([]);
+    expect(marketChecks({ marketDrawdown: -5 }, c, 1000, now)).toEqual([]);
+    const [chk] = marketChecks({ marketDrawdown: -5, marketDrawdownDate: '2026-09-01' }, c, 1000, now);
+    expect(chk).toMatchObject({ key: 'marketStale', label: '등락률 다시 입력 필요', value: '77일 전 입력', level: 'caution', badge: '참고', link: { to: '/withdraw', card: '인출용 자산 배치 가이드' } });
+    expect(chk.detail).toBe('인출 계획 ‘인출용 자산 배치 가이드’에 넣은 주식형 등락률(고점 대비 -5%, 9월 1일 기준)을 넣은 지 77일이 지났습니다. 지금 시장 상태(보통)와 적용할 규칙, 하락장 점검·처방이 이 값으로 정해지니 지금 지수로 다시 넣어 주세요.');
+    expect(marketChecks({ marketDrawdown: 2, marketDrawdownDate: '2026-09-01' }, c, 1000, now)[0].detail).toContain('지금 시장 상태(고점 부근)');
+  });
+
+  it('이정표 올해 할 일: 하락장이면 맞춤 처방과 같은 금액으로 채권형에서 먼저 꺼내기', () => {
+    const b = bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 });
+    const plan = bearPlan(-18, 800, 1000, b)!;
+    expect(plan).toEqual({ goal: 2000, usable: 800, short: 1200, bond: 700, fromBond: 700, left: 500, out: 300, outParts: { self: 300, spouse: 0 } });
+    expect(bearTodo(plan)).toBe('하락장: 주식형 매도 멈춤, 채권형에서 700만원 먼저 꺼내기 · 그래도 500만원 모자라 인출 줄이기(55세 전 연금계좌 채권형 300만원 제외)');
+    // 맞춤 처방과 같은 금액
+    expect(marketPrescription({ marketDrawdown: -18 }, { usable: 800 }, 1000, b, now)!.title).toBe('하락장: 주식형 매도 멈춤 — 채권형에서 700만원 먼저 꺼내기');
+    expect(bearTodo(bearPlan(-18, 800, 1000, 5000)!)).toBe('하락장: 주식형 매도 멈춤, 채권형에서 1,200만원 먼저 꺼내기');
+    expect(bearTodo(bearPlan(-18, 0, 1000, 0)!)).toBe('하락장: 주식형 매도 멈춤, 꺼낼 채권형이 없어 인출 줄이기');
+    expect(bearPlan(-14.9, 800, 1000, 700)).toBeNull();
+    expect(bearPlan(undefined, 800, 1000, 700)).toBeNull();
+    expect(bearPlan(-18, 2000, 1000, 700)).toBeNull();
+    expect(bearPlan(-18, 0, 0, 700)).toBeNull();
+    // 올해 할 일 맨 앞에만, 내년에는 넣지 않음
+    const d = sampleData(2026);
+    expect(yearTodos(d.profile, d.assets, 2026, 2026, [], 11, [], undefined, plan)[0]).toBe(bearTodo(plan));
+    expect(yearTodos(d.profile, d.assets, 2026, 2027, [], 11, [], undefined, plan).some((x) => x.startsWith('하락장'))).toBe(false);
+    expect(yearTodos(d.profile, d.assets, 2026, 2026, [], 11, [], undefined, null).some((x) => x.startsWith('하락장'))).toBe(false);
+  });
+
+  it('고점 부근 현금성 채우기: 맞춤 처방과 이정표 올해 할 일이 같은 금액', () => {
+    // 주식형 1,000만 중 본인 연금계좌 안 주식형 400만은 52세라 뺌 → 팔 수 있는 주식형 600만
+    const e = bondsOnHand(1000, { self: 400, spouse: 0 }, { self: 52 });
+    const plan = peakPlan(2, 800, 1000, e)!;
+    expect(plan).toEqual({ goal: 2000, usable: 800, short: 1200, equity: 600, fromEquity: 600, left: 600, out: 400, outParts: { self: 400, spouse: 0 } });
+    expect(peakTodo(plan)).toBe('고점 부근: 주식형 일부 팔아 현금성 600만원 채우기 · 그래도 600만원 모자라 저축으로 채우기(55세 전 연금계좌 주식형 400만원 제외)');
+    const rx = peakPrescription({ marketDrawdown: 2, marketDrawdownDate: '2026-11-10' }, { usable: 800 }, 1000, e, now)!;
+    expect(rx).toMatchObject({ area: '노후', level: 'caution', title: '고점 부근: 주식형 일부 팔아 현금성 600만원 채우기' });
+    expect(rx.detail).toContain('등락률(고점 대비 2%, 11월 10일 기준)이 고점 부근(0% 이상)입니다.');
+    expect(rx.detail).toContain('바로 쓸 돈 800만원은 첫해 인출(연 1,000만원) 기준 약 0.8년치로 2년치(2,000만원)에 1,200만원 모자랍니다.');
+    expect(rx.detail).toContain('주식형(지금 600만원) 가운데 600만원을 팔아');
+    expect(rx.detail).toContain('주식형을 다 팔아도 600만원이 모자라니 나머지는 저축으로 채우세요.');
+    expect(rx.detail).toContain(' 연금계좌 안 주식형 400만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.');
+    // 주식형이 넉넉하면 모자란 금액만, 없으면 저축으로
+    expect(peakTodo(peakPlan(0, 800, 1000, 5000)!)).toBe('고점 부근: 주식형 일부 팔아 현금성 1,200만원 채우기');
+    expect(peakPrescription({ marketDrawdown: 0 }, { usable: 800 }, 1000, 5000, now)!.title).toBe('고점 부근: 주식형 일부 팔아 현금성 1,200만원 채우기');
+    expect(peakTodo(peakPlan(3, 0, 1000, 0)!)).toBe('고점 부근: 팔 주식형이 없어 저축으로 현금성 2,000만원 채우기');
+    expect(peakPrescription({ marketDrawdown: 3 }, { usable: 0 }, 1000, 0, now)!.title).toBe('고점 부근: 팔 주식형이 없어 저축으로 현금성 2,000만원 채우기');
+    // 고점 부근이 아니거나(보통·하락장·입력 없음) 2년치가 있거나 인출이 없으면 없음
+    expect(peakPlan(-0.1, 800, 1000, 5000)).toBeNull();
+    expect(peakPlan(-18, 800, 1000, 5000)).toBeNull();
+    expect(peakPlan(undefined, 800, 1000, 5000)).toBeNull();
+    expect(peakPlan(2, 2000, 1000, 5000)).toBeNull();
+    expect(peakPlan(2, 0, 0, 5000)).toBeNull();
+    expect(peakPrescription({ marketDrawdown: -5 }, { usable: 0 }, 1000, 5000, now)).toBeNull();
+    // 연금계좌 안 주식형: 계좌 주인별(비율 기준)
+    const rows = [{ id: 1, name: 'IRP', type: 'pension', purpose: 'retire', owner: 'self', amount: 1000, alloc: { equity: 60, bond: 40, alt: 0, cash: 0 } }] as never;
+    expect(pensionClassParts(rows, false, 'equity')).toEqual({ self: 600, spouse: 0 });
+    // 올해 할 일 맨 앞(하락장 할 일과 함께 나오지는 않음), 내년에는 넣지 않음
+    const d = sampleData(2026);
+    expect(yearTodos(d.profile, d.assets, 2026, 2026, [], 11, [], undefined, null, plan)[0]).toBe(peakTodo(plan));
+    expect(yearTodos(d.profile, d.assets, 2026, 2027, [], 11, [], undefined, null, plan).some((x) => x.startsWith('고점 부근'))).toBe(false);
+  });
+
+  it('하락장 처방 채권형: 인출 시작 해에 55세 전인 계좌 주인의 연금계좌 안 채권형은 뺌', () => {
+    const pension = (owner: 'self' | 'spouse', amount: number, bond: number) => ({ id: 1, name: owner === 'self' ? 'IRP' : '배우자 연금저축', type: 'pension', purpose: 'retire', owner, amount, alloc: { equity: 100 - bond, bond, alt: 0, cash: 0 } });
+    const rows = [pension('self', 1000, 30), pension('spouse', 500, 40), { id: 3, name: '예금', type: 'deposit', purpose: 'short', amount: 900 }] as never;
+    expect(pensionBondParts(rows, true)).toEqual({ self: 300, spouse: 200 });
+    expect(pensionBondParts(rows, false)).toEqual({ self: 500, spouse: 0 });
+    // 본인 52세(제외), 배우자 56세(포함)
+    const b = bondsOnHand(1000, { self: 300, spouse: 200 }, { self: 52, spouse: 56 });
+    expect(b).toEqual({ total: 1000, usable: 700, out: 300, outParts: { self: 300, spouse: 0 } });
+    expect(pensionBondOutNote(b)).toBe(' 연금계좌 안 채권형 300만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.');
+    expect(pensionBondOutNote(bondsOnHand(1000, { self: 300, spouse: 200 }, { self: 56, spouse: 50 }))).toBe(' 배우자 연금계좌 안 채권형 200만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.');
+    expect(pensionBondOutNote(bondsOnHand(1000, { self: 300, spouse: 200 }, { self: 50, spouse: 50 }))).toBe(' 연금계좌 안 채권형 500만원(본인 300만원, 배우자 200만원)은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.');
+    expect(pensionBondOutNote(bondsOnHand(1000, { self: 300, spouse: 200 }))).toBe('');
+    const rx = marketPrescription({ marketDrawdown: -18, marketDrawdownDate: '2026-11-10' }, { usable: 800 }, 1000, b, now)!;
+    expect(rx.title).toBe('하락장: 주식형 매도 멈춤 — 채권형에서 700만원 먼저 꺼내기');
+    expect(rx.detail).toContain('채권형(지금 700만원)에서 700만원을 먼저 꺼내 쓰세요.');
+    expect(rx.detail).toContain('채권형을 다 꺼내도 500만원이 모자라니');
+    expect(rx.detail).toContain(' 연금계좌 안 채권형 300만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.');
   });
 
   it('하락장 처방: 바로 쓸 돈이 2년치에 못 미치면 채권형부터 꺼낼 금액', () => {

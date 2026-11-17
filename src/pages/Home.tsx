@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Donut } from '../components/Donut';
-import { SetupLink } from '../components/SetupLink';
+import { CardLink, SetupLink } from '../components/SetupLink';
 import { Badge, Bar, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { pct, won } from '../lib/format';
 import { GOAL_KIND_LABEL, retireDebtAt, GOAL_KINDS, goalBreakdownAt, pensionAt, retireOutflowAt } from '../engine/montecarlo';
@@ -16,8 +16,9 @@ export default function Home() {
   if (!d.hasData) return <><PageHeader title="내 자산 한눈에" /><EmptyState /></>;
   const s = d.summary;
   const scoreLevel: Level = d.score.total >= 75 ? 'good' : d.score.total >= 50 ? 'caution' : 'danger';
-  // 위험 먼저(정렬이 안정적이라 맨 앞의 ‘만기 나이 입력 필요’는 그대로 맨 앞)
-  const alerts = d.checks.filter((c) => c.level !== 'good').sort((a, b) => (a.level === 'danger' ? -1 : 0) - (b.level === 'danger' ? -1 : 0)).slice(0, 3);
+  // 위험 먼저, 참고 항목은 맨 뒤(정렬이 안정적이라 맨 앞의 ‘만기 나이 입력 필요’는 그대로 맨 앞)
+  const rank = (c: (typeof d.checks)[number]) => (c.level === 'danger' ? 0 : c.badge ? 2 : 1);
+  const alerts = d.checks.filter((c) => c.level !== 'good').sort((a, b) => rank(a) - rank(b)).slice(0, 3);
   // 이미 은퇴했으면 노후 진단과 같은 방식(생활비 − 연금·소득 + 대출 = 금융자산 인출, 첫해 실질 월액)
   const retiredFlow = d.start.retired
     ? (() => {
@@ -152,10 +153,10 @@ export default function Home() {
             <ul className="divide-y divide-line">
               {alerts.map((a) => (
                 <li key={a.key} className="flex items-start gap-3 py-2.5 first:pt-0 last:pb-0">
-                  <Badge level={a.level} />
+                  <Badge level={a.level}>{a.badge}</Badge>
                   <div className="min-w-0">
                     <div className="text-sm font-semibold">{a.label} · {a.value}</div>
-                    <div className="text-xs text-muted">{a.detail}</div>
+                    <div className="text-xs text-muted">{a.detail}{a.link && <> <CardLink to={a.link.to} card={a.link.card}>{a.link.text}</CardLink></>}</div>
                   </div>
                 </li>
               ))}

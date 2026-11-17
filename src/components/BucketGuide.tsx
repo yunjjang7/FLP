@@ -1,6 +1,6 @@
 import { Fragment, useMemo } from 'react';
 import { db } from '../db/db';
-import { accountBuckets, BEAR_DROP, MARKET_INPUT_HELP, marketDateNote, ymd, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
+import { accountBuckets, BEAR_DROP, MARKET_INPUT_HELP, marketDateNote, pensionBondOutNote, pensionEquityOutNote, ymd, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
 import { classAmounts, hasAlloc } from '../engine/allocation';
 import { useFlp } from '../store/FlpContext';
 import { SetupLink } from './SetupLink';
@@ -14,7 +14,7 @@ import { Card } from './ui';
  * 연금 세금 계산이 있으면 계좌마다 그 계좌에서 빠져나갈 금액으로 바구니 목표를 따로 보여 줌.
  */
 export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst = false }: { firstNeed: number; balance: number; tax: TaxResult | null; hasSpouse: boolean; partialFirst?: boolean }) {
-  const { assets, cash: hand, runCash, start, profile } = useFlp();
+  const { assets, cash: hand, runCash, start, profile, bear, peak } = useFlp();
   // 대체자산 목표 비중 기본값: 연금계좌에 비율을 넣었으면 지금 대체자산 비중(반올림), 아니면 10%
   // 두 칸은 프로필에 저장(화면을 옮겨도 유지). 넣은 적이 없으면 기본값
   const altDefault = useMemo(() => {
@@ -94,6 +94,19 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
         </Labeled>
         <div className={`self-start rounded-xl px-3 py-2.5 text-sm sm:col-span-2 ${rule.state === 'bear' ? 'bg-bad-soft' : rule.state === 'peak' ? 'bg-good-soft' : 'bg-sunken'}`}>
           <b>지금 적용할 규칙</b> — {rule.text}
+          {/* 맞춤 처방·이정표 할 일과 같은 금액(FlpContext bear·peak) */}
+          {rule.state === 'bear' && bear && (
+            <div className="mt-1">
+              {bear.fromBond > 0.5 ? <>채권형에서 <b>{won(bear.fromBond)}</b> 먼저 꺼내기</> : <>꺼낼 채권형이 없어 인출 줄이기</>}
+              <span className="text-xs"> — 바로 쓸 돈 {won(bear.usable)}이 첫해 인출 기준 2년치({won(bear.goal)})에 {won(bear.short)} 모자랍니다.{bear.left > 0.5 && bear.fromBond > 0.5 ? ` 채권형을 다 꺼내도 ${won(bear.left)} 모자라니 인출을 줄이세요.` : ''}{pensionBondOutNote(bear)}</span>
+            </div>
+          )}
+          {rule.state === 'peak' && peak && (
+            <div className="mt-1">
+              {peak.fromEquity > 0.5 ? <>주식형 일부 팔아 현금성 <b>{won(peak.fromEquity)}</b> 채우기</> : <>팔 주식형이 없어 저축으로 현금성 <b>{won(peak.short)}</b> 채우기</>}
+              <span className="text-xs"> — 바로 쓸 돈 {won(peak.usable)}이 첫해 인출 기준 2년치({won(peak.goal)})에 {won(peak.short)} 모자랍니다.{peak.left > 0.5 && peak.fromEquity > 0.5 ? ` 주식형을 다 팔아도 ${won(peak.left)} 모자라니 나머지는 저축으로 채우세요.` : ''}{pensionEquityOutNote(peak)}</span>
+            </div>
+          )}
           {bearYears.length > 0 && (
             <div className="mt-1 text-xs">
               지금 담은 현금성+채권형으로 주식을 팔지 않고 버틸 수 있는 기간:{' '}

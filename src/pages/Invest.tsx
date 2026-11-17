@@ -1,7 +1,7 @@
 import { Bar as RBar, BarChart, CartesianGrid, Cell, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis } from 'recharts';
 import { Donut } from '../components/Donut';
 import { RebalanceCard } from '../components/RebalanceCard';
-import { SetupLink } from '../components/SetupLink';
+import { CardLink, SetupLink } from '../components/SetupLink';
 import { Badge, Bar, CHART_COLORS, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { ASSET_TYPES, NATURE_LABEL, PURPOSE_LABEL, RISK_PROFILES } from '../engine/portfolio';
 import { ASSET_CLASSES, allocOf, CLASS_LABEL, hasAlloc, IRP_RISK_CAP, isCappedAsset, riskPct } from '../engine/allocation';
@@ -15,8 +15,9 @@ export default function Invest() {
   const s = d.summary;
   const target = RISK_PROFILES[d.profile.riskProfile];
   const fin = d.assets.filter((a) => a.type !== 'realestate');
-  const counts = { good: 0, caution: 0, danger: 0 };
-  d.checks.forEach((c) => counts[c.level]++);
+  // 참고 항목(badge ‘참고’, 예: 등락률 다시 입력 필요)은 주의 개수에 세지 않고 따로
+  const counts = { good: 0, caution: 0, danger: 0, note: 0 };
+  d.checks.forEach((c) => (c.badge === '참고' ? counts.note++ : counts[c.level]++));
   const safe = 100 - s.investShare;
 
   return (
@@ -33,6 +34,7 @@ export default function Invest() {
             <Badge level="good">양호 {counts.good}</Badge>
             <Badge level="caution">주의 {counts.caution}</Badge>
             <Badge level="danger">위험 {counts.danger}</Badge>
+            {counts.note > 0 && <span className="inline-flex shrink-0 items-center rounded-full bg-sunken px-2 py-0.5 text-xs font-semibold text-muted">참고 {counts.note}</span>}
           </div>
         </Card>
       </div>
@@ -41,13 +43,13 @@ export default function Invest() {
         <ul className="divide-y divide-line">
           {d.checks.map((c) => (
             <li key={c.key} className="flex items-start gap-3 py-3 first:pt-0 last:pb-0">
-              <Badge level={c.level} />
+              <Badge level={c.level}>{c.badge}</Badge>
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-baseline justify-between gap-x-3">
                   <span className="text-sm font-semibold">{c.label}</span>
                   <span className="text-sm font-bold">{c.value}</span>
                 </div>
-                <p className="text-xs text-muted">{c.detail}</p>
+                <p className="text-xs text-muted">{c.detail}{c.link && <> <CardLink to={c.link.to} card={c.link.card}>{c.link.text}</CardLink></>}</p>
               </div>
             </li>
           ))}
