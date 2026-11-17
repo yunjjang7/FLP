@@ -9,7 +9,7 @@ import { contribSchedule, creditInflows, hiDependent, hiPropMonthly, hiPropShare
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
-import { accountBuckets, bearPlan, bondsOnHand, cashOnHand, cashShortText, normalPlan, peakPlan, pensionBondOutNote, pensionBondParts, pensionClassParts, isRiskCapped, MARKET_INPUT_HELP, marketDateNote, marketRule, marketState, ymd } from './buckets';
+import { accountBuckets, bearPlan, bondsOnHand, cashOnHand, cashShortText, normalPlan, peakPlan, pensionBondOutNote, rebalanceTiming, pensionBondParts, pensionClassParts, isRiskCapped, MARKET_INPUT_HELP, marketDateNote, marketRule, marketState, ymd } from './buckets';
 import { bearTodo, milestones, normalTodo, peakTodo, monthsUntil, pensionOpenMonth, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, marketPrescription, normalPrescription, peakPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
@@ -1516,6 +1516,31 @@ describe('인출 바구니 등락률: 입력 날짜·하락장 홈 점검', () =
     expect(old.link).toEqual({ to: '/withdraw', card: '인출용 자산 배치 가이드', text: '인출용 자산 배치 가이드로 가기' });
   });
 
+  it('하락장 홈 점검: 채권형을 넘기면 bearPlan 기준 ‘채권형 ○원 먼저 꺼내기’와 2년치 부족 문장', () => {
+    const c = cashOnHand([{ id: 1, name: '파킹통장', type: 'cash', purpose: 'short', amount: 800 }] as never, 2026, 11);
+    // 채권형 1,000만 중 본인 연금계좌 안 채권형 300만은 52세라 뺌 → 700만 먼저 꺼냄, 그래도 500만 모자람
+    const b = bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 });
+    const [chk] = marketChecks({ marketDrawdown: -18, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 0, b);
+    expect(chk).toMatchObject({ key: 'marketBear', label: '하락장: 주식형 매도 멈춤', value: '채권형 700만원 먼저 꺼내기', level: 'caution', link: { to: '/withdraw', card: '인출용 자산 배치 가이드', text: '인출용 자산 배치 가이드로 가기' } });
+    expect(chk.detail).toContain('등락률(11월 10일 기준) 기준 하락장(고점 대비 -18%): 주식형 매도를 멈추고');
+    expect(chk.detail).toContain(` ${cashShortText({ usable: 800, goal: 2000, short: 1200 }, 1000)}`);
+    expect(chk.detail).toContain('바로 쓸 돈 800만원은 첫해 인출(연 1,000만원) 기준 약 0.8년치로 2년치(2,000만원)에 1,200만원 모자랍니다. 주식형은 팔지 말고 채권형 가운데 700만원을 먼저 꺼내 쓰세요. 채권형을 다 꺼내도 500만원 모자라니 회복할 때까지 인출을 줄이세요.');
+    expect(chk.detail.endsWith(pensionBondOutNote(b))).toBe(true);
+    expect(chk.detail.endsWith(' 연금계좌 안 채권형 300만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.')).toBe(true);
+    // 맞춤 처방과 같은 금액
+    expect(marketPrescription({ marketDrawdown: -18 }, c, 1000, b, now)!.title).toBe('하락장: 주식형 매도 멈춤 — 채권형에서 700만원 먼저 꺼내기');
+    // 채권형이 없으면 인출 줄이기
+    const [none] = marketChecks({ marketDrawdown: -20 }, cashOnHand([], 2026, 11), 1000, now, 0, 0);
+    expect(none.value).toBe('인출 줄이기');
+    expect(none.detail).toContain('바로 쓸 현금성이 없어 첫해 인출(연 1,000만원) 기준 2년치(2,000만원)가 모두 모자랍니다. 꺼낼 채권형이 없어 회복할 때까지 인출을 줄이세요.');
+    // 2년치가 있으면 지금처럼 고점 대비 등락률과 버틸 햇수
+    const rich = cashOnHand([{ id: 1, name: '파킹통장', type: 'cash', purpose: 'short', amount: 2500 }] as never, 2026, 11);
+    const [ok] = marketChecks({ marketDrawdown: -18, marketDrawdownDate: '2026-11-10' }, rich, 1000, now, 0, b);
+    expect(ok.value).toBe('고점 대비 -18%');
+    expect(ok.detail).toContain('바로 쓸 돈 2,500만원으로 첫해 인출(연 1,000만원) 기준 약 2.5년치 버틸 수 있습니다.');
+    expect(ok.detail).not.toContain('모자랍니다');
+  });
+
   it('하락장이 아니어도 30일이 지나면 홈 점검에 ‘등락률 다시 입력 필요’(참고)', () => {
     const c = cashOnHand([], 2026, 11);
     expect(marketChecks({ marketDrawdown: -5, marketDrawdownDate: '2026-10-18' }, c, 1000, now)).toEqual([]);
@@ -1553,17 +1578,23 @@ describe('인출 바구니 등락률: 입력 날짜·하락장 홈 점검', () =
     expect(marketChecks({ marketDrawdown: 2, marketDrawdownDate: '2026-11-10' }, c, 1000, now)).toEqual([]);
   });
 
-  it('보통(0%와 −15% 사이)이고 바로 쓸 돈이 2년치에 못 미치면 홈 점검에 ‘보통: 1월 리밸런싱 때 현금성 채우기’', () => {
+  it('보통(0%와 −15% 사이)이고 바로 쓸 돈이 2년치에 못 미치면 홈 점검에 ‘보통: (내년) 1월 리밸런싱 때 현금성 채우기’', () => {
     const c = cashOnHand([{ id: 1, name: '파킹통장', type: 'cash', purpose: 'short', amount: 800 }] as never, 2026, 11);
     // 채권형 1,000만 중 본인 연금계좌 안 채권형 300만은 52세라 뺌 → 700만 옮기기, 그래도 500만 모자람
     const b = bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 });
+    // 오늘이 11월이라 다음 1월 리밸런싱은 내년(2027년 1월)
     const [chk] = marketChecks({ marketDrawdown: -5, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 0, b);
-    expect(chk).toMatchObject({ key: 'marketNormal', label: '보통: 1월 리밸런싱 때 현금성 채우기', value: '채권형 700만원 옮기기', level: 'caution', link: { to: '/withdraw', card: '인출용 자산 배치 가이드', text: '인출용 자산 배치 가이드로 가기' } });
+    expect(chk).toMatchObject({ key: 'marketNormal', label: '보통: 내년 1월 리밸런싱 때 현금성 채우기', value: '채권형 700만원 옮기기', level: 'caution', link: { to: '/withdraw', card: '인출용 자산 배치 가이드', text: '인출용 자산 배치 가이드로 가기' } });
     expect(chk.badge).toBeUndefined();
     expect(chk.detail).toContain('등락률(고점 대비 -5%, 11월 10일 기준) 기준 보통(고점 대비 -5%)');
     expect(chk.detail).toContain('바로 쓸 돈 800만원은 첫해 인출(연 1,000만원) 기준 약 0.8년치로 2년치(2,000만원)에 1,200만원 모자랍니다.');
-    expect(chk.detail).toContain(' 1월 리밸런싱 때 채권형 가운데 700만원을 현금성 바구니로 옮기세요. 채권형을 다 옮겨도 500만원 모자라니 나머지는 저축으로 채우세요.');
+    expect(chk.detail).toContain(' 내년 1월 리밸런싱(2027년 1월) 때 채권형 가운데 700만원을 현금성 바구니로 옮기세요. 채권형을 다 옮겨도 500만원 모자라니 나머지는 저축으로 채우세요.');
     expect(chk.detail.endsWith(' 연금계좌 안 채권형 300만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.')).toBe(true);
+    // 1월이면 올해 1월 리밸런싱 문구 그대로
+    const [jan] = marketChecks({ marketDrawdown: -5, marketDrawdownDate: '2026-01-10' }, c, 1000, new Date(2026, 0, 15), 0, b);
+    expect(jan.label).toBe('보통: 1월 리밸런싱 때 현금성 채우기');
+    expect(jan.detail).toContain(' 1월 리밸런싱 때 채권형 가운데 700만원을 현금성 바구니로 옮기세요.');
+    expect(jan.detail).not.toContain('내년');
     // 옮길 채권형이 없으면 저축으로, 오래된 입력이면 같은 설명에 재입력 안내(따로 띄우지 않음)
     const none = marketChecks({ marketDrawdown: -14.9, marketDrawdownDate: '2026-09-01' }, cashOnHand([], 2026, 11), 1000, now, 0, 0);
     expect(none.map((x) => x.key)).toEqual(['marketNormal']);
@@ -1606,20 +1637,27 @@ describe('인출 바구니 등락률: 입력 날짜·하락장 홈 점검', () =
     expect(marketChecks({ marketDrawdown: -5 }, cashOnHand([], 2026, 11), 1000, now, 0, 0)[0].link).toEqual(link);
   });
 
-  it('보통 구간 맞춤 처방: 1월 리밸런싱 때 채권형에서 현금성 옮길 금액', () => {
+  it('보통 구간 맞춤 처방: (내년) 1월 리밸런싱 때 채권형에서 현금성 옮길 금액', () => {
     const b = bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 });
+    // 오늘이 11월이라 내년 1월 리밸런싱
     const rx = normalPrescription({ marketDrawdown: -5, marketDrawdownDate: '2026-11-10' }, { usable: 800 }, 1000, b, now)!;
-    expect(rx).toMatchObject({ area: '노후', level: 'caution', title: '보통: 1월 리밸런싱 때 채권형에서 현금성 700만원 옮기기' });
+    expect(rx).toMatchObject({ area: '노후', level: 'caution', title: '보통: 내년 1월 리밸런싱(2027년 1월) 때 채권형에서 현금성 700만원 옮기기' });
     expect(rx.detail).toContain('등락률(고점 대비 -5%, 11월 10일 기준)이 보통(0%와 −15% 사이)입니다.');
     expect(rx.detail).toContain('바로 쓸 돈 800만원은 첫해 인출(연 1,000만원) 기준 약 0.8년치로 2년치(2,000만원)에 1,200만원 모자랍니다.');
-    expect(rx.detail).toContain('1월 리밸런싱 때 채권형(지금 700만원) 가운데 700만원을 입출금·파킹통장·MMF 같은 현금성 바구니로 옮겨 두면');
+    expect(rx.detail).toContain(' 내년 1월 리밸런싱(2027년 1월) 때 채권형(지금 700만원) 가운데 700만원을 입출금·파킹통장·MMF 같은 현금성 바구니로 옮겨 두면');
     expect(rx.detail).toContain('채권형을 다 옮겨도 500만원이 모자라니 나머지는 저축으로 채우세요.');
     expect(rx.detail.endsWith(' 연금계좌 안 채권형 300만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.')).toBe(true);
-    // 홈 점검·이정표와 같은 금액
-    expect(normalTodo(normalPlan(-5, 800, 1000, b)!).startsWith('1월 리밸런싱 때 채권형에서 현금성 700만원 옮기기')).toBe(true);
-    expect(normalPrescription({ marketDrawdown: -0.1 }, { usable: 800 }, 1000, 5000, now)!.title).toBe('보통: 1월 리밸런싱 때 채권형에서 현금성 1,200만원 옮기기');
+    // 홈 점검·이정표와 같은 금액·시점
+    expect(normalTodo(normalPlan(-5, 800, 1000, b, now)!).startsWith('내년 1월 리밸런싱(2027년 1월) 때 채권형에서 현금성 700만원 옮기기')).toBe(true);
+    expect(normalPrescription({ marketDrawdown: -0.1 }, { usable: 800 }, 1000, 5000, now)!.title).toBe('보통: 내년 1월 리밸런싱(2027년 1월) 때 채권형에서 현금성 1,200만원 옮기기');
+    // 1월이면 올해 1월 리밸런싱 문구 그대로
+    const jan = new Date(2026, 0, 15);
+    const rxJan = normalPrescription({ marketDrawdown: -5 }, { usable: 800 }, 1000, 5000, jan)!;
+    expect(rxJan.title).toBe('보통: 1월 리밸런싱 때 채권형에서 현금성 1,200만원 옮기기');
+    expect(rxJan.detail).toContain(' 1월 리밸런싱 때 채권형(지금 5,000만원) 가운데 1,200만원을');
     const none = normalPrescription({ marketDrawdown: -14.9 }, { usable: 0 }, 1000, 0, now)!;
-    expect(none.title).toBe('보통: 1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기');
+    expect(none.title).toBe('보통: 내년 1월 리밸런싱(2027년 1월) 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기');
+    expect(normalPrescription({ marketDrawdown: -14.9 }, { usable: 0 }, 1000, 0, jan)!.title).toBe('보통: 1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기');
     expect(none.detail).toContain('옮길 채권형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요.');
     // 보통이 아니거나 입력이 없거나 2년치가 있으면 없음
     expect(normalPrescription({ marketDrawdown: 0 }, { usable: 0 }, 1000, 5000, now)).toBeNull();
@@ -1685,22 +1723,39 @@ describe('인출 바구니 등락률: 입력 날짜·하락장 홈 점검', () =
   it('보통 구간 현금성: 1월 리밸런싱 때 채권형에서 옮길 금액(55세 전 연금계좌 채권형 제외)', () => {
     // 채권형 1,000만 중 본인 연금계좌 안 채권형 300만은 52세라 뺌 → 700만 옮김, 그래도 500만 모자람
     const b = bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 });
-    const plan = normalPlan(-5, 800, 1000, b)!;
-    expect(plan).toEqual({ goal: 2000, usable: 800, short: 1200, bond: 700, fromBond: 700, left: 500, out: 300, outParts: { self: 300, spouse: 0 } });
+    const jan = new Date(2026, 0, 15);
+    const plan = normalPlan(-5, 800, 1000, b, jan)!;
+    expect(plan).toEqual({ goal: 2000, usable: 800, short: 1200, bond: 700, fromBond: 700, left: 500, out: 300, outParts: { self: 300, spouse: 0 }, nextYear: false, when: '1월 리밸런싱' });
     expect(normalTodo(plan)).toBe('1월 리밸런싱 때 채권형에서 현금성 700만원 옮기기 · 그래도 500만원 모자라 저축으로 채우기(55세 전 연금계좌 채권형 300만원 제외)');
-    expect(normalTodo(normalPlan(-0.1, 800, 1000, 5000)!)).toBe('1월 리밸런싱 때 채권형에서 현금성 1,200만원 옮기기');
-    expect(normalTodo(normalPlan(-14.9, 0, 1000, 0)!)).toBe('1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기');
+    expect(normalTodo(normalPlan(-0.1, 800, 1000, 5000, jan)!)).toBe('1월 리밸런싱 때 채권형에서 현금성 1,200만원 옮기기');
+    expect(normalTodo(normalPlan(-14.9, 0, 1000, 0, jan)!)).toBe('1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기');
     // 보통이 아니거나(고점 부근·하락장·입력 없음) 2년치가 있거나 인출이 없으면 없음
-    expect(normalPlan(0, 800, 1000, 5000)).toBeNull();
-    expect(normalPlan(-15, 800, 1000, 5000)).toBeNull();
-    expect(normalPlan(undefined, 800, 1000, 5000)).toBeNull();
-    expect(normalPlan(-5, 2000, 1000, 5000)).toBeNull();
-    expect(normalPlan(-5, 0, 0, 5000)).toBeNull();
-    // 올해 할 일 맨 앞에만, 내년에는 넣지 않음
+    expect(normalPlan(0, 800, 1000, 5000, now)).toBeNull();
+    expect(normalPlan(-15, 800, 1000, 5000, now)).toBeNull();
+    expect(normalPlan(undefined, 800, 1000, 5000, now)).toBeNull();
+    expect(normalPlan(-5, 2000, 1000, 5000, now)).toBeNull();
+    expect(normalPlan(-5, 0, 0, 5000, now)).toBeNull();
+    // 1월이면 올해 할 일 맨 앞에만, 내년에는 넣지 않음
     const d = sampleData(2026);
-    expect(yearTodos(d.profile, d.assets, 2026, 2026, [], 11, [], undefined, null, null, plan)[0]).toBe(normalTodo(plan));
-    expect(yearTodos(d.profile, d.assets, 2026, 2027, [], 11, [], undefined, null, null, plan).some((x) => x.startsWith('1월 리밸런싱 때'))).toBe(false);
-    expect(yearTodos(d.profile, d.assets, 2026, 2026, [], 11, [], undefined, null, null, null).some((x) => x.startsWith('1월 리밸런싱 때'))).toBe(false);
+    expect(yearTodos(d.profile, d.assets, 2026, 2026, [], 1, [], undefined, null, null, plan)[0]).toBe(normalTodo(plan));
+    expect(yearTodos(d.profile, d.assets, 2026, 2027, [], 1, [], undefined, null, null, plan).some((x) => x.includes('1월 리밸런싱'))).toBe(false);
+    expect(yearTodos(d.profile, d.assets, 2026, 2026, [], 11, [], undefined, null, null, null).some((x) => x.includes('1월 리밸런싱'))).toBe(false);
+  });
+
+  it('보통 구간 현금성: 2월부터는 내년 1월 리밸런싱 때로 보고 이정표 내년 할 일 맨 앞에', () => {
+    expect(rebalanceTiming(new Date(2026, 0, 31))).toEqual({ nextYear: false, when: '1월 리밸런싱' });
+    expect(rebalanceTiming(new Date(2026, 1, 1))).toEqual({ nextYear: true, when: '내년 1월 리밸런싱(2027년 1월)' });
+    expect(rebalanceTiming(new Date(2026, 11, 31))).toEqual({ nextYear: true, when: '내년 1월 리밸런싱(2027년 1월)' });
+    const b = bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 });
+    const plan = normalPlan(-5, 800, 1000, b, now)!;
+    expect(plan).toMatchObject({ fromBond: 700, nextYear: true, when: '내년 1월 리밸런싱(2027년 1월)' });
+    expect(normalTodo(plan)).toBe('내년 1월 리밸런싱(2027년 1월) 때 채권형에서 현금성 700만원 옮기기 · 그래도 500만원 모자라 저축으로 채우기(55세 전 연금계좌 채권형 300만원 제외)');
+    expect(normalTodo(normalPlan(-14.9, 0, 1000, 0, now)!)).toBe('내년 1월 리밸런싱(2027년 1월) 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기');
+    // 올해 할 일에는 넣지 않고 내년 할 일 맨 앞에
+    const d = sampleData(2026);
+    expect(yearTodos(d.profile, d.assets, 2026, 2026, [], 11, [], undefined, null, null, plan).some((x) => x.includes('1월 리밸런싱'))).toBe(false);
+    expect(yearTodos(d.profile, d.assets, 2026, 2027, [], 11, [], undefined, null, null, plan)[0]).toBe(normalTodo(plan));
+    expect(yearTodos(d.profile, d.assets, 2026, 2028, [], 11, [], undefined, null, null, plan).some((x) => x.includes('1월 리밸런싱'))).toBe(false);
   });
 
   it('하락장 처방 채권형: 인출 시작 해에 55세 전인 계좌 주인의 연금계좌 안 채권형은 뺌', () => {

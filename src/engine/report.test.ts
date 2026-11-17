@@ -62,15 +62,19 @@ describe('요약 보고 시장 상태 문장', () => {
     expect(marketLine({ marketDrawdown: -5 }, now, null, plan)!.text).not.toContain('지금 할 일');
   });
 
-  it('보통 구간이고 2년치에 못 미치면 1월 리밸런싱 때 채권형에서 현금성 옮길 금액', () => {
+  it('보통 구간이고 2년치에 못 미치면 (내년) 1월 리밸런싱 때 채권형에서 현금성 옮길 금액', () => {
     const p = { marketDrawdown: -5, marketDrawdownDate: '2026-11-10' };
-    const plan = normalPlan(-5, 800, 1000, bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 }))!;
+    // 오늘이 11월이라 내년 1월 리밸런싱
+    const plan = normalPlan(-5, 800, 1000, bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 }), now)!;
     const line = marketLine(p, now, null, null, plan)!;
     expect(line.level).toBe('caution');
     expect(line.text).toContain('지금 시장 상태는 보통입니다.');
-    expect(line.text.endsWith(' 바로 쓸 돈 800만원이 첫해 인출 기준 2년치(2,000만원)에 1,200만원 모자라니 지금 할 일: 1월 리밸런싱 때 채권형에서 현금성 700만원 옮기기, 채권형을 다 옮겨도 모자란 500만원은 저축으로. 55세 전 연금계좌 안 채권형 300만원은 연금계좌에서 꺼내기 어려워 옮길 금액에서 뺐습니다.')).toBe(true);
-    expect(marketLine(p, now, null, null, normalPlan(-5, 800, 1000, 5000))!.text.endsWith('지금 할 일: 1월 리밸런싱 때 채권형에서 현금성 1,200만원 옮기기.')).toBe(true);
-    expect(marketLine(p, now, null, null, normalPlan(-5, 0, 1000, 0))!.text).toContain('지금 할 일: 1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기.');
+    expect(line.text.endsWith(' 바로 쓸 돈 800만원이 첫해 인출 기준 2년치(2,000만원)에 1,200만원 모자라니 지금 할 일: 내년 1월 리밸런싱(2027년 1월) 때 채권형에서 현금성 700만원 옮기기, 채권형을 다 옮겨도 모자란 500만원은 저축으로. 55세 전 연금계좌 안 채권형 300만원은 연금계좌에서 꺼내기 어려워 옮길 금액에서 뺐습니다.')).toBe(true);
+    expect(marketLine(p, now, null, null, normalPlan(-5, 800, 1000, 5000, now))!.text.endsWith('지금 할 일: 내년 1월 리밸런싱(2027년 1월) 때 채권형에서 현금성 1,200만원 옮기기.')).toBe(true);
+    expect(marketLine(p, now, null, null, normalPlan(-5, 0, 1000, 0, now))!.text).toContain('지금 할 일: 내년 1월 리밸런싱(2027년 1월) 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기.');
+    // 1월이면 올해 1월 리밸런싱 문구 그대로
+    const jan = new Date(2026, 0, 15);
+    expect(marketLine({ marketDrawdown: -5, marketDrawdownDate: '2026-01-10' }, jan, null, null, normalPlan(-5, 800, 1000, 5000, jan))!.text.endsWith('지금 할 일: 1월 리밸런싱 때 채권형에서 현금성 1,200만원 옮기기.')).toBe(true);
     // 계획이 없으면(2년치가 있음) 덧붙이지 않고 주의도 아님
     expect(marketLine(p, now, null, null, null)!.level).toBeUndefined();
     // 보고서 자산과 부채 섹션에도 같은 문장
@@ -157,12 +161,32 @@ describe('요약 보고 시장 상태 문장', () => {
     expect(lines).toHaveLength(7);
     expect(lines[6].level).toBe('caution');
     expect(lines[6].text).toBe(`${normal.title}: ${normal.detail}`);
-    expect(lines[6].text.startsWith('보통: 1월 리밸런싱 때 채권형에서 현금성 700만원 옮기기: ')).toBe(true);
+    expect(lines[6].text.startsWith('보통: 내년 1월 리밸런싱(2027년 1월) 때 채권형에서 현금성 700만원 옮기기: ')).toBe(true);
     expect(lines[6].text.endsWith(' 연금계좌 안 채권형 300만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.')).toBe(true);
     // 옮길 채권형이 없는 제목도 잘리지 않음
     const none = normalPrescription(p, { usable: 0 }, 1000, 0, now)!;
     const rep2 = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [...others, none], nowYear: 2026, now });
-    expect(rep2.find((x) => x.title === '5. 권장 대응')!.lines.at(-1)!.text.startsWith('보통: 1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기: ')).toBe(true);
+    expect(rep2.find((x) => x.title === '5. 권장 대응')!.lines.at(-1)!.text.startsWith('보통: 내년 1월 리밸런싱(2027년 1월) 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기: ')).toBe(true);
+    // 1월 제목(‘보통: 1월 리밸런싱 때 …’)도 잘리지 않음
+    const jan = normalPrescription(p, { usable: 800 }, 1000, 5000, new Date(2026, 0, 15))!;
+    const rep3 = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [...others, jan], nowYear: 2026, now });
+    expect(rep3.find((x) => x.title === '5. 권장 대응')!.lines.at(-1)!.text.startsWith('보통: 1월 리밸런싱 때 채권형에서 현금성 1,200만원 옮기기: ')).toBe(true);
+  });
+
+  it('하락장·고점 부근·보통 구간 점검은 점검 항목에서 빼고 자산과 부채 문장·권장 대응 처방에만', () => {
+    const d = sampleData(2026);
+    const c = cashOnHand([{ id: 1, name: '파킹통장', type: 'cash', purpose: 'short', amount: 800 }] as never, 2026, 11);
+    for (const dd of [-18, 2, -5]) {
+      const p = { ...d.profile, marketDrawdown: dd, marketDrawdownDate: '2026-11-10' };
+      const s = summarize(p, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+      const inp = buildPlanInput(p, d.assets, d.liabilities, d.goals, s);
+      const checks = marketChecks(p, c, 1000, now, 5000, 5000);
+      expect(checks.map((x) => x.key)).toEqual([dd === -18 ? 'marketBear' : dd === 2 ? 'marketPeak' : 'marketNormal']);
+      const rep = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks, rx: [], nowYear: 2026, now });
+      const risk = rep.find((x) => x.title === '4. 점검이 필요한 항목')!;
+      expect(risk.lines.some((l) => l.text.startsWith(checks[0].label))).toBe(false);
+      expect(risk.lines[0].text).toBe('주의나 위험으로 나온 점검 항목이 없습니다.');
+    }
   });
 
   it('자산과 부채 섹션에 들어감', () => {

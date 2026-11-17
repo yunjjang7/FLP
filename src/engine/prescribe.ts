@@ -189,25 +189,25 @@ export function peakPrescription(profile: Pick<Profile, 'marketDrawdown' | 'mark
 }
 
 /** 보통 구간 처방 제목 앞부분(요약 보고 권장 대응에서 6개를 넘어도 남길 때 씀) */
-export const NORMAL_RX_TITLE = '보통: 1월 리밸런싱 때';
+export const NORMAL_RX_TITLE = '보통: ';
 
 /**
  * 보통 구간 처방: 저장한 등락률이 0%와 −15% 사이이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면,
- * 1월 리밸런싱 때 모자란 금액을 채권형에서 현금성 바구니로 옮기라고 안내(normalPlan, 55세 전 연금계좌 안 채권형 뺌).
+ * 다음 1월 리밸런싱 때(2월부터는 내년 1월) 모자란 금액을 채권형에서 현금성 바구니로 옮기라고 안내(normalPlan, 55세 전 연금계좌 안 채권형 뺌).
  * 등락률을 넣지 않았거나 보통이 아니거나 2년치가 있으면 null
  */
 export function normalPrescription(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: Pick<CashOnHand, 'usable'>, yearDraw: number, bonds: number | BondsOnHand, now: Date): Prescription | null {
-  const b = normalPlan(profile.marketDrawdown, c.usable, yearDraw, bonds);
+  const b = normalPlan(profile.marketDrawdown, c.usable, yearDraw, bonds, now);
   if (!b) return null;
-  const { short, bond, fromBond, left } = b;
+  const { short, bond, fromBond, left, when } = b;
   const date = marketDateNote(profile.marketDrawdownDate, now);
   const have = cashShortText(b, yearDraw);
   const how = fromBond > 0.5
-    ? ` 1월 리밸런싱 때 채권형(지금 ${fmt(bond)}원) 가운데 ${fmt(fromBond)}원을 입출금·파킹통장·MMF 같은 현금성 바구니로 옮겨 두면, 하락장이 와도 주식을 팔지 않고 버틸 수 있습니다.${left > 0.5 ? ` 채권형을 다 옮겨도 ${fmt(left)}원이 모자라니 나머지는 저축으로 채우세요.` : ''}`
+    ? ` ${when} 때 채권형(지금 ${fmt(bond)}원) 가운데 ${fmt(fromBond)}원을 입출금·파킹통장·MMF 같은 현금성 바구니로 옮겨 두면, 하락장이 와도 주식을 팔지 않고 버틸 수 있습니다.${left > 0.5 ? ` 채권형을 다 옮겨도 ${fmt(left)}원이 모자라니 나머지는 저축으로 채우세요.` : ''}`
     : ' 옮길 채권형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요.';
   return {
     area: '노후', level: 'caution',
-    title: fromBond > 0.5 ? `${NORMAL_RX_TITLE} 채권형에서 현금성 ${fmt(fromBond)}원 옮기기` : `${NORMAL_RX_TITLE} 옮길 채권형이 없어 저축으로 현금성 ${fmt(short)}원 채우기`,
+    title: fromBond > 0.5 ? `${NORMAL_RX_TITLE}${when} 때 채권형에서 현금성 ${fmt(fromBond)}원 옮기기` : `${NORMAL_RX_TITLE}${when} 때 옮길 채권형이 없어 저축으로 현금성 ${fmt(short)}원 채우기`,
     link: BUCKET_GUIDE_LINK,
     detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${profile.marketDrawdown}%${date ? `, ${date.text}` : ''})이 보통(0%와 −15% 사이)입니다. ${have}${how}${pensionBondOutNote(b)}`,
   };

@@ -1,6 +1,6 @@
 import { won, pct } from '../lib/format';
 import type { Goal, Level, Liability, Profile } from '../types';
-import { cashShortText, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearPlan, type CashOnHand, type PeakPlan } from './buckets';
+import { cashShortText, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearPlan, type CashOnHand, type NormalPlan, type PeakPlan } from './buckets';
 import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
@@ -42,8 +42,8 @@ export interface ReportInput {
   peak?: PeakPlan | null;
   /** 하락장에 채권형에서 먼저 꺼낼 금액(buckets.ts bearPlan): 시장 상태 문장에 금액을 덧붙임 */
   bear?: BearPlan | null;
-  /** 보통 구간에 1월 리밸런싱 때 채권형에서 옮길 금액(buckets.ts normalPlan): 시장 상태 문장에 금액을 덧붙임 */
-  normal?: BearPlan | null;
+  /** 보통 구간에 다음 1월 리밸런싱(2월부터는 내년 1월) 때 채권형에서 옮길 금액(buckets.ts normalPlan): 시장 상태 문장에 금액을 덧붙임 */
+  normal?: NormalPlan | null;
 }
 
 /**
@@ -51,7 +51,7 @@ export interface ReportInput {
  * 고점 부근·하락장·보통 구간에 바로 쓸 돈이 2년치에 못 미치면 지금 할 일 금액을 덧붙임.
  * 하락장이거나 넣은 지 30일이 지났거나 할 일 금액이 붙으면 주의. 등락률을 넣지 않았으면 undefined
  */
-export function marketLine(p: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, now: Date, peak?: PeakPlan | null, bear?: BearPlan | null, normal?: BearPlan | null): ReportLine | undefined {
+export function marketLine(p: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, now: Date, peak?: PeakPlan | null, bear?: BearPlan | null, normal?: NormalPlan | null): ReportLine | undefined {
   if (p.marketDrawdown === undefined) return undefined;
   const rule = marketRule(p.marketDrawdown);
   const date = marketDateNote(p.marketDrawdownDate, now);
@@ -82,11 +82,11 @@ function bearText(b: BearPlan): string {
   return shortText(b, how, bondOut(b));
 }
 
-/** 보통 구간 1월 리밸런싱 때 채권형에서 현금성 옮기기 문장(앞에 띄어쓰기 포함) */
-function normalText(b: BearPlan): string {
+/** 보통 구간 (내년) 1월 리밸런싱 때 채권형에서 현금성 옮기기 문장(앞에 띄어쓰기 포함) */
+function normalText(b: NormalPlan): string {
   const how = b.fromBond > 0.5
-    ? `1월 리밸런싱 때 채권형에서 현금성 ${won(b.fromBond)} 옮기기${b.left > 0.5 ? `, 채권형을 다 옮겨도 모자란 ${won(b.left)}은 저축으로` : ''}`
-    : `1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 ${won(b.short)} 채우기`;
+    ? `${b.when} 때 채권형에서 현금성 ${won(b.fromBond)} 옮기기${b.left > 0.5 ? `, 채권형을 다 옮겨도 모자란 ${won(b.left)}은 저축으로` : ''}`
+    : `${b.when} 때 옮길 채권형이 없어 저축으로 현금성 ${won(b.short)} 채우기`;
   return shortText(b, how, bondOut(b));
 }
 
@@ -260,8 +260,10 @@ export function buildReport(x: ReportInput): ReportSection[] {
     ...(skipped.length ? [{ text: `목표 나이가 비어 있는 ${skipped.map((g) => g.name).join(', ')}은(는) 계산에 넣지 않았습니다.`, level: 'caution' as Level }] : []),
   ];
 
-  // 등락률 다시 입력 필요(marketStale)는 ‘2. 자산과 부채’의 시장 상태 문장에 같은 안내가 있어 뺌
-  const risks: ReportLine[] = x.checks.filter((c) => c.level !== 'good' && c.key !== 'marketStale').map((c) => ({ text: `${c.label}(${c.value}): ${c.detail}`, level: c.level }));
+  // 시장 상태 점검(등락률 다시 입력 필요·하락장·고점 부근·보통 구간)은 ‘2. 자산과 부채’의 시장 상태 문장과
+  // ‘5. 권장 대응’의 처방에 같은 안내·금액이 있어 뺌
+  const MARKET_CHECKS = ['marketStale', 'marketBear', 'marketPeak', 'marketNormal'];
+  const risks: ReportLine[] = x.checks.filter((c) => c.level !== 'good' && !MARKET_CHECKS.includes(c.key)).map((c) => ({ text: `${c.label}(${c.value}): ${c.detail}`, level: c.level }));
   // 점검 항목과 같은 제목(만기 나이 입력 등)은 한 번만
   const shown = new Set(x.checks.map((c) => c.label));
   const pending = x.rx

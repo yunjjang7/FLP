@@ -7,7 +7,7 @@ import { retirementNeed, simulate, withdrawStart, type PathTax, type PlanInput, 
 import { summarize, type Summary } from '../engine/portfolio';
 import { makePathTax, makeRetax, type Retax } from '../engine/pensionTaxPlan';
 import { bulletChecks, cashRunwayChecks, marketChecks, financialScore, retiredBasis, riskChecks, type RiskCheck } from '../engine/risk';
-import { bearPlan, bondsOnHand, normalPlan, peakPlan, pensionClassParts, type BearPlan, type PeakPlan, cashMoveRows, cashOnHand, cashRunway, pensionBondParts, pensionCashParts, startAges, withPensionCash, type BondsOnHand, type CashOnHand } from '../engine/buckets';
+import { bearPlan, bondsOnHand, normalPlan, peakPlan, pensionClassParts, type BearPlan, type NormalPlan, type PeakPlan, cashMoveRows, cashOnHand, cashRunway, pensionBondParts, pensionCashParts, startAges, withPensionCash, type BondsOnHand, type CashOnHand } from '../engine/buckets';
 import type { MaturityRow } from '../engine/maturity';
 import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd, Draw } from '../types';
 
@@ -41,7 +41,7 @@ export interface FlpData {
   bear: BearPlan | null; // 하락장이고 바로 쓸 돈이 2년치에 못 미칠 때 채권형에서 먼저 꺼낼 금액(이정표 할 일)
   equity: BondsOnHand; // 고점 부근 처방용 주식형: 인출 시작 해에 55세 전인 계좌 주인의 연금계좌 안 주식형은 뺌
   peak: PeakPlan | null; // 고점 부근이고 바로 쓸 돈이 2년치에 못 미칠 때 주식형을 팔아 채울 현금성(이정표 할 일·인출 바구니)
-  normal: BearPlan | null; // 보통 구간이고 바로 쓸 돈이 2년치에 못 미칠 때 1월 리밸런싱 때 채권형에서 옮길 현금성(이정표 할 일·인출 바구니)
+  normal: NormalPlan | null; // 보통 구간이고 바로 쓸 돈이 2년치에 못 미칠 때 다음 1월 리밸런싱(2월부터는 내년 1월) 때 채권형에서 옮길 현금성(이정표 할 일·인출 바구니)
   cashMove: MaturityRow[]; // 바로 쓸 돈이 2년치에 못 미쳐 만기 뒤 현금성 바구니로 옮길 예금·적금(이정표 할 일)
   score: ReturnType<typeof financialScore>;
 }
@@ -98,7 +98,7 @@ export function FlpProvider({ children }: { children: ReactNode }) {
       ins,
       cash, runCash, bonds, bear: bearPlan(profile.marketDrawdown, runCash.usable, start.outflow, bonds),
       equity, peak: peakPlan(profile.marketDrawdown, runCash.usable, start.outflow, equity),
-      normal: normalPlan(profile.marketDrawdown, runCash.usable, start.outflow, bonds), cashMove: cashMoveRows(runCash, run),
+      normal: normalPlan(profile.marketDrawdown, runCash.usable, start.outflow, bonds, new Date()), cashMove: cashMoveRows(runCash, run),
       checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start), ...cashRunwayChecks(runCash, run, profile), ...marketChecks(profile, runCash, start.outflow, new Date(), equity, bonds)],
       score: financialScore(profile, assets, basis, sim.successRate, ins, start),
     };

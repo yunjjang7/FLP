@@ -261,9 +261,27 @@ export function bearPlan(drawdown: number | undefined, usable: number, yearDraw:
 /**
  * 보통 구간 현금성 채우기: 등락률이 0%와 −15% 사이(보통)이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면,
  * 1월 리밸런싱 때 모자란 금액을 채권형에서 현금성 바구니로 옮김(bearPlan 과 같은 계산, 55세 전 연금계좌 안 채권형 뺌).
+ * 오늘(now)이 1월이면 올해 1월 리밸런싱, 2월부터는 내년 1월 리밸런싱으로 봄(when·nextYear).
  * 등락률을 넣지 않았거나 보통이 아니거나 인출이 없거나 2년치가 있으면 null
  */
-export function normalPlan(drawdown: number | undefined, usable: number, yearDraw: number, bonds: number | BondsOnHand): BearPlan | null {
+export function normalPlan(drawdown: number | undefined, usable: number, yearDraw: number, bonds: number | BondsOnHand, now: Date): NormalPlan | null {
+  const b = normalBase(drawdown, usable, yearDraw, bonds);
+  return b && { ...b, ...rebalanceTiming(now) };
+}
+
+/** 보통 구간 현금성 채우기 계획: bearPlan 과 같은 금액 + 다음 1월 리밸런싱 시점 */
+export interface NormalPlan extends BearPlan {
+  nextYear: boolean; // 2월 이후라 다음 1월 리밸런싱이 내년(이정표는 내년 할 일에)
+  when: string; // ‘1월 리밸런싱’ 또는 ‘내년 1월 리밸런싱(○○○○년 1월)’
+}
+
+/** 다음 1월 리밸런싱 시점: 1월이면 올해 1월, 2월부터는 내년 1월 */
+export function rebalanceTiming(now: Date): Pick<NormalPlan, 'nextYear' | 'when'> {
+  const nextYear = now.getMonth() > 0;
+  return { nextYear, when: nextYear ? `내년 1월 리밸런싱(${now.getFullYear() + 1}년 1월)` : '1월 리밸런싱' };
+}
+
+function normalBase(drawdown: number | undefined, usable: number, yearDraw: number, bonds: number | BondsOnHand): BearPlan | null {
   if (drawdown === undefined || marketState(drawdown) !== 'normal' || !(yearDraw > 0)) return null;
   const goal = yearDraw * CASH_YEARS_TARGET;
   const have = Math.max(0, usable);

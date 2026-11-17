@@ -109,7 +109,7 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
           )}
           {rule.state === 'normal' && normal && (
             <div className="mt-1">
-              {normal.fromBond > 0.5 ? <>1월 리밸런싱 때 채권형에서 현금성 <b>{won(normal.fromBond)}</b> 옮기기</> : <>1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 <b>{won(normal.short)}</b> 채우기</>}
+              {normal.fromBond > 0.5 ? <>{normal.when} 때 채권형에서 현금성 <b>{won(normal.fromBond)}</b> 옮기기</> : <>{normal.when} 때 옮길 채권형이 없어 저축으로 현금성 <b>{won(normal.short)}</b> 채우기</>}
               <span className="text-xs"> — 바로 쓸 돈 {won(normal.usable)}이 첫해 인출 기준 2년치({won(normal.goal)})에 {won(normal.short)} 모자랍니다.{normal.left > 0.5 && normal.fromBond > 0.5 ? ` 채권형을 다 옮겨도 ${won(normal.left)} 모자라니 나머지는 저축으로 채우세요.` : ''}{pensionBondOutNote(normal)}</span>
             </div>
           )}
