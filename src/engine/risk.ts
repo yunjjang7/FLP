@@ -6,7 +6,7 @@ import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
 import { EMERGENCY_LOCK_MONTHS } from './maturity';
-import { bearCutText, bearPlan, CASH_YEARS_TARGET, cashShortText, cashSourceLabel, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, normalPlan, peakPlan, pensionBondOutNote, pensionEquityOutNote, pensionFrom55, pensionFrom55Note, pensionOutNote, saveFillNote, type BearCut, type BondsOnHand, type CashOnHand } from './buckets';
+import { bearCutText, bearPlan, CASH_YEARS_TARGET, cashShortText, cashSourceLabel, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, normalPlan, peakPlan, pensionBondOutNote, pensionEquityOutNote, pensionFrom55, pensionFrom55Note, pensionOutNote, saveFillNote, type BearCut, type SaveFill, type BondsOnHand, type CashOnHand } from './buckets';
 import { goalBreakdownAt, pensionAt, retireOutflowAt, type PlanInput } from './montecarlo';
 
 /**
@@ -196,6 +196,9 @@ export function cashRunwayChecks(c: CashOnHand, run?: { usable: number; all: num
   }];
 }
 
+/** 고점 부근·보통 구간 홈 점검 값 ‘저축 ○원’ 뒤에 붙일 개월 수(지금 월 저축여력 기준, 저축여력이 없거나 기간이 없으면 빈 문자열) */
+const fillMonths = (b: { fill?: SaveFill }) => b.fill?.months != null ? `(약 ${b.fill.months}개월)` : '';
+
 /**
  * 하락장 안내(홈 주요 점검 사항): 인출용 자산 배치 가이드에 저장한 등락률(profile.marketDrawdown)이 −15% 이하이면
  * ‘하락장: 주식형 매도 멈춤’ 주의와 함께 바로 쓸 돈으로 버틸 햇수(첫해 인출 yearDraw 기준)를 보여 줌. 재무점수에는 넣지 않음.
@@ -215,7 +218,7 @@ export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDr
       ? ` 값이 오른 지금 주식형 가운데 ${won(peak.fromEquity)}을 팔아 현금성 바구니에 채우세요.${peak.left > 0.5 ? ` 주식형을 다 팔아도 ${won(peak.left)} 모자라니 나머지는 저축으로 채우세요${saveFillNote(peak)}.` : ''}`
       : ` 팔 주식형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요${saveFillNote(peak)}.`;
     return [{
-      key: 'marketPeak', label: '고점 부근: 현금성 채우기', value: peak.fromEquity > 0.5 ? `주식형 ${won(peak.fromEquity)} 매도` : `저축 ${won(peak.short)}`, level: 'caution', link: BUCKET_GUIDE_LINK,
+      key: 'marketPeak', label: '고점 부근: 현금성 채우기', value: peak.fromEquity > 0.5 ? `주식형 ${won(peak.fromEquity)} 매도` : `저축 ${won(peak.short)}${fillMonths(peak)}`, level: 'caution', link: BUCKET_GUIDE_LINK,
       detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${dd}%${date ? `, ${date.text}` : ''}) 기준 ${rule.text} ${have}${how}${pensionEquityOutNote(peak)}`,
     }];
   }
@@ -227,7 +230,7 @@ export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDr
       ? ` ${normal.when} 때 채권형 가운데 ${won(normal.fromBond)}을 현금성 바구니로 옮기세요.${normal.left > 0.5 ? ` 채권형을 다 옮겨도 ${won(normal.left)} 모자라니 나머지는 저축으로 채우세요${saveFillNote(normal)}.` : ''}`
       : ` 옮길 채권형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요${saveFillNote(normal)}.`;
     return [{
-      key: 'marketNormal', label: `보통: ${normal.nextYear ? '내년 ' : ''}1월 리밸런싱 때 현금성 채우기`, value: normal.fromBond > 0.5 ? `채권형 ${won(normal.fromBond)} 옮기기` : `저축 ${won(normal.short)}`, level: 'caution', link: BUCKET_GUIDE_LINK,
+      key: 'marketNormal', label: `보통: ${normal.nextYear ? '내년 ' : ''}1월 리밸런싱 때 현금성 채우기`, value: normal.fromBond > 0.5 ? `채권형 ${won(normal.fromBond)} 옮기기` : `저축 ${won(normal.short)}${fillMonths(normal)}`, level: 'caution', link: BUCKET_GUIDE_LINK,
       detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${dd}%${date ? `, ${date.text}` : ''}) 기준 ${rule.text} ${have}${how}${pensionBondOutNote(normal)}`,
     }];
   }

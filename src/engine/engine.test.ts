@@ -1631,7 +1631,16 @@ describe('인출 바구니 등락률: 입력 날짜·하락장 홈 점검', () =
     // 생활비 3,000만·연금 1,200만 은퇴자: 생활비 10% 감축이면 인출 300만원 감소
     const retired = { ...base, currentAge: 66, retireAge: 60, startBalance: 50000 };
     const cut = guardCut(retired, 66, 10)!;
-    expect(cut).toEqual({ pct: 10, amount: expect.closeTo(300, 6) });
+    expect(cut).toEqual({ pct: 10, amount: expect.closeTo(300, 6) }); // 이미 은퇴: 현재가치 없음
+    // 은퇴 전(40세 → 60세 인출 시작): 명목 금액과 물가상승률(2%)로 20년 할인한 현재가치
+    const pre = guardCut(base, 60, 10)!;
+    expect(pre.amount).toBeCloseTo(retireOutflowAt(base, 60) - retireOutflowAt(base, 60, 0.1), 6);
+    expect(pre.real).toBeCloseTo(pre.amount / Math.pow(1.02, 20), 6);
+    const pv = { pct: 10, amount: 446, real: 300 };
+    expect(bearCutText({ cut: pv })).toBe('생활비 10% 감축 시 한 해 446만원(현재가치 300만원)');
+    expect(bearTodo(bearPlan(-18, 0, 1000, 0, pv)!)).toBe('하락장: 주식형 매도 멈춤, 꺼낼 채권형이 없어 인출 줄이기(생활비 10% 감축 시 한 해 446만원(현재가치 300만원))');
+    expect(marketChecks({ marketDrawdown: -20 }, cashOnHand([], 2026, 11), 1000, now, 0, 0, pv)[0].detail).toContain('인출을 줄이세요(생활비 10% 감축 시 한 해 446만원(현재가치 300만원)).');
+    expect(marketPrescription({ marketDrawdown: -20 }, { usable: 0 }, 1000, 0, now, pv)!.detail).toContain('(가드레일, 생활비 10% 감축 시 한 해 446만원(현재가치 300만원))');
     expect(guardCut(retired, 66, 0)).toBeNull();
     expect(bearCutText({ cut: { pct: 10, amount: 300 } })).toBe('생활비 10% 감축 시 한 해 300만원');
     expect(bearCutText({})).toBe('');
@@ -1680,6 +1689,12 @@ describe('인출 바구니 등락률: 입력 날짜·하락장 홈 점검', () =
     const none = peakPlan(2, 800, 1000, 0, 100)!;
     expect(peakTodo(none)).toBe('고점 부근: 팔 주식형이 없어 저축으로 현금성 1,200만원 채우기(월 저축여력 100만원 기준 약 12개월)');
     expect(peakPrescription({ marketDrawdown: 2 }, c, 1000, 0, now, 0)!.detail).toContain('저축으로 현금성 바구니에 채우세요(지금 월 저축여력이 없어 지출부터 줄여야 함).');
+    // 홈 점검 값 ‘저축 ○원’에도 개월 수(저축여력이 없거나 넘기지 않으면 금액만)
+    expect(marketChecks({ marketDrawdown: 2, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 0, undefined, null, 100)[0].value).toBe('저축 1,200만원(약 12개월)');
+    expect(marketChecks({ marketDrawdown: 2, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 0, undefined, null, 0)[0].value).toBe('저축 1,200만원');
+    expect(marketChecks({ marketDrawdown: -5, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 0, 0, null, 100)[0].value).toBe('저축 1,200만원(약 12개월)');
+    expect(marketChecks({ marketDrawdown: -5, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 0, 0)[0].value).toBe('저축 1,200만원');
+    expect(marketChecks({ marketDrawdown: 2, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 700, undefined, null, 100)[0].value).toBe('주식형 700만원 매도');
     // 보통 구간: 채권형을 다 옮겨도 500만원 모자람
     const normal = normalPlan(-5, 800, 1000, 700, now, 100)!;
     expect(normalTodo(normal)).toBe('내년 1월 리밸런싱(2027년 1월) 때 채권형에서 현금성 700만원 옮기기 · 그래도 500만원 모자라 저축으로 채우기(월 저축여력 100만원 기준 약 5개월)');

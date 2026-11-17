@@ -182,12 +182,15 @@ export const retireOutflowAt = (input: PlanInput, age: number, cut = 0) =>
 
 /**
  * 하락장 가드레일로 그 나이 한 해에 줄일 인출: 생활비를 pct% 줄였을 때 retireOutflowAt 이 줄어드는 금액(명목, 만원).
+ * 그 나이가 지금 나이보다 뒤(은퇴 전)이면 물가상승률로 할인한 현재가치(real)도 담음.
  * pct 가 0 이하이거나 줄어드는 금액이 없으면 null (buckets.ts bearPlan 의 cut)
  */
-export function guardCut(input: PlanInput, age: number, pct: number): { pct: number; amount: number } | null {
+export function guardCut(input: PlanInput, age: number, pct: number): { pct: number; amount: number; real?: number } | null {
   if (!(pct > 0)) return null;
   const amount = Math.max(0, retireOutflowAt(input, age) - retireOutflowAt(input, age, Math.min(100, pct) / 100));
-  return amount > 0.5 ? { pct, amount } : null;
+  if (!(amount > 0.5)) return null;
+  const years = age - input.currentAge;
+  return years > 0 ? { pct, amount, real: amount / Math.pow(1 + input.inflation / 100, years) } : { pct, amount };
 }
 
 /** 해당 나이의 기대수익률·변동성(%) */

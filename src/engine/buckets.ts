@@ -245,7 +245,7 @@ export interface BearPlan {
 }
 
 /** 하락장 인출 줄이기: 점검기준 ‘하락장 생활비 감축’ 비율(pct, %)과 그 비율로 첫해 한 해에 줄일 인출(amount, montecarlo.ts guardCut) */
-export interface BearCut { pct: number; amount: number }
+export interface BearCut { pct: number; amount: number; real?: number /* 은퇴 전이면 amount 의 현재가치 */ }
 
 /**
  * 하락장 인출 계획: 등락률이 −15% 이하이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면 모자란 금액을 채권형에서 먼저 꺼냄.
@@ -268,11 +268,11 @@ export function bearPlan(drawdown: number | undefined, usable: number, yearDraw:
 }
 
 /**
- * 하락장 인출 줄이기 금액 안내(이정표·홈 점검·맞춤 처방·인출 바구니·요약 보고 공통): ‘생활비 ○% 감축 시 한 해 ○원’.
+ * 하락장 인출 줄이기 금액 안내(이정표·홈 점검·맞춤 처방·인출 바구니·요약 보고 공통): ‘생활비 ○% 감축 시 한 해 ○원’(은퇴 전이면 뒤에 ‘(현재가치 ○원)’).
  * 줄일 금액이 없으면 빈 문자열. f 로 금액 표기를 바꿈(이정표는 만원 단위)
  */
 export const bearCutText = (b: Pick<BearPlan, 'cut'>, f: (v: number) => string = won) =>
-  b.cut ? `생활비 ${b.cut.pct}% 감축 시 한 해 ${f(b.cut.amount)}` : '';
+  b.cut ? `생활비 ${b.cut.pct}% 감축 시 한 해 ${f(b.cut.amount)}${b.cut.real !== undefined ? `(현재가치 ${f(b.cut.real)})` : ''}` : '';
 
 /**
  * 보통 구간 현금성 채우기: 등락률이 0%와 −15% 사이(보통)이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면,
