@@ -11,10 +11,26 @@ import { Labeled, NumberField, TextField } from './fields';
 import { SetupLink } from './SetupLink';
 import { Badge, Button, Card } from './ui';
 
+export interface CompareRow { label: string; a: string; b: string; diff: number | null; unit: string; lowerBetter?: boolean }
+
 /** 가드레일 vs 정액 인출: 감액을 감수한 대가로 자산이 얼마나 오래 버티는지 */
 export function GuardrailCompare({ fixed, guard, lifeExpectancy }: { fixed: StrategyResult; guard: StrategyResult; lifeExpectancy: number }) {
+  return (
+    <StrategyCompare
+      fixed={fixed}
+      other={guard}
+      name="가드레일"
+      lifeExpectancy={lifeExpectancy}
+      extra={[{ label: '인출을 줄인 시나리오', a: '-', b: pct(guard.adjustRate), diff: null, unit: '' }]}
+      note="가드레일은 나쁜 해에 인출을 줄이므로 ‘생활비 충족’은 정액과 비슷하거나 낮을 수 있습니다. 대신 자산 유지 확률과 고갈 시점이 얼마나 나아지는지를 보세요."
+    />
+  );
+}
+
+/** 정액 인출과 다른 전략 비교표: 충족 확률·자산 유지·고갈 나이 + 전략별 추가 행 */
+export function StrategyCompare({ fixed, other: guard, name, lifeExpectancy, extra = [], note }: { fixed: StrategyResult; other: StrategyResult; name: string; lifeExpectancy: number; extra?: CompareRow[]; note?: string }) {
   const age = (v: number | null) => (v === null ? `${lifeExpectancy}세까지 유지` : `${v}세`);
-  const rows = [
+  const rows: CompareRow[] = [
     { label: '생활비 90% 이상 매년 충족', a: pct(fixed.successRate), b: pct(guard.successRate), diff: guard.successRate - fixed.successRate as number | null, unit: '%p' },
     { label: '자산 유지 확률', a: pct(100 - fixed.depletionRate), b: pct(100 - guard.depletionRate), diff: fixed.depletionRate - guard.depletionRate as number | null, unit: '%p' },
     { label: '고갈 나이 중앙값(전체)', a: age(fixed.medianDepletionAge), b: age(guard.medianDepletionAge), diff: null as number | null, unit: '' },
@@ -25,7 +41,7 @@ export function GuardrailCompare({ fixed, guard, lifeExpectancy }: { fixed: Stra
       diff: fixed.depletedMedianAge !== null && guard.depletedMedianAge !== null ? guard.depletedMedianAge - fixed.depletedMedianAge : null,
       unit: '년',
     },
-    { label: '인출을 줄인 시나리오', a: '-', b: pct(guard.adjustRate), diff: null as number | null, unit: '' },
+    ...extra,
   ];
   return (
     <div className="-mx-4 mt-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
@@ -34,7 +50,7 @@ export function GuardrailCompare({ fixed, guard, lifeExpectancy }: { fixed: Stra
           <tr className="border-b border-line text-right text-xs text-muted">
             <th className="py-1.5 text-left font-medium">정액 인출과 비교</th>
             <th className="font-medium">정액</th>
-            <th className="font-medium">가드레일</th>
+            <th className="font-medium">{name}</th>
             <th className="font-medium">차이</th>
           </tr>
         </thead>
@@ -44,14 +60,14 @@ export function GuardrailCompare({ fixed, guard, lifeExpectancy }: { fixed: Stra
               <td className="py-1.5 text-left">{r.label}</td>
               <td className="text-muted">{r.a}</td>
               <td className="font-semibold">{r.b}</td>
-              <td className={r.diff === null || Math.abs(r.diff) < 0.05 ? 'text-muted' : r.diff > 0 ? 'text-good' : 'text-bad'}>
+              <td className={r.diff === null || Math.abs(r.diff) < 0.05 ? 'text-muted' : r.diff > 0 !== !!r.lowerBetter ? 'text-good' : 'text-bad'}>
                 {r.diff === null ? '' : `${r.diff > 0 ? '+' : ''}${r.unit === '년' ? r.diff : r.diff.toFixed(1)}${r.unit}`}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-muted">가드레일은 나쁜 해에 인출을 줄이므로 ‘생활비 충족’은 정액과 비슷하거나 낮을 수 있습니다. 대신 자산 유지 확률과 고갈 시점이 얼마나 나아지는지를 보세요.</p>
+      {note && <p className="mt-2 text-xs text-muted">{note}</p>}
     </div>
   );
 }

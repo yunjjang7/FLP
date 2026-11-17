@@ -140,6 +140,28 @@ export function requiredBalances(inp: WithdrawInput) {
   return out;
 }
 
+const CASH_R = 0.025;
+const BOND_R = 0.04;
+
+/**
+ * 3-버킷 시작 배분: 첫해 필요 인출액의 현금·채권 연수만큼 현금·채권에 두고 나머지는 성장자산.
+ * 성장자산 수익률·변동성은 시작 시점 전체 기대수익률이 포트폴리오와 같도록 역산(수익률 최대 12%, 변동성 최대 30%)
+ */
+export function bucketStart(inp: WithdrawInput) {
+  const bk = inp.bucket ?? DEFAULT_BUCKET;
+  const mu = inp.meanReturn / 100;
+  const sg = inp.volatility / 100;
+  const firstNeed = needAt(inp, inp.startAge);
+  const cash = Math.min(inp.startBalance, firstNeed * bk.cashYears);
+  const bond = Math.min(inp.startBalance - cash, firstNeed * bk.bondYears);
+  const growth = inp.startBalance - cash - bond;
+  const growthReturn = growth > 0 ? Math.min(0.12, Math.max(mu, (mu * inp.startBalance - CASH_R * cash - BOND_R * bond) / growth)) : mu;
+  const growthVol = growth > 0 ? Math.min(0.3, Math.max(sg, sg * (inp.startBalance / growth))) : sg;
+  // 역산 수익률이 상한(12%)에 걸리면 전체 기대수익률이 포트폴리오보다 낮아짐
+  const total = inp.startBalance > 0 ? (CASH_R * cash + BOND_R * bond + growthReturn * growth) / inp.startBalance : mu;
+  return { cash, bond, growth, growthReturn, growthVol, cashReturn: CASH_R, bondReturn: BOND_R, totalReturn: total, capped: growth > 0 && growthReturn >= 0.12 - 1e-9 && total < mu - 1e-9 };
+}
+
 /** baseline: 가드레일 기준선(평균수익 정액 인출 경로의 연초 잔액), required: 필요 자산 */
 function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, baseline?: number[], required?: number[]) {
   const years = Math.max(0, inp.endAge - inp.startAge);
@@ -155,19 +177,17 @@ function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, base
 
   // 버킷 초기 배분
   const bk = inp.bucket ?? DEFAULT_BUCKET;
-  const firstNeed = needAt(inp, inp.startAge);
-  let b1 = Math.min(inp.startBalance, firstNeed * bk.cashYears);
-  let b2 = Math.min(inp.startBalance - b1, firstNeed * bk.bondYears);
-  let b3 = inp.startBalance - b1 - b2;
+  const bs = bucketStart(inp);
+  let b1 = bs.cash;
+  let b2 = bs.bond;
+  let b3 = bs.growth;
   let bal = inp.startBalance;
   const g = inp.guardrail ?? DEFAULT_GUARDRAIL;
   let m = 1;
   let minM = 1;
-  // 성장 바구니 수익률·변동성: 시작 시점 전체 기대수익률이 포트폴리오와 같도록 역산
-  const CASH_R = 0.025;
-  const BOND_R = 0.04;
-  const mu3 = b3 > 0 ? Math.min(0.12, Math.max(mu, (mu * inp.startBalance - CASH_R * b1 - BOND_R * b2) / b3)) : mu;
-  const sg3 = b3 > 0 ? Math.min(0.3, Math.max(sg, sg * (inp.startBalance / b3))) : sg;
+  // 성장 바구니 수익률·변동성: 시작 시점 전체 기대수익률이 포트폴리오와 같도록 역산(bucketStart)
+  const mu3 = bs.growthReturn;
+  const sg3 = bs.growthVol;
 
   for (let i = 0; i < years; i++) {
     const age = inp.startAge + i;

@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Labeled, NumberField, SelectField, Slider } from '../components/fields';
 import { Badge, Card, Disclaimer, EmptyState, PageHeader } from '../components/ui';
-import { GuardrailCompare, YearEndReview } from '../components/YearEndReview';
+import { GuardrailCompare, StrategyCompare, YearEndReview } from '../components/YearEndReview';
 import { db } from '../db/db';
 import { withdrawLevel } from '../engine/risk';
 import { BucketGuide } from '../components/BucketGuide';
@@ -14,7 +14,7 @@ import { OrderCompare } from '../components/OrderCompare';
 import { CardLink, SetupLink, useCardTarget } from '../components/SetupLink';
 import type { CompareBase } from '../engine/orderCompare';
 import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
-import { bucketDesc, compareStrategy, DEFAULT_BUCKET, DEFAULT_GUARDRAIL, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
+import { bucketDesc, bucketStart, compareStrategy, DEFAULT_BUCKET, DEFAULT_GUARDRAIL, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
 import { pct, won, yearRanges } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
@@ -119,7 +119,7 @@ function WithdrawInner() {
       <PageHeader title="인출 계획" desc="은퇴 후 자산을 어떤 방식으로 꺼내 쓸지 전략별로 비교합니다. 금액은 현재 물가 기준입니다." />
 
       <Card title="인출 조건" action={retired && <Badge level="good">{startAge}세 · 인출 중</Badge>}>
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           <Labeled label={retired ? '현재 금융자산(인출 시작)' : '은퇴 시점 자산 가정'}>
             <div className="flex rounded-lg bg-sunken p-0.5 text-xs">
               {(retired ? (['avg', 'custom'] as const) : (['avg', 'p50', 'p10', 'custom'] as const)).map((b) => (
@@ -142,10 +142,6 @@ function WithdrawInner() {
               <NumberField value={p.privatePensionAge} unit="세" onChange={(v) => saveProfile({ privatePensionAge: v })} />
             </div>
           </Labeled>
-          <div className="self-end">
-            <Slider label="정률 인출 비율" value={rate} min={2} max={12} step={0.5} display={`${rate}%`} onChange={setRate} />
-            <div className="mt-1 text-xs text-muted">정률 인출 카드에만 적용 · 3-버킷·가드레일 설정은 그 카드를 고르면 아래에 나옴</div>
-          </div>
         </div>
 
         <div className="mt-4 flex flex-wrap items-baseline gap-x-6 gap-y-1 rounded-xl bg-sunken px-3 py-2.5 text-sm">
@@ -215,17 +211,62 @@ function WithdrawInner() {
         ))}
       </div>
 
-      {selected === 'bucket' && (
+      {selected === 'percent' && (
+        <Card title="정률 인출 설정" className="mt-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Slider label="정률 인출 비율(매년 잔액의)" value={rate} min={2} max={12} step={0.5} display={`${rate}%`} onChange={setRate} />
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            매년 초 잔액의 {rate}%를 꺼냅니다. 첫해 필요 인출률이 {pct(wRate, 1)}로 {rate < wRate ? '이보다 낮아' : '이 이상이라'} {rate < wRate ? '첫해부터 필요한 만큼 꺼내지 못합니다' : '첫해는 필요한 만큼 꺼낼 수 있지만, 잔액이 줄거나 목돈 지출이 있는 해에는 모자랄 수 있습니다'}. 잔액에 비례해 꺼내므로 자산은 고갈되지 않는 대신 생활비가 시장에 따라 오르내립니다.
+          </p>
+          <StrategyCompare
+            fixed={results[0]}
+            other={sel}
+            name={`정률 ${rate}%`}
+            lifeExpectancy={p.lifeExpectancy}
+            extra={[
+              { label: '필요 인출액 대비 평균 충족률(중앙값)', a: pct(results[0].medianCoverage), b: pct(sel.medianCoverage), diff: sel.medianCoverage - results[0].medianCoverage, unit: '%p' },
+              { label: '90% 미달 연수(중앙값)', a: `${results[0].medianShortYears}년`, b: `${sel.medianShortYears}년`, diff: sel.medianShortYears - results[0].medianShortYears, unit: '년', lowerBetter: true },
+              { label: `첫해${firstShare < 1 ? `(${firstMonths}개월)` : ''} 인출`, a: won(results[0].schedule[0]?.withdrawal ?? 0), b: won(sel.schedule[0]?.withdrawal ?? 0), diff: null, unit: '' },
+            ]}
+            note="정률은 자산이 바닥나지 않는 대신 덜 꺼내는 해가 생깁니다. 비율을 올리면 충족률은 오르고 말년 잔액은 줄어듭니다. 자산 유지와 충족률 사이의 균형을 보세요."
+          />
+        </Card>
+      )}
+
+      {selected === 'bucket' && (() => {
+        const bs = bucketStart(input);
+        const box = (label: string, amount: number, ret: number, sub: string) => (
+          <div className="rounded-xl bg-sunken p-3">
+            <div className="text-xs text-muted">{label}</div>
+            <div className="mt-0.5 text-lg font-bold">{won(amount)}</div>
+            <div className="text-xs text-muted">{startBalance > 0 ? pct((amount / startBalance) * 100) : '-'} · 연 {(ret * 100).toFixed(1)}%{sub}</div>
+          </div>
+        );
+        return (
         <Card title="3-버킷 설정" className="mt-4">
           <div className="grid gap-4 md:grid-cols-3">
             <Slider label="현금 바구니" value={cashYears} min={1} max={5} step={0.5} display={`${cashYears}년치`} onChange={setCashYears} />
             <Slider label="채권 바구니" value={bondYears} min={0} max={10} step={1} display={`${bondYears}년치`} onChange={setBondYears} />
           </div>
+          <div className="mt-4 mb-1 text-xs font-medium text-muted">시작 배분 — 첫해 필요 인출 연 {won(firstNeed)} 기준</div>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            {box(`현금 ${cashYears}년치`, bs.cash, bs.cashReturn, '')}
+            {box(`채권 ${bondYears}년치`, bs.bond, bs.bondReturn, ' · 변동성 5%')}
+            {box('성장자산(나머지)', bs.growth, bs.growthReturn, ` · 변동성 ${(bs.growthVol * 100).toFixed(1)}%`)}
+            <div className="rounded-xl bg-sunken p-3">
+              <div className="text-xs text-muted">전체 기대수익률</div>
+              <div className={`mt-0.5 text-lg font-bold ${bs.capped ? 'text-warn' : ''}`}>연 {(bs.totalReturn * 100).toFixed(1)}%</div>
+              <div className="text-xs text-muted">포트폴리오 가정 {retMean.toFixed(1)}%{bs.capped ? ' · 성장자산 12% 상한에 걸려 낮아짐' : '와 같게 맞춤'}</div>
+            </div>
+          </div>
+          {bs.growth <= 0.5 && <p className="mt-2 text-xs text-warn">현금·채권 바구니만으로 자산을 다 써서 성장자산이 없습니다. 연수를 줄여 보세요.</p>}
           <p className="mt-3 text-xs text-muted">
-            시작할 때 첫해 인출액의 {cashYears}년치를 현금(연 2.5%), {bondYears}년치를 채권(연 4%)에 두고 나머지는 성장자산에 둡니다(전체 기대수익률이 같도록 성장자산 수익률을 맞춤). 현금 → 채권 → 성장 순서로 꺼내고, 성장자산이 오른 해에는 성장자산을 팔아 현금을 다음 해 인출 {cashYears}년치·채권을 {bondYears}년치로 다시 채우며, 떨어진 해에는 채권으로 현금만 채웁니다. 현금·채권을 늘리면 하락장 매도는 줄지만 기대수익이 낮은 돈이 많아집니다.
+            시작할 때 첫해 인출액의 {cashYears}년치를 현금(연 2.5%), {bondYears}년치를 채권(연 4%)에 두고 나머지는 성장자산에 둡니다(전체 기대수익률이 같도록 성장자산 수익률을 맞춤). 현금 → 채권 → 성장 순서로 꺼내고, 성장자산이 오른 해에는 성장자산을 팔아 현금을 다음 해 인출 {cashYears}년치·채권을 {bondYears}년치로 다시 채우며, 떨어진 해에는 채권으로 현금만 채웁니다. 현금·채권을 늘리면 하락장 매도는 줄지만, 같은 전체 기대수익률을 내려고 성장자산 수익률·변동성이 높아집니다(성장자산 비중이 작을수록 변동성은 전체 변동성 × 전체 자산 ÷ 성장자산, 최대 30%).
           </p>
         </Card>
-      )}
+        );
+      })()}
 
       {selected === 'guardrail' && (
         <Card title="가드레일 설정" className="mt-4">

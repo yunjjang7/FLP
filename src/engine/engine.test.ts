@@ -14,7 +14,7 @@ import { bearTodo, milestones, normalTodo, peakTodo, monthsUntil, pensionOpenMon
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, marketPrescription, normalPrescription, peakPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
 import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, marketChecks, retiredBasis, riskChecks } from './risk';
-import { baseBalanceAt, basePlanWithdrawal, bucketDesc, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, rebaseDiff, refixBase, restoreBase, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
+import { baseBalanceAt, basePlanWithdrawal, bucketDesc, bucketStart, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, rebaseDiff, refixBase, restoreBase, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
 import type { Draw, Goal, PlanBase } from '../types';
 import { carryBefore, carryOverPlan, carryPatch, undoCarryPlan, undoPatch, drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws, yearEndAccounts } from './drawLog';
 import { balanceAt, checkAges, lumpGrid, lumpTotal, returnScenarios, runScenario, scaleLiving, scaleLumps } from './scenarios';
@@ -386,6 +386,23 @@ describe('인출 전략', () => {
     const other = compareStrategy('bucket', { ...inp, bucket: { cashYears: 4, bondYears: 8 } }, 200);
     expect(other.p50).not.toEqual(def.p50);
     expect(bucketDesc({ cashYears: 3, bondYears: 6 })).toContain('현금(3년치)·채권(6년치)');
+  });
+  it('3-버킷 시작 배분: 현금·채권은 첫해 필요 인출의 연수만큼, 성장자산 수익률은 전체 기대수익률이 같도록 역산', () => {
+    // 첫해 필요 4,000 → 현금 8,000·채권 20,000·성장 32,000
+    const b = bucketStart(inp);
+    expect(b.cash).toBeCloseTo(8000, 6);
+    expect(b.bond).toBeCloseTo(20000, 6);
+    expect(b.growth).toBeCloseTo(32000, 6);
+    expect(b.growthReturn).toBeCloseTo((0.05 * 60000 - 0.025 * 8000 - 0.04 * 20000) / 32000, 9);
+    expect(b.totalReturn).toBeCloseTo(0.05, 9);
+    expect(b.capped).toBe(false);
+    // 연수를 늘리면 성장자산이 줄고 역산 수익률·변동성이 오름, 12% 상한에 걸리면 전체 기대수익률이 낮아짐
+    const big = bucketStart({ ...inp, bucket: { cashYears: 5, bondYears: 8 } });
+    expect(big.growth).toBeCloseTo(8000, 6);
+    expect(big.growthReturn).toBeCloseTo(0.12, 9);
+    expect(big.growthVol).toBeCloseTo(0.3, 9);
+    expect(big.capped).toBe(true);
+    expect(big.totalReturn).toBeLessThan(0.05);
   });
 });
 
