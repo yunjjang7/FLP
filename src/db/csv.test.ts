@@ -91,13 +91,15 @@ describe('CSV 입출력', () => {
     expect(errors).toEqual([]);
     expect(rows).toEqual(ins);
   });
-  it('양식에 부동산·연금(자산배분)·노란우산 예시 행 포함', () => {
+  it('양식에 부동산·ISA·연금(자산배분)·노란우산 예시 행 포함', () => {
     const { rows, errors } = fromCSV('assets', templateCSV('assets'));
     expect(errors).toEqual([]);
-    expect(rows.map((r) => r.type)).toEqual(['deposit', 'realestate', 'pension', 'other']);
-    expect(rows[2]).toMatchObject({ pensionKind: 'irp', alloc: { equity: 60, bond: 25, alt: 5, cash: 10 }, nature: 'invest' });
+    expect(rows.map((r) => r.type)).toEqual(['deposit', 'realestate', 'etf', 'pension', 'other']);
+    expect(rows[2]).toMatchObject({ acctKind: 'isa', isaEndYear: 2028, alloc: { equity: 80, bond: 20, alt: 0, cash: 0 } });
+    expect(rows[3]).toMatchObject({ pensionKind: 'irp', alloc: { equity: 60, bond: 25, alt: 5, cash: 10 }, nature: 'invest' });
+    expect(rows[3].acctKind).toBeUndefined();
     expect(rows[0].alloc).toBeUndefined(); // 예금은 비율 열을 읽지 않음
-    expect(rows[3]).toMatchObject({ yu: true, yuPay: 600, yuPayTo: 2039, yuLastMonths: 3, yuJoin: 2016, yuJoinMonth: 9, yuPayoutMonth: 3 });
+    expect(rows[4]).toMatchObject({ yu: true, yuPay: 600, yuPayTo: 2039, yuLastMonths: 3, yuJoin: 2016, yuJoinMonth: 9, yuPayoutMonth: 3 });
     expect(rows[1]).toMatchObject({ reUse: 'rental', rent: 100, deposit: 5000, owner: 'joint', ownerShare: 50 });
   });
   it('템플릿과 영문 키·쉼표 금액 허용', () => {

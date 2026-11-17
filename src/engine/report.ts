@@ -125,6 +125,9 @@ export function buildReport(x: ReportInput): ReportSection[] {
     ...(s.financialAssets > 0 && s.byClass.length
       ? [{ text: `금융자산 구성은 ${s.byClass.map((c) => `${c.label} ${pct((c.value / s.financialAssets) * 100)}`).join(' · ')}이고, 투자형(주식형 + 대체) 비중은 ${pct(s.investShare)}입니다.` }]
       : []),
+    ...(s.byAcct.some((g) => g.key !== 'none')
+      ? [{ text: `주식·펀드·ETF는 ${s.byAcct.map((g) => `${g.label} ${won(g.value)}`).join(', ')}입니다.` }]
+      : []),
     {
       text: `노후 계산은 지금 꺼내 쓸 수 있는 금융자산 ${won(inp.startBalance)}에서 시작합니다(기대수익률 ${inp.meanReturn.toFixed(1)}%, 변동성 ${inp.volatility.toFixed(1)}%${inp.retireMeanReturn !== undefined ? `, 은퇴 후 ${inp.retireMeanReturn.toFixed(1)}%` : ''}).`,
     },

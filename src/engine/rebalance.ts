@@ -1,5 +1,6 @@
 import type { Alloc, Asset, Nature } from '../types';
 import { allocOf, allocReturn, hasAlloc, investAmountOf, IRP_RISK_CAP, isCappedAsset, natureOfAlloc, shiftAlloc } from './allocation';
+import { isIsa } from './account';
 import { isLocked } from './goals';
 import { accountName, ASSET_TYPES, groupOf, isFinancial, mergeAccounts, NATURE_LABEL } from './portfolio';
 
@@ -45,17 +46,20 @@ export interface Rebalance {
   accounts: RebalanceSwitch[];
   /** 계좌 안 교체만으로는 못 맞춰, 연금계좌에서 돈을 빼 계좌 밖에서 사야 맞춰지는 금액 */
   outside: number;
+  /** 연금계좌·ISA 밖(팔 때 세금이 붙을 수 있는 계좌)에서 파는 금액: 일반 사고팔기 + 비율을 넣은 일반 계좌의 계좌 안 교체 */
+  taxable: number;
   /** 움직일 수 있는 자산이 모자라 어떻게 해도 맞추지 못하는 금액 */
   short: number;
 }
 
-/** 줄일 금액을 넘치는 쪽 자산에 나누는 방식: 'ratio' 바꿀 수 있는 금액 비례, 'pensionFirst' 세금 없는 연금계좌부터 */
+/** 줄일 금액을 넘치는 쪽 자산에 나누는 방식: 'ratio' 바꿀 수 있는 금액 비례, 'pensionFirst' 세금 없는 계좌부터(연금계좌 → ISA → 그 밖) */
 export type RebalanceMode = 'ratio' | 'pensionFirst';
 
 /**
  * 목표 투자형 비중에 맞추려면 무엇을 얼마나 사고팔지를 계좌별로 나눠 계산.
  * - 'ratio': 넘치는 쪽 자산을 바꿀 수 있는 금액에 비례해 줄임.
- * - 'pensionFirst': 연금계좌의 바꿀 수 있는 금액을 먼저 채우고(연금계좌끼리는 비례), 모자란 만큼만 일반계좌에서 비례로 팖.
+ * - 'pensionFirst': 연금계좌의 바꿀 수 있는 금액을 먼저 채우고(연금계좌끼리는 비례), 모자라면 ISA(계좌 구분 ISA, 운용 중 사고팔아도 바로 과세하지 않음),
+ *   그래도 모자란 만큼만 나머지(일반·구분 안 함)에서 비례로 팖.
  *   옮기는 합계·outside·short 는 두 방식이 같음.
  * - 일반계좌에서 판 돈은 일반계좌의 모자란 쪽 자산을 평가액에 비례해 삼(없으면 살 곳은 비워 둠).
  * - 연금계좌(자산 한 줄 = 계좌 하나)는 판 돈으로 같은 계좌 안에서 반대 성격 상품을 삼.
@@ -95,15 +99,20 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
   };
   const room = from.reduce((s, a) => s + limit(a), 0);
   const size = needed ? Math.min(Math.abs(want), room) : 0;
-  // 연금계좌부터: 연금계좌 몫(penSize)을 연금계좌끼리, 나머지(genSize)를 일반계좌끼리 각각 limit 비례로
-  const penRoom = from.filter((a) => a.type === 'pension').reduce((s, a) => s + limit(a), 0);
-  const genRoom = room - penRoom;
-  const penSize = Math.min(size, penRoom);
-  const genSize = size - penSize;
+  // 세금 없는 계좌부터: 연금계좌(0) → ISA(1) → 나머지(2) 순으로 각 단계 안에서는 limit 비례
+  const tier = (a: Asset) => (a.type === 'pension' ? 0 : isIsa(a) ? 1 : 2);
+  const tierRoom = [0, 1, 2].map((k) => from.filter((a) => tier(a) === k).reduce((s, a) => s + limit(a), 0));
+  const tierSize: number[] = [];
+  let left = size;
+  for (const r of tierRoom) {
+    const take = Math.min(left, r);
+    tierSize.push(take);
+    left -= take;
+  }
   const part = (a: Asset) => {
     if (mode === 'pensionFirst') {
-      if (a.type === 'pension') return penRoom > 0 ? (penSize * limit(a)) / penRoom : 0;
-      return genRoom > 0 ? (genSize * limit(a)) / genRoom : 0;
+      const k = tier(a);
+      return tierRoom[k] > 0 ? (tierSize[k] * limit(a)) / tierRoom[k] : 0;
     }
     return room > 0 ? (size * limit(a)) / room : 0;
   };
@@ -141,6 +150,7 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
     pensions: size > 0 ? from.filter((a) => a.type === 'pension').map(sw) : [],
     accounts: size > 0 ? from.filter((a) => a.type !== 'pension' && hasAlloc(a)).map(sw) : [],
     outside,
+    taxable: from.filter((a) => tier(a) === 2).reduce((s, a) => s + part(a), 0),
     short: rest - outside,
   };
 }

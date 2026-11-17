@@ -15,6 +15,8 @@ export type AssetClass = 'equity' | 'bond' | 'alt' | 'cash';
 export type Alloc = Record<AssetClass, number>;
 /** 연금계좌 종류: 연금저축 · IRP · DC형 퇴직연금(IRP·DC는 위험자산 70% 한도) */
 export type PensionKind = 'savings' | 'irp' | 'dc';
+/** 주식·펀드·ETF 계좌 구분: ISA(개인종합자산관리계좌) · 일반(위탁) 계좌 */
+export type AcctKind = 'isa' | 'general';
 
 export interface Asset {
   id?: number;
@@ -58,6 +60,8 @@ export interface Asset {
   order?: number; // 기본 정보 화면 카드 순서(작을수록 위, 없으면 id 순). 계산에는 쓰지 않음
   alloc?: Partial<Alloc>; // 계좌 안 자산배분(주식·펀드·ETF·연금·기타): 비율을 넣으면 위험자산(주식형+대체) 몫만 투자형으로 셈, 성격은 비율로 자동
   pensionKind?: PensionKind; // 연금계좌 종류(비우면 이름에 IRP·DC·퇴직이 들어가는지로 70% 한도 판단)
+  acctKind?: AcctKind; // 주식·펀드·ETF 계좌 구분(비우면 구분 안 함): 리밸런싱 ‘세금 없는 계좌부터’ 순서, ISA 만기 연금 이전 처방
+  isaEndYear?: number; // ISA 만기 연도(ISA 만): 만기 자금을 연금계좌로 옮길 때 추가 세액공제 처방
   group?: string; // 연금계좌: 같은 계좌 이름(리밸런싱 ‘자산 탭에 반영’으로 나눈 줄). 값이 같은 줄은 한 계좌로 합쳐 세금·한도·인출 순서·이정표를 계산
 }
 
@@ -217,7 +221,7 @@ export interface Profile {
   riskProfile: RiskProfile;
   targetAlloc?: Alloc; // 리밸런싱 목표 자산군 비율(%, 있으면 목표 투자형 비중 = 주식형 + 대체)
   targetInvest?: number; // 리밸런싱 목표 투자형 비중(%, 0·없음이면 투자 성향 권장값)
-  rebalanceMode?: 'ratio' | 'pensionFirst'; // 리밸런싱 배분 방식(없음이면 'ratio': 바꿀 수 있는 금액 비례, 'pensionFirst': 연금계좌부터)
+  rebalanceMode?: 'ratio' | 'pensionFirst'; // 리밸런싱 배분 방식(없음이면 'ratio': 바꿀 수 있는 금액 비례, 'pensionFirst': 세금 없는 계좌부터 — 연금계좌 → ISA → 일반)
   retireMonthlyExpense: number; // 은퇴 후 월 생활비(현재가치)
   dependentYears: number; // 부양 필요 기간(년)
   nationalPension: number; // 국민연금 월 수령액(현재가치)

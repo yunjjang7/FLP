@@ -12,7 +12,7 @@ import { JoinAccount, UndoBar } from './JoinAccount';
 
 const MODE_LABELS: Record<RebalanceMode, string> = {
   ratio: '바꿀 수 있는 금액에 비례',
-  pensionFirst: '연금계좌부터 먼저',
+  pensionFirst: '세금 없는 계좌부터(연금 → ISA)',
 };
 import { Badge, Card } from './ui';
 
@@ -62,15 +62,16 @@ export function RebalanceCard() {
   const target = goal ? riskPct(goal) : plain;
   const mode: RebalanceMode = p.rebalanceMode ?? 'ratio';
   const nowYear = p.birthYear + s.age;
-  const ratioGen = rebalance(assets, target, nowYear, REBALANCE_BAND, 'ratio', goal).general.amount;
-  const firstGen = rebalance(assets, target, nowYear, REBALANCE_BAND, 'pensionFirst', goal).general.amount;
+  // 연금계좌·ISA 밖(팔 때 세금이 붙을 수 있는 계좌)에서 파는 금액
+  const ratioGen = rebalance(assets, target, nowYear, REBALANCE_BAND, 'ratio', goal).taxable;
+  const firstGen = rebalance(assets, target, nowYear, REBALANCE_BAND, 'pensionFirst', goal).taxable;
   const r = rebalance(assets, target, nowYear, REBALANCE_BAND, mode, goal);
   const gaps = goal ? classGaps(assets.filter((a) => isFinancial(a) && a.amount > 0), goal) : [];
   const goalRaw = p.targetAlloc;
   const goalSum = goalRaw ? ASSET_CLASSES.reduce((a, k) => a + (goalRaw[k] || 0), 0) : 0;
   const setGoal = (k: AssetClass, v: number) => db.profile.put({ ...p, targetAlloc: { ...(goalRaw ?? defaultGoal(plain)), [k]: Math.max(0, Math.min(100, v)) } });
   if (r.total <= 0) return null;
-  const saved = ratioGen - firstGen; // 연금계좌부터 바꾸면 일반계좌에서 덜 파는 금액
+  const saved = ratioGen - firstGen; // 세금 없는 계좌부터 바꾸면 과세 계좌에서 덜 파는 금액
   const toSafe = r.shift > 0;
   const fromLabel = toSafe ? '투자형' : '안전형';
   const toLabel = toSafe ? '안전형' : '투자형';
@@ -168,9 +169,9 @@ export function RebalanceCard() {
         {r.needed && (
           <p className="min-w-0 break-keep text-sm text-muted">
             {saved > 0.5 ? (
-              <>연금계좌부터 바꾸면 일반계좌에서 파는 금액이 <b className="whitespace-nowrap text-ink">{won(ratioGen)} → {won(firstGen)}</b> <span className="whitespace-nowrap">({won(saved)} 줄어듦)</span></>
+              <>세금 없는 계좌부터 바꾸면 연금계좌·ISA 밖에서 파는 금액이 <b className="whitespace-nowrap text-ink">{won(ratioGen)} → {won(firstGen)}</b> <span className="whitespace-nowrap">({won(saved)} 줄어듦)</span></>
             ) : (
-              <>어느 순서로 줄여도 일반계좌에서 파는 금액은 <b className="whitespace-nowrap">{won(firstGen)}</b>으로 차이가 없습니다.</>
+              <>어느 순서로 줄여도 연금계좌·ISA 밖에서 파는 금액은 <b className="whitespace-nowrap">{won(firstGen)}</b>으로 차이가 없습니다.</>
             )}
           </p>
         )}
@@ -285,7 +286,7 @@ export function RebalanceCard() {
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">
         <li>
           {mode === 'pensionFirst'
-            ? '넘치는 쪽 자산 가운데 세금 없는 연금계좌부터 바꿀 수 있는 만큼 먼저 바꾸고(연금계좌끼리는 바꿀 수 있는 금액에 비례), 모자란 만큼만 일반계좌에서 비례해 파는 계산입니다.'
+            ? '넘치는 쪽 자산 가운데 세금 없는 연금계좌부터 바꿀 수 있는 만큼 먼저 바꾸고(연금계좌끼리는 바꿀 수 있는 금액에 비례), 모자라면 계좌 구분을 ISA로 고른 주식·펀드·ETF(계좌 안에서 사고팔아도 만기까지 과세하지 않음)에서, 그래도 모자란 만큼만 나머지 계좌에서 비례해 파는 계산입니다.'
             : '넘치는 쪽 자산을 바꿀 수 있는 금액에 비례해 줄이는 계산입니다.'}{' '}
           어느 상품을 사고팔지는 직접 정하면 되고, 상품 추천이 아닙니다.</li>
         <li>연금계좌는 자산 탭의 한 줄을 계좌 하나로 보고, 판 돈으로 <b>같은 계좌 안에서</b> 반대 성격 상품을 사는 것으로 계산합니다. 계좌에서 실제로 바꾼 뒤 ‘자산 탭에 반영’을 누르면 그 계좌를 투자형·안전형 두 줄로 나눠 저장합니다(새 줄 이름은 ‘계좌 이름 (안전형|투자형)’, 과세제외·퇴직금 재원은 금액 비례로 나누고 명의·연금수령 1년차·인출 순서 등은 그대로 복사, 새 줄의 기대수익률·변동성은 가진 같은 성격 자산의 평균).</li>

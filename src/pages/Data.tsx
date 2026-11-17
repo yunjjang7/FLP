@@ -7,6 +7,7 @@ import { housePension, HP_LOAN, HP_MARKET_CAP, hpEstate, hpEstimate, hpLoanOf, n
 import { JoinAccount, UndoBar } from '../components/JoinAccount';
 import { AllocEditor } from '../components/AllocEditor';
 import { canAlloc, hasAlloc, isRiskCappedName, PENSION_KIND_LABEL } from '../engine/allocation';
+import { ACCT_KIND_LABEL, canAcctKind, isaTransferBase } from '../engine/account';
 import { alignAccount, setAccountKey, setGroupInDb } from '../db/accountOps';
 import { ACCOUNT_KEY_LABEL, ACCOUNT_KEYS, accountMismatch, ASSET_TYPES, groupNames, groupNotes, groupOf, insuredBirthYear, type AccountKey, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
@@ -1089,14 +1090,16 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
   const yu = isYu(a) && !pension;
   // 노란우산: 소득공제 비율·절세액은 종합소득세 추정 행에서(사업소득은 프로필 ‘그 밖의 소득’, 법인 대표는 세전 총급여)
   const taxRows = useMemo(() => (yu ? incomeTaxSchedule(p, nowYear, undefined, assets, liabilities, summary.yearShare ?? 1) : undefined), [yu, p, nowYear, assets, liabilities, summary.yearShare]);
-  const [open, setOpen] = useState(pension || locked || yu || (a.owner ?? 'self') !== 'self');
+  const acct = canAcctKind(a);
+  const [open, setOpen] = useState(pension || locked || yu || (a.owner ?? 'self') !== 'self' || (acct && !!a.acctKind));
   if (!open) {
     return (
       <button className="mt-2 text-xs font-medium text-brand hover:underline" onClick={() => setOpen(true)}>
-        + 명의·수령 시점{pension ? '·연금 재원' : ''} 설정
+        + 명의·수령 시점{pension ? '·연금 재원' : ''}{acct ? '·계좌 구분' : ''} 설정
       </button>
     );
   }
+  const isa = acct && a.acctKind === 'isa';
   const inflow = locked ? lockedInflow(a, p, nowYear, taxRows, summary.yearShare ?? 1) : null;
   // 이 계좌의 그 해 납입액(올해는 남은 달만큼)과 그중 소득공제 받는 금액(공제 기준 납입액 × 명의자 공제 비율)
   // 프로필 ‘올해 소득공제 1~12월 기준’이면 올해 공제는 1~12월 전체 납입액 기준 — 종합소득세 카드·이정표와 같은 행에서
@@ -1115,6 +1118,16 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
         {hasSpouse && (
           <Labeled label="명의">
             <SelectField value={a.owner ?? 'self'} onChange={(v) => onChange('owner', v)} options={{ self: '본인', spouse: '배우자' }} />
+          </Labeled>
+        )}
+        {acct && (
+          <Labeled label="계좌 구분" hint={a.acctKind === 'isa' ? '리밸런싱 때 일반 계좌보다 먼저 바꿈' : a.acctKind === 'general' ? '팔 때 세금이 붙을 수 있어 리밸런싱 때 나중에' : '비우면 일반과 같이 계산'}>
+            <SelectField value={a.acctKind ?? ''} onChange={(v) => { onChange('acctKind', v || undefined); if (v !== 'isa' && a.isaEndYear) onChange('isaEndYear', undefined); }} options={{ '': '구분 안 함', ...ACCT_KIND_LABEL }} />
+          </Labeled>
+        )}
+        {isa && (
+          <Labeled label="ISA 만기 연도" hint={(a.isaEndYear ?? 0) > 0 ? `연금계좌로 옮기면 세액공제 대상 ${won(isaTransferBase(a.amount))} 추가` : '넣으면 처방에 연금 이전 효과 표시'}>
+            <NumberField plain value={a.isaEndYear ?? 0} onChange={(v) => onChange('isaEndYear', v > 0 ? v : undefined)} />
           </Labeled>
         )}
         <Labeled label="수령 연도" hint={locked ? `${nowYear}~${a.lockYear! - 1}년 인출 불가` : '0이면 지금 인출 가능'}>

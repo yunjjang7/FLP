@@ -170,6 +170,9 @@ function ClassCard() {
     <div className="mt-4 grid gap-4 lg:grid-cols-2">
       <Card title="자산군 구성 (금융자산)">
         <Donut data={s.byClass} />
+        {s.byAcct.some((g) => g.key !== 'none') && (
+          <p className="mt-3 text-sm">주식·펀드·ETF 계좌 구분: {s.byAcct.map((g) => `${g.label} ${won(g.value)}`).join(' · ')}</p>
+        )}
         <p className="mt-3 text-xs text-muted">
           계좌 안 자산배분 비율을 넣은 자산은 그 비율로, 넣지 않은 자산은 유형·성격으로 나눴습니다(현금·예금·적금·안전형 → 현금성, 채권 → 채권형, 투자형 → 주식형, 투자형 기타 → 대체). 비율은 <SetupLink tab="assets">기본 정보 → 자산</SetupLink>의 주식·펀드·ETF·연금·기타 자산에서 넣습니다.
         </p>

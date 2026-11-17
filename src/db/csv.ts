@@ -2,6 +2,7 @@ import Papa from 'papaparse';
 import { parseMonth } from '../engine/drawLog';
 import { ASSET_TYPES } from '../engine/portfolio';
 import { allocSum, canAlloc, natureOfAlloc, normalizeAlloc } from '../engine/allocation';
+import { canAcctKind } from '../engine/account';
 import type { AssetType } from '../types';
 import type { Draw } from '../types';
 import type { ListTable } from './db';
@@ -20,7 +21,8 @@ const yuRow = (r: Row) => r.yu === true || r.yu === 'true' || r.yu === '예';
 /** 부동산·연금 계좌·노란우산 전용 열인데 그 유형이 아닌 행 */
 const notFor = (f: FieldDef, r: Row) =>
   (f.reOnly && r.type !== 'realestate') || (f.penOnly && r.type !== 'pension') || (f.yuOnly && !yuRow(r)) || (f.penOrYu && r.type !== 'pension' && !yuRow(r)) ||
-  (f.allocOnly && !canAlloc({ type: r.type as AssetType }));
+  (f.allocOnly && !canAlloc({ type: r.type as AssetType })) || (f.acctOnly && !canAcctKind({ type: r.type as AssetType })) ||
+  (f.isaOnly && !(canAcctKind({ type: r.type as AssetType }) && (r.acctKind === 'isa' || r.acctKind === 'ISA')));
 
 /** 'alloc.equity' 처럼 점으로 나눈 키 읽기·쓰기(자산배분 비율 열) */
 const getKey = (r: Row, key: string) => {
@@ -79,7 +81,8 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
     const kind = { type: rec.type, yu: yuCell === '예' || yuCell === 'true' };
     for (const f of extras(table)) {
       const s = String(raw[f.label] ?? raw[f.key] ?? '').trim();
-      if (!s || notFor(f, kind)) continue;
+      // ISA 만기 연도는 앞 열(계좌 구분)에서 읽은 값으로 판단
+      if (!s || notFor(f, { ...kind, acctKind: rec.acctKind })) continue;
       if (f.kind === 'number') setKey(rec, f.key, num(s));
       else if (f.kind === 'text') rec[f.key] = s;
       else {

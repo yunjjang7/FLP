@@ -1,7 +1,8 @@
 import type { Asset, AssetType, Cashflow, Insurance, Liability, Nature, Profile, Purpose, ReUse, RiskProfile } from '../types';
 import { depositOf, RE_USE, reUseOf } from './realestate';
 import { ASSET_CLASSES, CLASS_LABEL, classAmounts, hasAlloc, investAmountOf, mixAlloc, natureOfAlloc } from './allocation';
-import type { AssetClass } from '../types';
+import type { AcctKind, AssetClass } from '../types';
+import { acctAmounts, isaMaturities, type IsaMaturity } from './account';
 
 export const ASSET_TYPES: Record<AssetType, { label: string; ret: number; vol: number; purpose: Purpose; nature: Nature; liquid: boolean }> = {
   cash: { label: '현금·입출금', ret: 1.5, vol: 0, purpose: 'short', nature: 'safe', liquid: true },
@@ -208,6 +209,10 @@ export interface Summary {
   byNature: { key: Nature; label: string; value: number }[];
   /** 금융자산의 자산군별 금액(비율 없는 자산은 유형·성격으로 분류) */
   byClass: { key: AssetClass; label: string; value: number }[];
+  /** 주식·펀드·ETF 평가액의 계좌 구분별 금액(ISA · 일반 · 구분 안 함) */
+  byAcct: { key: AcctKind | 'none'; label: string; value: number }[];
+  /** 만기 연도를 넣은 ISA 와 연금계좌 이전 시 늘어나는 세액공제(만기 순) */
+  isa?: IsaMaturity[];
   portfolioReturn: number; // 금융자산 가중 기대수익률 %
   portfolioVol: number; // 금융자산 가중 변동성 % (단순 가중, 보수적)
   investShare: number; // 금융자산 중 투자형 비중 %
@@ -307,6 +312,8 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
       .map((k) => ({ key: k, label: NATURE_LABEL[k], value: k === 'invest' ? investAmt : financialAssets - investAmt }))
       .filter((g) => g.value > 0.005),
     byClass: ASSET_CLASSES.map((k) => ({ key: k, label: CLASS_LABEL[k], value: cls[k] })).filter((g) => g.value > 0.005),
+    byAcct: acctAmounts(fin),
+    isa: isaMaturities(fin, profile),
     portfolioReturn: financialAssets > 0 ? w((a) => a.expectedReturn) : 3,
     portfolioVol: financialAssets > 0 ? w((a) => a.volatility) : 5,
     investShare: financialAssets > 0 ? (investAmt / financialAssets) * 100 : 0,

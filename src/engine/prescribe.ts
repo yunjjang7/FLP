@@ -20,6 +20,29 @@ export interface Prescription {
 const fmt = (v: number) => won(v, false);
 
 /**
+ * ISA 만기 처방: 만기 연도를 넣은 ISA 마다, 만기 자금을 연금계좌로 옮기면 늘어나는 세액공제 대상(옮긴 금액의 10%, 최대 300만)과 예상 환급.
+ * 만기가 올해·내년이면 주의, 더 뒤면 참고. 만기 연도가 지났으면 연장했는지 확인하라고 안내. fixedRate: 추가 납입 설정에 공제율을 직접 넣었는지
+ */
+export function isaPrescriptions(s: Pick<Summary, 'isa'>, nowYear: number, fixedRate = false): Prescription[] {
+  return (s.isa ?? []).map((x) => {
+    if (x.endYear < nowYear) {
+      return {
+        area: '투자' as const, level: 'caution' as const,
+        title: `${x.name} 만기 연도(${x.endYear}년)가 지났음`,
+        detail: '만기를 연장했으면 자산 탭에서 새 만기 연도로 고치세요. 해지했다면 받은 돈을 어디로 옮겼는지 자산 탭에 반영하세요.',
+      };
+    }
+    const soon = x.endYear - nowYear <= 1;
+    const credit = fixedRate || Math.abs(x.creditHigh - x.creditLow) < 0.05 ? `약 ${fmt(x.creditHigh)}원` : `약 ${fmt(x.creditLow)}~${fmt(x.creditHigh)}원(공제율 13.2~16.5%)`;
+    return {
+      area: '투자' as const, level: soon ? ('caution' as const) : ('good' as const), ...(soon ? {} : { badge: '참고' }),
+      title: `${x.name} ${x.endYear}년 만기 — 연금계좌로 옮기면 세액공제 대상 ${fmt(x.base)}원 추가`,
+      detail: `ISA 만기 후 60일 안에 연금저축·IRP로 옮기면 옮긴 금액의 10%(최대 300만원)를 그 해 연금계좌 세액공제 대상에 더합니다. 지금 평가액 ${fmt(x.amount)}원을 모두 옮기면 환급 ${credit}(그 해 낸 종합소득세까지만). 옮긴 돈은 55세 이후 연금으로 받고, 세액공제 받은 금액은 연금소득세 대상이 됩니다.`,
+    };
+  });
+}
+
+/**
  * 만기일시 상환 대출 점검: 만기 나이가 없으면 입력 요청, 있으면 만기에 원금을 금융자산으로 갚을 수 있는지
  * (평균 수익 가정 경로에서 만기 해 초 잔액 대비 원금, 상환 뒤 잔액)를 알려 줌
  */
@@ -345,6 +368,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
       detail: `${RISK_PROFILES[profile.riskProfile].label} 성향 기준 권장 비중과 차이가 큽니다.`,
     });
   }
+  out.push(...isaPrescriptions(s, profile.birthYear + s.age, (profile.contrib?.selfRate ?? 0) > 0));
 
   if (retired) {
     // 인출 중에는 월 적립 처방 대신 인출 계획에 들어 있다는 안내만
