@@ -180,6 +180,16 @@ export const retireOutflowAt = (input: PlanInput, age: number, cut = 0) =>
     ? Math.max(0, input.fixedDraw * (1 - cut) * nominalFactor(0, input.inflation, age - expenseBaseAge(input)) - publicPensionAt(input, age)) + retireDebtAt(input, age)
     : expenseAt(input, age) * (1 - cut) - pensionAt(input, age) + debtPaymentAt(input, age);
 
+/**
+ * 하락장 가드레일로 그 나이 한 해에 줄일 인출: 생활비를 pct% 줄였을 때 retireOutflowAt 이 줄어드는 금액(명목, 만원).
+ * pct 가 0 이하이거나 줄어드는 금액이 없으면 null (buckets.ts bearPlan 의 cut)
+ */
+export function guardCut(input: PlanInput, age: number, pct: number): { pct: number; amount: number } | null {
+  if (!(pct > 0)) return null;
+  const amount = Math.max(0, retireOutflowAt(input, age) - retireOutflowAt(input, age, Math.min(100, pct) / 100));
+  return amount > 0.5 ? { pct, amount } : null;
+}
+
 /** 해당 나이의 기대수익률·변동성(%) */
 export function returnAt(input: PlanInput, age: number) {
   if (age >= input.retireAge && input.retireMeanReturn !== undefined) {

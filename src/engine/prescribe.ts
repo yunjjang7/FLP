@@ -2,13 +2,13 @@ import { won } from '../lib/format';
 import type { Level, Profile } from '../types';
 import { onceGoalPlans, type GoalPlan } from './goals';
 import type { InsuranceGap } from './insurance';
-import { debtAnnualAt, deterministicPath, expenseAt, nominalFactor, solveFor, weakestGuardrail, withdrawStart, type PlanInput } from './montecarlo';
+import { debtAnnualAt, deterministicPath, expenseAt, guardCut, nominalFactor, solveFor, weakestGuardrail, withdrawStart, type PlanInput } from './montecarlo';
 import type { Retax } from './pensionTaxPlan';
 import { RISK_PROFILES, type Summary } from './portfolio';
 import { BUCKET_GUIDE_LINK, emergencyMonths, emergencyRunway, withdrawLevel } from './risk';
 import { EMERGENCY_LOCK_MONTHS, goalTimingGaps, type MaturityRow } from './maturity';
 import { ISA_SEP_TAX, type IsaTax } from './account';
-import { BEAR_DROP, bearPlan, normalPlan, peakPlan, pensionEquityOutNote, CASH_YEARS_TARGET, cashMoveRows, cashShortText, cashRunway, marketDateNote, pensionBondOutNote, pensionFrom55, type BondsOnHand, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
+import { BEAR_DROP, bearCutText, bearPlan, normalPlan, peakPlan, pensionEquityOutNote, CASH_YEARS_TARGET, cashMoveRows, cashShortText, cashRunway, marketDateNote, pensionBondOutNote, pensionFrom55, type BearCut, type BondsOnHand, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
 
 export interface Prescription {
   title: string;
@@ -142,20 +142,22 @@ export function pensionOutPrescription(c: CashOnHand, run?: { usable: number; al
 /** 하락장 처방 제목 앞부분(요약 보고에서 잘리지 않게 찾을 때) */
 export const BEAR_RX_TITLE = '하락장: 주식형 매도 멈춤';
 
-export function marketPrescription(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: Pick<CashOnHand, 'usable'>, yearDraw: number, bonds: number | BondsOnHand, now: Date): Prescription | null {
+export function marketPrescription(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: Pick<CashOnHand, 'usable'>, yearDraw: number, bonds: number | BondsOnHand, now: Date, cut?: BearCut | null): Prescription | null {
   const dd = profile.marketDrawdown ?? 0;
-  const b = bearPlan(dd, c.usable, yearDraw, bonds);
+  const b = bearPlan(dd, c.usable, yearDraw, bonds, cut);
   if (!b) return null;
   const { bond, fromBond, left } = b;
   const date = marketDateNote(profile.marketDrawdownDate, now);
   const have = cashShortText(b, yearDraw);
+  // 채권형으로도 모자라면 점검기준 하락장 생활비 감축률로 한 해에 줄일 인출(b.cut)
+  const guard = `가드레일${b.cut ? `, ${bearCutText(b)}` : ''}`;
   const how = fromBond > 0.5
-    ? ` 지금 주식형을 팔면 떨어진 값에 손실을 확정하니, 채권형(지금 ${fmt(bond)}원)에서 ${fmt(fromBond)}원을 먼저 꺼내 쓰세요.${left > 0.5 ? ` 채권형을 다 꺼내도 ${fmt(left)}원이 모자라니 회복할 때까지 인출을 줄이거나(가드레일), 올랐다면 금 ETF 같은 대체자산 일부로 채우세요.` : ''}`
-    : ` 꺼낼 채권형도 없어, 회복할 때까지 인출을 줄이거나(가드레일) 올랐다면 금 ETF 같은 대체자산 일부로 채우세요.`;
+    ? ` 지금 주식형을 팔면 떨어진 값에 손실을 확정하니, 채권형(지금 ${fmt(bond)}원)에서 ${fmt(fromBond)}원을 먼저 꺼내 쓰세요.${left > 0.5 ? ` 채권형을 다 꺼내도 ${fmt(left)}원이 모자라니 회복할 때까지 인출을 줄이거나(${guard}), 올랐다면 금 ETF 같은 대체자산 일부로 채우세요.` : ''}`
+    : ` 꺼낼 채권형도 없어, 회복할 때까지 인출을 줄이거나(${guard}) 올랐다면 금 ETF 같은 대체자산 일부로 채우세요.`;
   const outNote = pensionBondOutNote(b);
   return {
     area: '노후', level: 'caution',
-    title: fromBond > 0.5 ? `${BEAR_RX_TITLE} — 채권형에서 ${fmt(fromBond)}원 먼저 꺼내기` : `${BEAR_RX_TITLE} — 인출 줄이기`,
+    title: fromBond > 0.5 ? `${BEAR_RX_TITLE} — 채권형에서 ${fmt(fromBond)}원 먼저 꺼내기` : b.cut ? `${BEAR_RX_TITLE} — 인출 한 해 ${fmt(b.cut.amount)}원 줄이기` : `${BEAR_RX_TITLE} — 인출 줄이기`,
     link: BUCKET_GUIDE_LINK,
     detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${dd}%${date ? `, ${date.text}` : ''})이 하락장 기준(−${BEAR_DROP}% 이하)입니다. ${have}${how}${outNote} 주식형이 회복하면 고점 부근에서 일부를 팔아 현금성 바구니를 다시 채웁니다.`,
   };
@@ -500,7 +502,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
     if (outRx) out.push(outRx);
   }
   // 하락장: 바로 쓸 돈이 2년치에 못 미치면 채권형부터 꺼낼 금액
-  const bearRx = cash ? marketPrescription(profile, cash, st.outflow, bonds ?? s.byClass.find((x) => x.key === 'bond')?.value ?? 0, now) : null;
+  const bearRx = cash ? marketPrescription(profile, cash, st.outflow, bonds ?? s.byClass.find((x) => x.key === 'bond')?.value ?? 0, now, guardCut(input, st.age, profile.criteria.guardrailCut)) : null;
   if (bearRx) out.push(bearRx);
   // 고점 부근: 바로 쓸 돈이 2년치에 못 미치면 주식형 일부를 팔아 채울 금액
   const peakRx = cash ? peakPrescription(profile, cash, st.outflow, equity ?? s.byClass.find((x) => x.key === 'equity')?.value ?? 0, now) : null;

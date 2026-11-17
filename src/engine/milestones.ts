@@ -7,7 +7,7 @@ import { PENSION_OPEN_AGE } from './tax';
 import { isYu, validMonths } from './yellowUmbrella';
 import { isaMaturities, type IsaMaturity } from './account';
 import { maturities, type MaturityRow } from './maturity';
-import type { BearPlan, NormalPlan, PeakPlan } from './buckets';
+import { bearCutText, type BearPlan, type NormalPlan, type PeakPlan } from './buckets';
 
 export type MilestoneKind = 'review' | 'open' | 'limit' | 'lump' | 'pension' | 'tax' | 'contrib' | 'estate' | 'loan' | 'goal' | 'maturity';
 
@@ -243,8 +243,8 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
 /** 하락장 할 일 문구: 채권형에서 먼저 꺼낼 금액, 모자라면 인출 줄이기, 55세 전이라 뺀 연금계좌 채권형 */
 export function bearTodo(b: BearPlan): string {
   const head = b.fromBond > 0.5
-    ? `하락장: 주식형 매도 멈춤, 채권형에서 ${man(b.fromBond)} 먼저 꺼내기${b.left > 0.5 ? ` · 그래도 ${man(b.left)} 모자라 인출 줄이기` : ''}`
-    : '하락장: 주식형 매도 멈춤, 꺼낼 채권형이 없어 인출 줄이기';
+    ? `하락장: 주식형 매도 멈춤, 채권형에서 ${man(b.fromBond)} 먼저 꺼내기${b.left > 0.5 ? ` · 그래도 ${man(b.left)} 모자라 인출 줄이기${b.cut ? `(${bearCutText(b, man)})` : ''}` : ''}`
+    : `하락장: 주식형 매도 멈춤, 꺼낼 채권형이 없어 인출 줄이기${b.cut ? `(${bearCutText(b, man)})` : ''}`;
   return `${head}${b.out > 0.5 ? `(55세 전 연금계좌 채권형 ${man(b.out)} 제외)` : ''}`;
 }
 

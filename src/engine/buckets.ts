@@ -240,13 +240,18 @@ export interface BearPlan {
   left: number; // 채권형을 다 꺼내도 모자란 금액
   out: number; // 55세 전이라 뺀 연금계좌 안 채권형
   outParts: PensionCashParts;
+  cut?: BearCut; // 채권형을 다 꺼내도 모자랄 때 점검기준 하락장 생활비 감축률로 한 해에 줄일 인출
 }
+
+/** 하락장 인출 줄이기: 점검기준 ‘하락장 생활비 감축’ 비율(pct, %)과 그 비율로 첫해 한 해에 줄일 인출(amount, montecarlo.ts guardCut) */
+export interface BearCut { pct: number; amount: number }
 
 /**
  * 하락장 인출 계획: 등락률이 −15% 이하이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면 모자란 금액을 채권형에서 먼저 꺼냄.
- * bonds 가 숫자면 모두 꺼낼 수 있다고 봄. 하락장이 아니거나 인출이 없거나 2년치가 있으면 null
+ * bonds 가 숫자면 모두 꺼낼 수 있다고 봄. 하락장이 아니거나 인출이 없거나 2년치가 있으면 null.
+ * cut 을 넘기면 채권형을 다 꺼내도 모자랄 때(또는 꺼낼 채권형이 없을 때) 한 해에 줄일 인출을 함께 담음(감축률·금액이 0이면 담지 않음)
  */
-export function bearPlan(drawdown: number | undefined, usable: number, yearDraw: number, bonds: number | BondsOnHand): BearPlan | null {
+export function bearPlan(drawdown: number | undefined, usable: number, yearDraw: number, bonds: number | BondsOnHand, cut?: BearCut | null): BearPlan | null {
   if (marketState(drawdown ?? 0) !== 'bear' || !(yearDraw > 0)) return null;
   const goal = yearDraw * CASH_YEARS_TARGET;
   const have = Math.max(0, usable);
@@ -255,8 +260,18 @@ export function bearPlan(drawdown: number | undefined, usable: number, yearDraw:
   const short = goal - have;
   const bond = Math.max(0, b.usable);
   const fromBond = Math.min(short, bond);
-  return { goal, usable: have, short, bond, fromBond, left: short - fromBond, out: b.out, outParts: b.outParts };
+  const left = short - fromBond;
+  const plan: BearPlan = { goal, usable: have, short, bond, fromBond, left, out: b.out, outParts: b.outParts };
+  if (cut && cut.pct > 0 && cut.amount > 0.5 && (left > 0.5 || fromBond <= 0.5)) plan.cut = cut;
+  return plan;
 }
+
+/**
+ * 하락장 인출 줄이기 금액 안내(이정표·홈 점검·맞춤 처방·인출 바구니·요약 보고 공통): ‘생활비 ○% 감축 시 한 해 ○원’.
+ * 줄일 금액이 없으면 빈 문자열. f 로 금액 표기를 바꿈(이정표는 만원 단위)
+ */
+export const bearCutText = (b: Pick<BearPlan, 'cut'>, f: (v: number) => string = won) =>
+  b.cut ? `생활비 ${b.cut.pct}% 감축 시 한 해 ${f(b.cut.amount)}` : '';
 
 /**
  * 보통 구간 현금성 채우기: 등락률이 0%와 −15% 사이(보통)이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면,

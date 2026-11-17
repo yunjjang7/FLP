@@ -3,7 +3,7 @@ import { createContext, useContext, useEffect, useMemo, type ReactNode } from 'r
 import { db, getProfile, recordSnapshot } from '../db/db';
 import { buildPlanInput, planGoals, type GoalPlan } from '../engine/goals';
 import { insuranceGap, type InsuranceGap } from '../engine/insurance';
-import { retirementNeed, simulate, withdrawStart, type PathTax, type PlanInput, type SimResult } from '../engine/montecarlo';
+import { guardCut, retirementNeed, simulate, withdrawStart, type PathTax, type PlanInput, type SimResult } from '../engine/montecarlo';
 import { summarize, type Summary } from '../engine/portfolio';
 import { makePathTax, makeRetax, type Retax } from '../engine/pensionTaxPlan';
 import { bulletChecks, cashRunwayChecks, marketChecks, financialScore, retiredBasis, riskChecks, type RiskCheck } from '../engine/risk';
@@ -87,6 +87,8 @@ export function FlpProvider({ children }: { children: ReactNode }) {
     const bonds = bondsOnHand(summary.byClass.find((x) => x.key === 'bond')?.value ?? 0, pensionBondParts(assets, profile.spouseBirthYear > 0), ages);
     const equity = bondsOnHand(summary.byClass.find((x) => x.key === 'equity')?.value ?? 0, pensionClassParts(assets, profile.spouseBirthYear > 0, 'equity'), ages);
     const run = cashRunway(runCash, start, planInput.currentAge);
+    // 하락장에 채권형을 다 꺼내도 모자랄 때 한 해에 줄일 인출(점검기준 하락장 생활비 감축률, 노후 진단 가드레일과 같은 계산)
+    const bearCut = guardCut(planInput, start.age, profile.criteria.guardrailCut);
     return {
       loading: false,
       hasData: raw.hasProfile || assets.length > 0,
@@ -96,10 +98,10 @@ export function FlpProvider({ children }: { children: ReactNode }) {
       start,
       goalPlans: planGoals(goals, assets, summary.age),
       ins,
-      cash, runCash, bonds, bear: bearPlan(profile.marketDrawdown, runCash.usable, start.outflow, bonds),
+      cash, runCash, bonds, bear: bearPlan(profile.marketDrawdown, runCash.usable, start.outflow, bonds, bearCut),
       equity, peak: peakPlan(profile.marketDrawdown, runCash.usable, start.outflow, equity),
       normal: normalPlan(profile.marketDrawdown, runCash.usable, start.outflow, bonds, new Date()), cashMove: cashMoveRows(runCash, run),
-      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start), ...cashRunwayChecks(runCash, run, profile), ...marketChecks(profile, runCash, start.outflow, new Date(), equity, bonds)],
+      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start), ...cashRunwayChecks(runCash, run, profile), ...marketChecks(profile, runCash, start.outflow, new Date(), equity, bonds, bearCut)],
       score: financialScore(profile, assets, basis, sim.successRate, ins, start),
     };
   }, [raw]);

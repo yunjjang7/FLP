@@ -4,12 +4,12 @@ import { sampleData } from '../db/sample';
 import { fvAnnuity, fvLump, npsFactor, payoffMonths, pmtForTarget, pvAnnuity, realRate, scale } from './finance';
 import { buildPlanInput, expenseSteps, goalItemsFrom, goalPlanSkips, loanEndAge, onceGoalPlans, lockedInflow, planGoals, retireIncomes } from './goals';
 import { CRITICAL_BASE, insuranceGap } from './insurance';
-import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, GUARD_CUTS, GUARD_DROPS, guardrailSim, incomeValue, weakestGuardrail, outflowAt, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, yearShareAt, type PlanInput } from './montecarlo';
+import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind, guardCut, GUARD_CUTS, GUARD_DROPS, guardrailSim, incomeValue, weakestGuardrail, outflowAt, publicPensionAt, retireOutflowAt, retirementNeed, savingsAt, simulate, solveFor, withdrawStart, yearShareAt, type PlanInput } from './montecarlo';
 import { contribSchedule, creditInflows, hiDependent, hiPropMonthly, hiPropShare, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
-import { accountBuckets, bearPlan, bondsOnHand, cashOnHand, cashShortText, normalPlan, peakPlan, pensionBondOutNote, rebalanceTiming, pensionBondParts, pensionClassParts, isRiskCapped, MARKET_INPUT_HELP, marketDateNote, marketRule, marketState, ymd } from './buckets';
+import { accountBuckets, bearCutText, bearPlan, bondsOnHand, cashOnHand, cashShortText, normalPlan, peakPlan, pensionBondOutNote, rebalanceTiming, pensionBondParts, pensionClassParts, isRiskCapped, MARKET_INPUT_HELP, marketDateNote, marketRule, marketState, ymd } from './buckets';
 import { bearTodo, milestones, normalTodo, peakTodo, monthsUntil, pensionOpenMonth, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, marketPrescription, normalPrescription, peakPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
@@ -1623,6 +1623,40 @@ describe('인출 바구니 등락률: 입력 날짜·하락장 홈 점검', () =
     expect(normalPrescription({ marketDrawdown: -5 }, c, 1000, 5000, now)!.detail).toContain(have);
     expect(marketChecks({ marketDrawdown: 2 }, c, 1000, now, 5000)[0].detail).toContain(have);
     expect(marketChecks({ marketDrawdown: -5 }, c, 1000, now, 0, 5000)[0].detail).toContain(have);
+    // 인출 바구니 ‘지금 적용할 규칙’ 박스도 같은 함수(start.outflow 기준)로 그림: 계획마다 같은 문장
+    for (const p of [bearPlan(-18, 800, 1000, 5000)!, peakPlan(2, 800, 1000, 5000)!, normalPlan(-5, 800, 1000, 5000, now)!]) expect(cashShortText(p, 1000)).toBe(have);
+  });
+
+  it('하락장 인출 줄일 금액: 점검기준 생활비 감축률로 한 해에 줄일 인출(guardCut)을 이정표·홈 점검·맞춤 처방에', () => {
+    // 생활비 3,000만·연금 1,200만 은퇴자: 생활비 10% 감축이면 인출 300만원 감소
+    const retired = { ...base, currentAge: 66, retireAge: 60, startBalance: 50000 };
+    const cut = guardCut(retired, 66, 10)!;
+    expect(cut).toEqual({ pct: 10, amount: expect.closeTo(300, 6) });
+    expect(guardCut(retired, 66, 0)).toBeNull();
+    expect(bearCutText({ cut: { pct: 10, amount: 300 } })).toBe('생활비 10% 감축 시 한 해 300만원');
+    expect(bearCutText({})).toBe('');
+    const c300 = { pct: 10, amount: 300 };
+    // 채권형을 다 꺼내도 모자랄 때
+    const b = bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 });
+    const plan = bearPlan(-18, 800, 1000, b, c300)!;
+    expect(plan.cut).toEqual(c300);
+    expect(bearTodo(plan)).toBe('하락장: 주식형 매도 멈춤, 채권형에서 700만원 먼저 꺼내기 · 그래도 500만원 모자라 인출 줄이기(생활비 10% 감축 시 한 해 300만원)(55세 전 연금계좌 채권형 300만원 제외)');
+    const c = cashOnHand([{ id: 1, name: '파킹통장', type: 'cash', purpose: 'short', amount: 800 }] as never, 2026, 11);
+    const [chk] = marketChecks({ marketDrawdown: -18, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 0, b, c300);
+    expect(chk.value).toBe('채권형 700만원 먼저 꺼내기');
+    expect(chk.detail).toContain('채권형을 다 꺼내도 500만원 모자라니 회복할 때까지 인출을 줄이세요(생활비 10% 감축 시 한 해 300만원).');
+    expect(marketPrescription({ marketDrawdown: -18 }, c, 1000, b, now, c300)!.detail).toContain('인출을 줄이거나(가드레일, 생활비 10% 감축 시 한 해 300만원)');
+    // 꺼낼 채권형이 없을 때
+    const none = bearPlan(-18, 0, 1000, 0, c300)!;
+    expect(bearTodo(none)).toBe('하락장: 주식형 매도 멈춤, 꺼낼 채권형이 없어 인출 줄이기(생활비 10% 감축 시 한 해 300만원)');
+    const [nc] = marketChecks({ marketDrawdown: -20 }, cashOnHand([], 2026, 11), 1000, now, 0, 0, c300);
+    expect(nc.value).toBe('인출 한 해 300만원 줄이기');
+    expect(nc.detail).toContain('꺼낼 채권형이 없어 회복할 때까지 인출을 줄이세요(생활비 10% 감축 시 한 해 300만원).');
+    expect(marketPrescription({ marketDrawdown: -20 }, { usable: 0 }, 1000, 0, now, c300)!.title).toBe('하락장: 주식형 매도 멈춤 — 인출 한 해 300만원 줄이기');
+    // 채권형으로 다 채우면 줄일 금액을 담지 않음, 감축률 0이면 그대로
+    expect(bearPlan(-18, 800, 1000, 5000, c300)!.cut).toBeUndefined();
+    expect(bearPlan(-18, 0, 1000, 0, { pct: 0, amount: 0 })!.cut).toBeUndefined();
+    expect(bearTodo(bearPlan(-18, 0, 1000, 0, null)!)).toBe('하락장: 주식형 매도 멈춤, 꺼낼 채권형이 없어 인출 줄이기');
   });
 
   it('하락장·고점 부근·보통 구간 처방에 인출용 자산 배치 가이드 바로가기', () => {

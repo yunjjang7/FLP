@@ -6,7 +6,7 @@ import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
 import { EMERGENCY_LOCK_MONTHS } from './maturity';
-import { bearPlan, CASH_YEARS_TARGET, cashShortText, cashSourceLabel, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, normalPlan, peakPlan, pensionBondOutNote, pensionEquityOutNote, pensionFrom55, pensionFrom55Note, pensionOutNote, type BondsOnHand, type CashOnHand } from './buckets';
+import { bearCutText, bearPlan, CASH_YEARS_TARGET, cashShortText, cashSourceLabel, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, normalPlan, peakPlan, pensionBondOutNote, pensionEquityOutNote, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearCut, type BondsOnHand, type CashOnHand } from './buckets';
 import { goalBreakdownAt, pensionAt, retireOutflowAt, type PlanInput } from './montecarlo';
 
 /**
@@ -203,7 +203,7 @@ export function cashRunwayChecks(c: CashOnHand, run?: { usable: number; all: num
  * 고점 부근(0% 이상)이고 바로 쓸 돈이 2년치에 못 미치면 ‘고점 부근: 현금성 채우기’ 주의(equity 를 넘길 때, 이때는 재입력 안내를 설명에 붙이고 따로 띄우지 않음).
  * 모든 항목에 인출용 자산 배치 가이드로 가는 링크를 붙임
  */
-export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: CashOnHand, yearDraw: number, now: Date, equity?: number | BondsOnHand, bonds?: number | BondsOnHand): RiskCheck[] {
+export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: CashOnHand, yearDraw: number, now: Date, equity?: number | BondsOnHand, bonds?: number | BondsOnHand, cut?: BearCut | null): RiskCheck[] {
   const dd = profile.marketDrawdown ?? 0;
   const rule = marketRule(dd);
   const date = marketDateNote(profile.marketDrawdownDate, now);
@@ -239,13 +239,15 @@ export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDr
     }];
   }
   // 하락장이고 바로 쓸 돈이 2년치에 못 미치면: 맞춤 처방·이정표와 같은 bearPlan 금액(bonds 를 넘길 때만)
-  const bear = bonds !== undefined ? bearPlan(profile.marketDrawdown, c.usable, yearDraw, bonds) : null;
+  const bear = bonds !== undefined ? bearPlan(profile.marketDrawdown, c.usable, yearDraw, bonds, cut) : null;
   if (bear) {
+    // 채권형을 다 꺼내도 모자라면 점검기준 하락장 생활비 감축률로 한 해에 줄일 인출(bear.cut)도 함께
+    const cutNote = bear.cut ? `(${bearCutText(bear)})` : '';
     const how = bear.fromBond > 0.5
-      ? ` 주식형은 팔지 말고 채권형 가운데 ${won(bear.fromBond)}을 먼저 꺼내 쓰세요.${bear.left > 0.5 ? ` 채권형을 다 꺼내도 ${won(bear.left)} 모자라니 회복할 때까지 인출을 줄이세요.` : ''}`
-      : ' 꺼낼 채권형이 없어 회복할 때까지 인출을 줄이세요.';
+      ? ` 주식형은 팔지 말고 채권형 가운데 ${won(bear.fromBond)}을 먼저 꺼내 쓰세요.${bear.left > 0.5 ? ` 채권형을 다 꺼내도 ${won(bear.left)} 모자라니 회복할 때까지 인출을 줄이세요${cutNote}.` : ''}`
+      : ` 꺼낼 채권형이 없어 회복할 때까지 인출을 줄이세요${cutNote}.`;
     return [{
-      key: 'marketBear', label: '하락장: 주식형 매도 멈춤', value: bear.fromBond > 0.5 ? `채권형 ${won(bear.fromBond)} 먼저 꺼내기` : '인출 줄이기', level: 'caution', link: BUCKET_GUIDE_LINK,
+      key: 'marketBear', label: '하락장: 주식형 매도 멈춤', value: bear.fromBond > 0.5 ? `채권형 ${won(bear.fromBond)} 먼저 꺼내기` : bear.cut ? `인출 한 해 ${won(bear.cut.amount)} 줄이기` : '인출 줄이기', level: 'caution', link: BUCKET_GUIDE_LINK,
       detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률${date ? `(${date.text})` : ''} 기준 ${rule.text} ${cashShortText(bear, yearDraw)}${how}${pensionBondOutNote(bear)}`,
     }];
   }

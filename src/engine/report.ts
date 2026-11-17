@@ -1,6 +1,6 @@
 import { won, pct } from '../lib/format';
 import type { Goal, Level, Liability, Profile } from '../types';
-import { cashShortText, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearPlan, type CashOnHand, type NormalPlan, type PeakPlan } from './buckets';
+import { bearCutText, cashShortText, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearPlan, type CashOnHand, type NormalPlan, type PeakPlan } from './buckets';
 import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
@@ -76,9 +76,10 @@ const bondOut = (b: BearPlan) => b.out > 0.5 ? ` 55세 전 연금계좌 안 채�
 
 /** 하락장 채권형에서 현금성 옮기기 문장(앞에 띄어쓰기 포함) */
 function bearText(b: BearPlan): string {
+  const cut = b.cut ? `(${bearCutText(b)})` : '';
   const how = b.fromBond > 0.5
-    ? `주식형은 팔지 말고 채권형에서 현금성 ${won(b.fromBond)} 옮기기${b.left > 0.5 ? `, 채권형을 다 옮겨도 모자란 ${won(b.left)}은 회복할 때까지 인출을 줄여서` : ''}`
-    : '옮길 채권형이 없어 회복할 때까지 인출 줄이기';
+    ? `주식형은 팔지 말고 채권형에서 현금성 ${won(b.fromBond)} 옮기기${b.left > 0.5 ? `, 채권형을 다 옮겨도 모자란 ${won(b.left)}은 회복할 때까지 인출을 줄여서${cut}` : ''}`
+    : `옮길 채권형이 없어 회복할 때까지 인출 줄이기${cut}`;
   return shortText(b, how, bondOut(b));
 }
 
