@@ -240,6 +240,7 @@ export interface BearPlan {
   left: number; // 채권형을 다 꺼내도 모자란 금액
   out: number; // 55세 전이라 뺀 연금계좌 안 채권형
   outParts: PensionCashParts;
+  fill?: SaveFill; // 보통 구간: 채권형을 다 옮겨도 모자라 저축으로 채울 금액과 지금 월 저축여력으로 걸리는 개월
   cut?: BearCut; // 채권형을 다 꺼내도 모자랄 때 점검기준 하락장 생활비 감축률로 한 해에 줄일 인출
 }
 
@@ -277,12 +278,35 @@ export const bearCutText = (b: Pick<BearPlan, 'cut'>, f: (v: number) => string =
  * 보통 구간 현금성 채우기: 등락률이 0%와 −15% 사이(보통)이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면,
  * 1월 리밸런싱 때 모자란 금액을 채권형에서 현금성 바구니로 옮김(bearPlan 과 같은 계산, 55세 전 연금계좌 안 채권형 뺌).
  * 오늘(now)이 1월이면 올해 1월 리밸런싱, 2월부터는 내년 1월 리밸런싱으로 봄(when·nextYear).
+ * monthly(지금 월 저축여력, 만원)를 넘기면 채권형으로도 모자라 저축으로 채울 금액(left)에 걸리는 개월(fill)을 담음.
  * 등락률을 넣지 않았거나 보통이 아니거나 인출이 없거나 2년치가 있으면 null
  */
-export function normalPlan(drawdown: number | undefined, usable: number, yearDraw: number, bonds: number | BondsOnHand, now: Date): NormalPlan | null {
+export function normalPlan(drawdown: number | undefined, usable: number, yearDraw: number, bonds: number | BondsOnHand, now: Date, monthly?: number): NormalPlan | null {
   const b = normalBase(drawdown, usable, yearDraw, bonds);
-  return b && { ...b, ...rebalanceTiming(now) };
+  if (!b) return null;
+  const fill = saveFill(b.left, monthly);
+  return { ...b, ...rebalanceTiming(now), ...(fill ? { fill } : {}) };
 }
+
+/** 저축으로 채울 금액(amount)을 지금 월 저축여력(monthly, 만원)으로 채우는 데 걸리는 개월(저축여력이 없으면 months 가 null) */
+export interface SaveFill { amount: number; monthly: number; months: number | null }
+
+/** 고점 부근·보통 구간 저축으로 채울 기간. monthly 를 넘기지 않았거나 저축으로 채울 금액이 없으면 undefined */
+export function saveFill(amount: number, monthly?: number): SaveFill | undefined {
+  if (monthly === undefined || !Number.isFinite(monthly) || !(amount > 0.5)) return undefined;
+  const m = Math.max(0, monthly);
+  return { amount, monthly: m, months: m > 0.5 ? Math.ceil(amount / m) : null };
+}
+
+/**
+ * 저축으로 채울 기간 안내(이정표·홈 점검·맞춤 처방·인출 바구니·요약 보고 공통): ‘월 저축여력 ○원 기준 약 ○개월’,
+ * 저축여력이 없으면 ‘지금 월 저축여력이 없어 지출부터 줄여야 함’. 기간이 없으면 빈 문자열. f 로 금액 표기를 바꿈(이정표는 만원 단위)
+ */
+export const saveFillText = (b: { fill?: SaveFill }, f: (v: number) => string = won) =>
+  !b.fill ? '' : b.fill.months !== null ? `월 저축여력 ${f(b.fill.monthly)} 기준 약 ${b.fill.months}개월` : '지금 월 저축여력이 없어 지출부터 줄여야 함';
+
+/** saveFillText 를 괄호로 감싼 것(기간이 없으면 빈 문자열) */
+export const saveFillNote = (b: { fill?: SaveFill }, f: (v: number) => string = won) => b.fill ? `(${saveFillText(b, f)})` : '';
 
 /** 보통 구간 현금성 채우기 계획: bearPlan 과 같은 금액 + 다음 1월 리밸런싱 시점 */
 export interface NormalPlan extends BearPlan {
@@ -332,6 +356,7 @@ export interface PeakPlan {
   equity: number; // 팔 수 있는 주식형(55세 전 연금계좌 안 주식형 뺌)
   fromEquity: number; // 주식형을 팔아 채울 금액
   left: number; // 주식형을 다 팔아도 모자란 금액(저축으로)
+  fill?: SaveFill; // 저축으로 채울 금액(left)과 지금 월 저축여력으로 걸리는 개월
   out: number; // 55세 전이라 뺀 연금계좌 안 주식형
   outParts: PensionCashParts;
 }
@@ -341,7 +366,7 @@ export interface PeakPlan {
  * equity 는 bondsOnHand 와 같은 방식(주식형 합계에서 55세 전 연금계좌 안 주식형을 뺌), 숫자면 모두 팔 수 있다고 봄.
  * 고점 부근이 아니거나 인출이 없거나 2년치가 있으면 null
  */
-export function peakPlan(drawdown: number | undefined, usable: number, yearDraw: number, equity: number | BondsOnHand): PeakPlan | null {
+export function peakPlan(drawdown: number | undefined, usable: number, yearDraw: number, equity: number | BondsOnHand, monthly?: number): PeakPlan | null {
   if (drawdown === undefined || marketState(drawdown) !== 'peak' || !(yearDraw > 0)) return null;
   const goal = yearDraw * CASH_YEARS_TARGET;
   const have = Math.max(0, usable);
@@ -350,7 +375,9 @@ export function peakPlan(drawdown: number | undefined, usable: number, yearDraw:
   const short = goal - have;
   const sell = Math.max(0, e.usable);
   const fromEquity = Math.min(short, sell);
-  return { goal, usable: have, short, equity: sell, fromEquity, left: short - fromEquity, out: e.out, outParts: e.outParts };
+  const left = short - fromEquity;
+  const fill = saveFill(left, monthly);
+  return { goal, usable: have, short, equity: sell, fromEquity, left, out: e.out, outParts: e.outParts, ...(fill ? { fill } : {}) };
 }
 
 /** 55세 전이라 뺀 연금계좌 안 주식형 안내(뺀 금액이 없으면 빈 문자열) */

@@ -6,7 +6,7 @@ import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
 import { EMERGENCY_LOCK_MONTHS } from './maturity';
-import { bearCutText, bearPlan, CASH_YEARS_TARGET, cashShortText, cashSourceLabel, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, normalPlan, peakPlan, pensionBondOutNote, pensionEquityOutNote, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearCut, type BondsOnHand, type CashOnHand } from './buckets';
+import { bearCutText, bearPlan, CASH_YEARS_TARGET, cashShortText, cashSourceLabel, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, normalPlan, peakPlan, pensionBondOutNote, pensionEquityOutNote, pensionFrom55, pensionFrom55Note, pensionOutNote, saveFillNote, type BearCut, type BondsOnHand, type CashOnHand } from './buckets';
 import { goalBreakdownAt, pensionAt, retireOutflowAt, type PlanInput } from './montecarlo';
 
 /**
@@ -203,29 +203,29 @@ export function cashRunwayChecks(c: CashOnHand, run?: { usable: number; all: num
  * 고점 부근(0% 이상)이고 바로 쓸 돈이 2년치에 못 미치면 ‘고점 부근: 현금성 채우기’ 주의(equity 를 넘길 때, 이때는 재입력 안내를 설명에 붙이고 따로 띄우지 않음).
  * 모든 항목에 인출용 자산 배치 가이드로 가는 링크를 붙임
  */
-export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: CashOnHand, yearDraw: number, now: Date, equity?: number | BondsOnHand, bonds?: number | BondsOnHand, cut?: BearCut | null): RiskCheck[] {
+export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: CashOnHand, yearDraw: number, now: Date, equity?: number | BondsOnHand, bonds?: number | BondsOnHand, cut?: BearCut | null, monthly?: number): RiskCheck[] {
   const dd = profile.marketDrawdown ?? 0;
   const rule = marketRule(dd);
   const date = marketDateNote(profile.marketDrawdownDate, now);
   // 고점 부근(0% 이상)이고 바로 쓸 돈이 2년치에 못 미치면: 맞춤 처방·이정표와 같은 peakPlan 금액(equity 를 넘길 때만)
-  const peak = equity !== undefined ? peakPlan(profile.marketDrawdown, c.usable, yearDraw, equity) : null;
+  const peak = equity !== undefined ? peakPlan(profile.marketDrawdown, c.usable, yearDraw, equity, monthly) : null;
   if (peak) {
     const have = cashShortText(peak, yearDraw);
     const how = peak.fromEquity > 0.5
-      ? ` 값이 오른 지금 주식형 가운데 ${won(peak.fromEquity)}을 팔아 현금성 바구니에 채우세요.${peak.left > 0.5 ? ` 주식형을 다 팔아도 ${won(peak.left)} 모자라니 나머지는 저축으로 채우세요.` : ''}`
-      : ' 팔 주식형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요.';
+      ? ` 값이 오른 지금 주식형 가운데 ${won(peak.fromEquity)}을 팔아 현금성 바구니에 채우세요.${peak.left > 0.5 ? ` 주식형을 다 팔아도 ${won(peak.left)} 모자라니 나머지는 저축으로 채우세요${saveFillNote(peak)}.` : ''}`
+      : ` 팔 주식형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요${saveFillNote(peak)}.`;
     return [{
       key: 'marketPeak', label: '고점 부근: 현금성 채우기', value: peak.fromEquity > 0.5 ? `주식형 ${won(peak.fromEquity)} 매도` : `저축 ${won(peak.short)}`, level: 'caution', link: BUCKET_GUIDE_LINK,
       detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${dd}%${date ? `, ${date.text}` : ''}) 기준 ${rule.text} ${have}${how}${pensionEquityOutNote(peak)}`,
     }];
   }
   // 보통(0%와 −15% 사이)이고 바로 쓸 돈이 2년치에 못 미치면: 인출 바구니·이정표와 같은 normalPlan 금액(bonds 를 넘길 때만)
-  const normal = bonds !== undefined ? normalPlan(profile.marketDrawdown, c.usable, yearDraw, bonds, now) : null;
+  const normal = bonds !== undefined ? normalPlan(profile.marketDrawdown, c.usable, yearDraw, bonds, now, monthly) : null;
   if (normal) {
     const have = cashShortText(normal, yearDraw);
     const how = normal.fromBond > 0.5
-      ? ` ${normal.when} 때 채권형 가운데 ${won(normal.fromBond)}을 현금성 바구니로 옮기세요.${normal.left > 0.5 ? ` 채권형을 다 옮겨도 ${won(normal.left)} 모자라니 나머지는 저축으로 채우세요.` : ''}`
-      : ' 옮길 채권형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요.';
+      ? ` ${normal.when} 때 채권형 가운데 ${won(normal.fromBond)}을 현금성 바구니로 옮기세요.${normal.left > 0.5 ? ` 채권형을 다 옮겨도 ${won(normal.left)} 모자라니 나머지는 저축으로 채우세요${saveFillNote(normal)}.` : ''}`
+      : ` 옮길 채권형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요${saveFillNote(normal)}.`;
     return [{
       key: 'marketNormal', label: `보통: ${normal.nextYear ? '내년 ' : ''}1월 리밸런싱 때 현금성 채우기`, value: normal.fromBond > 0.5 ? `채권형 ${won(normal.fromBond)} 옮기기` : `저축 ${won(normal.short)}`, level: 'caution', link: BUCKET_GUIDE_LINK,
       detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${dd}%${date ? `, ${date.text}` : ''}) 기준 ${rule.text} ${have}${how}${pensionBondOutNote(normal)}`,

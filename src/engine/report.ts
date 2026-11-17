@@ -1,6 +1,6 @@
 import { won, pct } from '../lib/format';
 import type { Goal, Level, Liability, Profile } from '../types';
-import { bearCutText, cashShortText, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearPlan, type CashOnHand, type NormalPlan, type PeakPlan } from './buckets';
+import { bearCutText, cashShortText, saveFillNote, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearPlan, type CashOnHand, type NormalPlan, type PeakPlan } from './buckets';
 import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
@@ -86,16 +86,16 @@ function bearText(b: BearPlan): string {
 /** 보통 구간 (내년) 1월 리밸런싱 때 채권형에서 현금성 옮기기 문장(앞에 띄어쓰기 포함) */
 function normalText(b: NormalPlan): string {
   const how = b.fromBond > 0.5
-    ? `${b.when} 때 채권형에서 현금성 ${won(b.fromBond)} 옮기기${b.left > 0.5 ? `, 채권형을 다 옮겨도 모자란 ${won(b.left)}은 저축으로` : ''}`
-    : `${b.when} 때 옮길 채권형이 없어 저축으로 현금성 ${won(b.short)} 채우기`;
+    ? `${b.when} 때 채권형에서 현금성 ${won(b.fromBond)} 옮기기${b.left > 0.5 ? `, 채권형을 다 옮겨도 모자란 ${won(b.left)}은 저축으로${saveFillNote(b)}` : ''}`
+    : `${b.when} 때 옮길 채권형이 없어 저축으로 현금성 ${won(b.short)} 채우기${saveFillNote(b)}`;
   return shortText(b, how, bondOut(b));
 }
 
 /** 고점 부근 현금성 채우기 문장(앞에 띄어쓰기 포함) */
 function peakText(b: PeakPlan): string {
   const how = b.fromEquity > 0.5
-    ? `주식형 일부 팔아 현금성 ${won(b.fromEquity)} 채우기${b.left > 0.5 ? `, 주식형을 다 팔아도 모자란 ${won(b.left)}은 저축으로` : ''}`
-    : `팔 주식형이 없어 저축으로 현금성 ${won(b.short)} 채우기`;
+    ? `주식형 일부 팔아 현금성 ${won(b.fromEquity)} 채우기${b.left > 0.5 ? `, 주식형을 다 팔아도 모자란 ${won(b.left)}은 저축으로${saveFillNote(b)}` : ''}`
+    : `팔 주식형이 없어 저축으로 현금성 ${won(b.short)} 채우기${saveFillNote(b)}`;
   const out = b.out > 0.5 ? ` 55세 전 연금계좌 안 주식형 ${won(b.out)}은 연금계좌에서 꺼내기 어려워 팔 금액에서 뺐습니다.` : '';
   return shortText(b, how, out);
 }

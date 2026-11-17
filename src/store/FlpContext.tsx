@@ -99,9 +99,9 @@ export function FlpProvider({ children }: { children: ReactNode }) {
       goalPlans: planGoals(goals, assets, summary.age),
       ins,
       cash, runCash, bonds, bear: bearPlan(profile.marketDrawdown, runCash.usable, start.outflow, bonds, bearCut),
-      equity, peak: peakPlan(profile.marketDrawdown, runCash.usable, start.outflow, equity),
-      normal: normalPlan(profile.marketDrawdown, runCash.usable, start.outflow, bonds, new Date()), cashMove: cashMoveRows(runCash, run),
-      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start), ...cashRunwayChecks(runCash, run, profile), ...marketChecks(profile, runCash, start.outflow, new Date(), equity, bonds, bearCut)],
+      equity, peak: peakPlan(profile.marketDrawdown, runCash.usable, start.outflow, equity, summary.savings),
+      normal: normalPlan(profile.marketDrawdown, runCash.usable, start.outflow, bonds, new Date(), summary.savings), cashMove: cashMoveRows(runCash, run),
+      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start), ...cashRunwayChecks(runCash, run, profile), ...marketChecks(profile, runCash, start.outflow, new Date(), equity, bonds, bearCut, summary.savings)],
       score: financialScore(profile, assets, basis, sim.successRate, ins, start),
     };
   }, [raw]);

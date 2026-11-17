@@ -9,7 +9,7 @@ import { contribSchedule, creditInflows, hiDependent, hiPropMonthly, hiPropShare
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
 import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
-import { accountBuckets, bearCutText, bearPlan, bondsOnHand, cashOnHand, cashShortText, normalPlan, peakPlan, pensionBondOutNote, rebalanceTiming, pensionBondParts, pensionClassParts, isRiskCapped, MARKET_INPUT_HELP, marketDateNote, marketRule, marketState, ymd } from './buckets';
+import { accountBuckets, bearCutText, bearPlan, bondsOnHand, cashOnHand, cashShortText, normalPlan, peakPlan, pensionBondOutNote, rebalanceTiming, saveFill, saveFillNote, saveFillText, pensionBondParts, pensionClassParts, isRiskCapped, MARKET_INPUT_HELP, marketDateNote, marketRule, marketState, ymd } from './buckets';
 import { bearTodo, milestones, normalTodo, peakTodo, monthsUntil, pensionOpenMonth, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, marketPrescription, normalPrescription, peakPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
@@ -1657,6 +1657,39 @@ describe('인출 바구니 등락률: 입력 날짜·하락장 홈 점검', () =
     expect(bearPlan(-18, 800, 1000, 5000, c300)!.cut).toBeUndefined();
     expect(bearPlan(-18, 0, 1000, 0, { pct: 0, amount: 0 })!.cut).toBeUndefined();
     expect(bearTodo(bearPlan(-18, 0, 1000, 0, null)!)).toBe('하락장: 주식형 매도 멈춤, 꺼낼 채권형이 없어 인출 줄이기');
+  });
+
+  it('고점 부근·보통 구간 저축으로 채울 기간: 지금 월 저축여력으로 모자란 금액을 채우는 개월(saveFill)', () => {
+    expect(saveFill(500, 100)).toEqual({ amount: 500, monthly: 100, months: 5 });
+    expect(saveFill(500, 120)!.months).toBe(5); // 올림
+    expect(saveFill(500, 0)).toEqual({ amount: 500, monthly: 0, months: null });
+    expect(saveFill(500, -50)!.months).toBeNull();
+    expect(saveFill(0, 100)).toBeUndefined();
+    expect(saveFill(500)).toBeUndefined();
+    expect(saveFillText({ fill: saveFill(500, 100) })).toBe('월 저축여력 100만원 기준 약 5개월');
+    expect(saveFillText({ fill: saveFill(500, 0) })).toBe('지금 월 저축여력이 없어 지출부터 줄여야 함');
+    expect(saveFillNote({})).toBe('');
+    const c = cashOnHand([{ id: 1, name: '파킹통장', type: 'cash', purpose: 'short', amount: 800 }] as never, 2026, 11);
+    // 고점 부근: 주식형을 다 팔아도 500만원 모자람
+    const peak = peakPlan(2, 800, 1000, 700, 100)!;
+    expect(peak.fill).toEqual({ amount: 500, monthly: 100, months: 5 });
+    expect(peakTodo(peak)).toBe('고점 부근: 주식형 일부 팔아 현금성 700만원 채우기 · 그래도 500만원 모자라 저축으로 채우기(월 저축여력 100만원 기준 약 5개월)');
+    expect(marketChecks({ marketDrawdown: 2, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 700, undefined, null, 100)[0].detail).toContain('나머지는 저축으로 채우세요(월 저축여력 100만원 기준 약 5개월).');
+    expect(peakPrescription({ marketDrawdown: 2 }, c, 1000, 700, now, 100)!.detail).toContain('나머지는 저축으로 채우세요(월 저축여력 100만원 기준 약 5개월).');
+    // 팔 주식형이 없으면 모자란 금액 전부(1,200만원)
+    const none = peakPlan(2, 800, 1000, 0, 100)!;
+    expect(peakTodo(none)).toBe('고점 부근: 팔 주식형이 없어 저축으로 현금성 1,200만원 채우기(월 저축여력 100만원 기준 약 12개월)');
+    expect(peakPrescription({ marketDrawdown: 2 }, c, 1000, 0, now, 0)!.detail).toContain('저축으로 현금성 바구니에 채우세요(지금 월 저축여력이 없어 지출부터 줄여야 함).');
+    // 보통 구간: 채권형을 다 옮겨도 500만원 모자람
+    const normal = normalPlan(-5, 800, 1000, 700, now, 100)!;
+    expect(normalTodo(normal)).toBe('내년 1월 리밸런싱(2027년 1월) 때 채권형에서 현금성 700만원 옮기기 · 그래도 500만원 모자라 저축으로 채우기(월 저축여력 100만원 기준 약 5개월)');
+    expect(marketChecks({ marketDrawdown: -5, marketDrawdownDate: '2026-11-10' }, c, 1000, now, 0, 700, null, 100)[0].detail).toContain('나머지는 저축으로 채우세요(월 저축여력 100만원 기준 약 5개월).');
+    expect(normalPrescription({ marketDrawdown: -5 }, c, 1000, 700, now, 100)!.detail).toContain('나머지는 저축으로 채우세요(월 저축여력 100만원 기준 약 5개월).');
+    expect(normalTodo(normalPlan(-5, 800, 1000, 0, now, 100)!)).toBe('내년 1월 리밸런싱(2027년 1월) 때 옮길 채권형이 없어 저축으로 현금성 1,200만원 채우기(월 저축여력 100만원 기준 약 12개월)');
+    // 주식형·채권형으로 다 채우거나 저축여력을 넘기지 않으면 기간을 담지 않음
+    expect(peakPlan(2, 800, 1000, 5000, 100)!.fill).toBeUndefined();
+    expect(normalPlan(-5, 800, 1000, 5000, now, 100)!.fill).toBeUndefined();
+    expect(peakTodo(peakPlan(2, 800, 1000, 700)!)).toBe('고점 부근: 주식형 일부 팔아 현금성 700만원 채우기 · 그래도 500만원 모자라 저축으로 채우기');
   });
 
   it('하락장·고점 부근·보통 구간 처방에 인출용 자산 배치 가이드 바로가기', () => {
