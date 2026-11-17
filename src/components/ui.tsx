@@ -2,17 +2,35 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import type { Level } from '../types';
 import { LEVEL_LABEL } from '../engine/risk';
+import { FoldChevron, useFold } from './Fold';
 
-export function Card({ title, action, children, className = '' }: { title?: ReactNode; action?: ReactNode; children: ReactNode; className?: string }) {
+/**
+ * 카드. 접기 범위(FoldProvider) 안에서 제목이 글자면 제목을 눌러 접고 펼 수 있음(foldable={false}로 끔).
+ * 접어도 오른쪽 위 동작(action)은 그대로 보임
+ */
+export function Card({ title, action, children, className = '', foldable = true }: { title?: ReactNode; action?: ReactNode; children: ReactNode; className?: string; foldable?: boolean }) {
+  const name = typeof title === 'string' ? title : undefined;
+  const fold = useFold(foldable ? name : undefined);
+  const folded = !!fold?.folded;
   return (
-    <section data-card={typeof title === 'string' ? title : undefined} className={`min-w-0 rounded-2xl border border-line bg-surface p-4 sm:p-5 ${className}`}>
+    <section data-card={name} className={`min-w-0 rounded-2xl border border-line bg-surface p-4 sm:p-5 ${className}`}>
       {(title || action) && (
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5">
-          {title && <h2 className="min-w-0 text-[15px] font-semibold">{title}</h2>}
+        <div className={`flex flex-wrap items-center justify-between gap-x-2 gap-y-1.5 ${folded ? '' : 'mb-3'}`}>
+          {title &&
+            (fold ? (
+              <h2 className="min-w-0 text-[15px] font-semibold">
+                <button type="button" className="flex min-w-0 items-center gap-2 rounded-lg text-left hover:text-brand" aria-expanded={!folded} onClick={fold.toggle}>
+                  <FoldChevron folded={folded} />
+                  <span className="min-w-0">{title}</span>
+                </button>
+              </h2>
+            ) : (
+              <h2 className="min-w-0 text-[15px] font-semibold">{title}</h2>
+            ))}
           {action}
         </div>
       )}
-      {children}
+      {!folded && children}
     </section>
   );
 }

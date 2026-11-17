@@ -1,5 +1,6 @@
 import { useEffect, type ReactNode } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router-dom';
+import { UNFOLD_EVENT } from './Fold';
 
 /** 기본 정보 화면의 탭 */
 export type SetupTab = 'profile' | 'assets' | 'liabilities' | 'cashflows' | 'goals' | 'insurance' | 'criteria' | 'backup';
@@ -32,9 +33,18 @@ export function jumpToTarget(card: string | null, field: string | null, maxTries
   let tries = 0;
   let timer = 0;
   let fix = 0;
+  let waits = 0;
   const find = () => {
+    // 접힌 카드면 펼침(접기 범위가 이벤트를 받아 처리, 범위가 없거나 이미 펼쳐져 있으면 아무 일 없음)
+    if (card) window.dispatchEvent(new CustomEvent(UNFOLD_EVENT, { detail: { card } }));
     const scope: ParentNode | null = card ? document.querySelector(`[data-card="${CSS.escape(card)}"]`) : document;
-    const el = (field && scope?.querySelector<HTMLElement>(`[data-field="${CSS.escape(field)}"]`)) || (scope instanceof HTMLElement ? scope : null);
+    const fieldEl = field ? scope?.querySelector<HTMLElement>(`[data-field="${CSS.escape(field)}"]`) : null;
+    // 카드는 있는데 칸이 없으면 방금 펼친 카드가 다시 그려질 때까지 잠깐 더 기다림
+    if (field && !fieldEl && scope instanceof HTMLElement && ++waits < 3) {
+      timer = window.setTimeout(find, 100);
+      return;
+    }
+    const el = fieldEl || (scope instanceof HTMLElement ? scope : null);
     if (!el) {
       if (++tries < maxTries) timer = window.setTimeout(find, 100);
       return;

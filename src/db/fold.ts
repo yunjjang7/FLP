@@ -101,3 +101,41 @@ export function cardSummary(table: ListTable, r: Record<string, unknown>): strin
   }
   return rowSummary(table, r);
 }
+
+/**
+ * 제목으로 부르는 카드 접기(프로필 탭 카드, 목록 위 요약·안내 카드): 범위마다 접은 카드 제목을 브라우저에 저장.
+ * 목록 카드(id)와 저장 키가 겹치지 않게 flp-folded-cards- 로 시작
+ */
+const CARD_KEY = (scope: string) => `flp-folded-cards-${scope}`;
+
+/** 저장된 문자열 → 접은 카드 제목 목록(빈 문자열이 아닌 글자만, 중복 제거) */
+export function parseFoldedKeys(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const v = JSON.parse(raw);
+    return Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === 'string' && x !== ''))] : [];
+  } catch {
+    return [];
+  }
+}
+
+export function loadFoldedKeys(scope: string): string[] {
+  try {
+    return parseFoldedKeys(globalThis.localStorage?.getItem(CARD_KEY(scope)));
+  } catch {
+    return [];
+  }
+}
+
+export function saveFoldedKeys(scope: string, keys: string[]) {
+  try {
+    if (keys.length) globalThis.localStorage?.setItem(CARD_KEY(scope), JSON.stringify(keys));
+    else globalThis.localStorage?.removeItem(CARD_KEY(scope));
+  } catch {
+    // 저장 못 해도 화면 접기는 그대로
+  }
+}
+
+/** 모두 접기: 지금 보이는 카드를 모두 더함 / 모두 펼치기: 보이는 카드를 뺌(지금 안 보이는 카드의 접힘은 남김) */
+export const foldAll = (folded: string[], keys: string[], fold: boolean) =>
+  fold ? [...new Set([...folded, ...keys])] : folded.filter((k) => !keys.includes(k));

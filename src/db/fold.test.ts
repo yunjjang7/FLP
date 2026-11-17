@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cardSummary, parseFolded, pruneFolded, rowSummary, toggleFolded } from './fold';
+import { cardSummary, foldAll, parseFolded, parseFoldedKeys, pruneFolded, rowSummary, toggleFolded } from './fold';
 
 describe('기본 정보 카드 접기', () => {
   it('저장된 접힘 목록 읽기: 숫자 배열만, 잘못된 값은 빈 목록', () => {
@@ -38,5 +38,21 @@ describe('기본 정보 카드 접기', () => {
     expect(cardSummary('insurance', { name: '암보험', death: 0, critical: 3000, care: 0, monthlyPremium: 5, payEndAge: 0 })).toBe('본인 · 진단비 3,000만원 · 월 5만원 · 계속 납입');
     expect(cardSummary('insurance', { name: '종신', death: 10000, critical: 0, care: 2000, monthlyPremium: 20, payEndAge: 65, insured: 'spouse' })).toBe('배우자 · 사망 1억원 · 간병 2,000만원 · 월 20만원 · 65세까지 납입');
     expect(cardSummary('cashflows', { name: '관리비', kind: 'fixed', monthly: 30 })).toBe('고정비 · 30만원');
+  });
+});
+
+describe('제목으로 부르는 카드 접기(프로필·목록 위 카드)', () => {
+  it('저장된 제목 목록 읽기: 빈 글자·숫자는 버리고 중복은 하나로', () => {
+    expect(parseFoldedKeys('["기본 정보","연금 세금"]')).toEqual(['기본 정보', '연금 세금']);
+    expect(parseFoldedKeys('["기본 정보",1,"",null,"기본 정보"]')).toEqual(['기본 정보']);
+    expect(parseFoldedKeys('{"a":1}')).toEqual([]);
+    expect(parseFoldedKeys('깨진 값')).toEqual([]);
+    expect(parseFoldedKeys(undefined)).toEqual([]);
+  });
+
+  it('모두 접기는 보이는 카드를 더하고, 모두 펼치기는 보이는 카드만 뺌', () => {
+    expect(foldAll(['가족 보장'], ['기본 정보', '가족 보장'], true)).toEqual(['가족 보장', '기본 정보']);
+    // 지금 화면에 없는 카드(세액공제 대조표처럼 조건부)의 접힘은 남김
+    expect(foldAll(['기본 정보', '세액공제 확인 대조표'], ['기본 정보', '노후 계획'], false)).toEqual(['세액공제 확인 대조표']);
   });
 });

@@ -12,6 +12,7 @@ import { alignAccount, setAccountKey, setGroupInDb } from '../db/accountOps';
 import { ACCOUNT_KEY_LABEL, ACCOUNT_KEYS, accountMismatch, ASSET_TYPES, groupNames, groupNotes, groupOf, insuredBirthYear, type AccountKey, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, MoveButtons, PageHeader } from '../components/ui';
+import { FoldChevron, FoldProvider, useFold, useFoldScope, type FoldScope } from '../components/Fold';
 import { appendOrders, byOrder, moveItem, moveRow, nextOrder } from '../db/order';
 import { loadFolded, pruneFolded, cardSummary, saveFolded, toggleFolded } from '../db/fold';
 import { canMaturity, EMERGENCY_LOCK_MONTHS, maturityLabel, monthsToMaturity } from '../engine/maturity';
@@ -116,6 +117,26 @@ function useSaveProfile() {
   return (patch: Partial<Profile>) => db.profile.put({ ...profile, ...patch });
 }
 
+/**
+ * 모두 접기·펼치기: 접기 범위의 카드(+ 목록 카드 rows)를 한꺼번에. 접을 카드가 둘 이상일 때만 보임
+ * rows 가 있으면 목록 카드도 함께: 모두 접혀 있어야 ‘모두 펼치기’
+ */
+function FoldAllButton({ fold, rows }: { fold: FoldScope; rows?: { count: number; allFolded: boolean; setAll: (fold: boolean) => void } }) {
+  if (fold.keys.length + (rows?.count ?? 0) < 2) return null;
+  const all = fold.allFolded && (!rows || rows.count === 0 || rows.allFolded);
+  return (
+    <Button
+      variant="ghost"
+      onClick={() => {
+        fold.setAll(!all);
+        rows?.setAll(!all);
+      }}
+    >
+      {all ? '모두 펼치기' : '모두 접기'}
+    </Button>
+  );
+}
+
 function ProfileForm() {
   const { profile: p, summary, start, assets } = useFlp();
   const save = useSaveProfile();
@@ -135,8 +156,14 @@ function ProfileForm() {
   const selfYear = (age: number) => `${p.birthYear + age}년`;
   /** 배우자 나이 → "2038년 · 본인 70세" */
   const spouseYear = (age: number) => (hasSpouse ? `${p.spouseBirthYear + age}년 · 본인 ${spouseToSelf(p, age)}세` : '배우자 나이 기준');
+  const fold = useFoldScope('profile');
   return (
+    <FoldProvider value={fold}>
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-sm text-muted">카드 제목을 누르면 접고 펼 수 있습니다.</div>
+        <FoldAllButton fold={fold} />
+      </div>
       <Card title="기본 정보">
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
           <Labeled label="이름(선택)">
@@ -275,6 +302,7 @@ function ProfileForm() {
         <div className="grid grid-cols-2 gap-3 md:grid-cols-4">{n('dependentYears', '부양 필요 기간', '년', '막내 자녀 독립까지 등')}</div>
       </Card>
     </div>
+    </FoldProvider>
   );
 }
 
@@ -723,7 +751,7 @@ function InsuranceSummary() {
   if (!groups.length) return null;
   const total = groups.reduce((a, g) => a + g.premium, 0);
   return (
-    <Card>
+    <Card title="피보험자별 보장 요약" action={<span className="text-xs text-muted">납입 중 월 보험료 {won(total)}</span>}>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[480px] text-sm num-table">
           <thead>
@@ -832,11 +860,24 @@ function CashflowGuide() {
 }
 
 /** 목록 탭 위의 짧은 입력 안내 */
+/** 목록 위 입력 안내. 목록 화면의 접기 범위 안에서는 ‘입력 안내’ 머리를 눌러 접음 */
 function Guide({ items }: { items: React.ReactNode[] }) {
-  return (
-    <ul className="list-disc space-y-1 rounded-xl bg-sunken px-4 py-3 pl-8 text-xs text-muted">
+  const fold = useFold('입력 안내');
+  const list = (
+    <ul className={`list-disc space-y-1 pl-4 text-xs text-muted ${fold ? 'mt-2' : ''}`}>
       {items.map((x, i) => <li key={i}>{x}</li>)}
     </ul>
+  );
+  return (
+    <div data-card="입력 안내" className="rounded-xl bg-sunken px-4 py-3">
+      {fold && (
+        <button type="button" className="flex items-center gap-2 rounded-lg text-left text-xs font-semibold text-muted hover:text-brand" aria-expanded={!fold.folded} onClick={fold.toggle}>
+          <FoldChevron folded={fold.folded} />
+          입력 안내
+        </button>
+      )}
+      {!fold?.folded && list}
+    </div>
   );
 }
 
@@ -873,6 +914,8 @@ function ListEditor({ table }: { table: ListTable }) {
     saveFolded(table, ids);
   };
   const allFolded = rows.length > 0 && folded.length === rows.length;
+  // 목록 위 요약·안내 카드 접기(제목으로 저장). 모두 접기·펼치기는 목록 카드와 함께
+  const topFold = useFoldScope(`list-${table}`);
 
   const update = (row: { id?: number }, key: string, v: unknown) => {
     let patch: Record<string, unknown> = { [key]: v };
@@ -911,17 +954,14 @@ function ListEditor({ table }: { table: ListTable }) {
       : fields;
 
   return (
+    <FoldProvider value={topFold}>
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-sm text-muted">
           {label} {rows.length}건{amountKey && <> · 합계 <b className="text-ink">{won(total)}</b></>}
         </div>
         <span className="flex flex-wrap items-center gap-2">
-          {rows.length > 1 && (
-            <Button variant="ghost" onClick={() => setFolded(allFolded ? [] : rows.map((r) => r.id!))}>
-              {allFolded ? '모두 펼치기' : '모두 접기'}
-            </Button>
-          )}
+          <FoldAllButton fold={topFold} rows={{ count: rows.length, allFolded, setAll: (f) => setFolded(f ? rows.map((r) => r.id!) : []) }} />
           <Button onClick={() => tbl.add({ ...example, name: `새 ${label}`, order: nextOrder(rows) })}>+ {label} 추가</Button>
         </span>
       </div>
@@ -1091,6 +1131,7 @@ function ListEditor({ table }: { table: ListTable }) {
         );
       })}
     </div>
+    </FoldProvider>
   );
 }
 
