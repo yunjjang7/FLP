@@ -308,6 +308,10 @@ export const saveFillText = (b: { fill?: SaveFill }, f: (v: number) => string = 
 /** saveFillText 를 괄호로 감싼 것(기간이 없으면 빈 문자열) */
 export const saveFillNote = (b: { fill?: SaveFill }, f: (v: number) => string = won) => b.fill ? `(${saveFillText(b, f)})` : '';
 
+/** 이정표 할 일·인출 바구니 박스용 짧은 괄호 문구: 기간이 있으면 saveFillNote 와 같고, 월 저축여력이 0 이하면 홈 점검처럼 ‘(지출부터 줄이기)’ */
+export const saveFillShort = (b: { fill?: SaveFill }, f: (v: number) => string = won) =>
+  b.fill && b.fill.months === null ? '(지출부터 줄이기)' : saveFillNote(b, f);
+
 /** 보통 구간 현금성 채우기 계획: bearPlan 과 같은 금액 + 다음 1월 리밸런싱 시점 */
 export interface NormalPlan extends BearPlan {
   nextYear: boolean; // 2월 이후라 다음 1월 리밸런싱이 내년(이정표는 내년 할 일에)

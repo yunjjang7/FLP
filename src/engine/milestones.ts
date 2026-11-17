@@ -7,7 +7,7 @@ import { PENSION_OPEN_AGE } from './tax';
 import { isYu, validMonths } from './yellowUmbrella';
 import { isaMaturities, type IsaMaturity } from './account';
 import { maturities, type MaturityRow } from './maturity';
-import { bearCutText, saveFillNote, type BearPlan, type NormalPlan, type PeakPlan } from './buckets';
+import { bearCutText, saveFillShort, type BearPlan, type NormalPlan, type PeakPlan } from './buckets';
 
 export type MilestoneKind = 'review' | 'open' | 'limit' | 'lump' | 'pension' | 'tax' | 'contrib' | 'estate' | 'loan' | 'goal' | 'maturity';
 
@@ -251,16 +251,16 @@ export function bearTodo(b: BearPlan): string {
 /** 고점 부근 할 일 문구: 주식형 일부를 팔아 채울 현금성 금액, 모자라면 저축으로, 55세 전이라 뺀 연금계좌 주식형 */
 export function peakTodo(b: PeakPlan): string {
   const head = b.fromEquity > 0.5
-    ? `고점 부근: 주식형 일부 팔아 현금성 ${man(b.fromEquity)} 채우기${b.left > 0.5 ? ` · 그래도 ${man(b.left)} 모자라 저축으로 채우기${saveFillNote(b, man)}` : ''}`
-    : `고점 부근: 팔 주식형이 없어 저축으로 현금성 ${man(b.short)} 채우기${saveFillNote(b, man)}`;
+    ? `고점 부근: 주식형 일부 팔아 현금성 ${man(b.fromEquity)} 채우기${b.left > 0.5 ? ` · 그래도 ${man(b.left)} 모자라 저축으로 채우기${saveFillShort(b, man)}` : ''}`
+    : `고점 부근: 팔 주식형이 없어 저축으로 현금성 ${man(b.short)} 채우기${saveFillShort(b, man)}`;
   return `${head}${b.out > 0.5 ? `(55세 전 연금계좌 주식형 ${man(b.out)} 제외)` : ''}`;
 }
 
 /** 보통 구간 할 일 문구: (내년) 1월 리밸런싱 때 채권형에서 현금성으로 옮길 금액, 모자라면 저축으로, 55세 전이라 뺀 연금계좌 채권형 */
 export function normalTodo(b: NormalPlan): string {
   const head = b.fromBond > 0.5
-    ? `${b.when} 때 채권형에서 현금성 ${man(b.fromBond)} 옮기기${b.left > 0.5 ? ` · 그래도 ${man(b.left)} 모자라 저축으로 채우기${saveFillNote(b, man)}` : ''}`
-    : `${b.when} 때 옮길 채권형이 없어 저축으로 현금성 ${man(b.short)} 채우기${saveFillNote(b, man)}`;
+    ? `${b.when} 때 채권형에서 현금성 ${man(b.fromBond)} 옮기기${b.left > 0.5 ? ` · 그래도 ${man(b.left)} 모자라 저축으로 채우기${saveFillShort(b, man)}` : ''}`
+    : `${b.when} 때 옮길 채권형이 없어 저축으로 현금성 ${man(b.short)} 채우기${saveFillShort(b, man)}`;
   return `${head}${b.out > 0.5 ? `(55세 전 연금계좌 채권형 ${man(b.out)} 제외)` : ''}`;
 }
 

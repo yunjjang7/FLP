@@ -157,7 +157,7 @@ export function marketPrescription(profile: Pick<Profile, 'marketDrawdown' | 'ma
   const outNote = pensionBondOutNote(b);
   return {
     area: '노후', level: 'caution',
-    title: fromBond > 0.5 ? `${BEAR_RX_TITLE} — 채권형에서 ${fmt(fromBond)}원 먼저 꺼내기` : b.cut ? `${BEAR_RX_TITLE} — 인출 한 해 ${fmt(b.cut.amount)}원 줄이기` : `${BEAR_RX_TITLE} — 인출 줄이기`,
+    title: fromBond > 0.5 ? `${BEAR_RX_TITLE} — 채권형에서 ${fmt(fromBond)}원 먼저 꺼내기` : b.cut ? `${BEAR_RX_TITLE} — 인출 한 해 ${fmt(b.cut.amount)}원${b.cut.real !== undefined ? `(현재가치 ${fmt(b.cut.real)}원)` : ''} 줄이기` : `${BEAR_RX_TITLE} — 인출 줄이기`,
     link: BUCKET_GUIDE_LINK,
     detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${dd}%${date ? `, ${date.text}` : ''})이 하락장 기준(−${BEAR_DROP}% 이하)입니다. ${have}${how}${outNote} 주식형이 회복하면 고점 부근에서 일부를 팔아 현금성 바구니를 다시 채웁니다.`,
   };

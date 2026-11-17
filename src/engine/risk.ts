@@ -196,8 +196,8 @@ export function cashRunwayChecks(c: CashOnHand, run?: { usable: number; all: num
   }];
 }
 
-/** 고점 부근·보통 구간 홈 점검 값 ‘저축 ○원’ 뒤에 붙일 개월 수(지금 월 저축여력 기준, 저축여력이 없거나 기간이 없으면 빈 문자열) */
-const fillMonths = (b: { fill?: SaveFill }) => b.fill?.months != null ? `(약 ${b.fill.months}개월)` : '';
+/** 고점 부근·보통 구간 홈 점검 값 ‘저축 ○원’ 뒤에 붙일 개월 수(지금 월 저축여력 기준). 저축여력이 0 이하면 ‘(지출부터 줄이기)’, 저축여력을 모르면 빈 문자열 */
+const fillMonths = (b: { fill?: SaveFill }) => !b.fill ? '' : b.fill.months != null ? `(약 ${b.fill.months}개월)` : '(지출부터 줄이기)';
 
 /**
  * 하락장 안내(홈 주요 점검 사항): 인출용 자산 배치 가이드에 저장한 등락률(profile.marketDrawdown)이 −15% 이하이면
@@ -250,7 +250,7 @@ export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDr
       ? ` 주식형은 팔지 말고 채권형 가운데 ${won(bear.fromBond)}을 먼저 꺼내 쓰세요.${bear.left > 0.5 ? ` 채권형을 다 꺼내도 ${won(bear.left)} 모자라니 회복할 때까지 인출을 줄이세요${cutNote}.` : ''}`
       : ` 꺼낼 채권형이 없어 회복할 때까지 인출을 줄이세요${cutNote}.`;
     return [{
-      key: 'marketBear', label: '하락장: 주식형 매도 멈춤', value: bear.fromBond > 0.5 ? `채권형 ${won(bear.fromBond)} 먼저 꺼내기` : bear.cut ? `인출 한 해 ${won(bear.cut.amount)} 줄이기` : '인출 줄이기', level: 'caution', link: BUCKET_GUIDE_LINK,
+      key: 'marketBear', label: '하락장: 주식형 매도 멈춤', value: bear.fromBond > 0.5 ? `채권형 ${won(bear.fromBond)} 먼저 꺼내기` : bear.cut ? `인출 한 해 ${won(bear.cut.amount)}${bear.cut.real !== undefined ? `(현재가치 ${won(bear.cut.real)})` : ''} 줄이기` : '인출 줄이기', level: 'caution', link: BUCKET_GUIDE_LINK,
       detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률${date ? `(${date.text})` : ''} 기준 ${rule.text} ${cashShortText(bear, yearDraw)}${how}${pensionBondOutNote(bear)}`,
     }];
   }

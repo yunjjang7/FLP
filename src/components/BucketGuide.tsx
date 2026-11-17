@@ -1,6 +1,6 @@
 import { Fragment, useMemo } from 'react';
 import { db } from '../db/db';
-import { accountBuckets, BEAR_DROP, bearCutText, cashShortText, saveFillNote, saveFillText, MARKET_INPUT_HELP, marketDateNote, pensionBondOutNote, pensionEquityOutNote, ymd, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
+import { accountBuckets, BEAR_DROP, bearCutText, cashShortText, saveFillShort, saveFillText, MARKET_INPUT_HELP, marketDateNote, pensionBondOutNote, pensionEquityOutNote, ymd, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
 import { classAmounts, hasAlloc } from '../engine/allocation';
 import { useFlp } from '../store/FlpContext';
 import { SetupLink } from './SetupLink';
@@ -104,13 +104,13 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
           {rule.state === 'peak' && peak && (
             <div className="mt-1">
               {peak.fromEquity > 0.5 ? <>주식형 일부 팔아 현금성 <b>{won(peak.fromEquity)}</b> 채우기</> : <>팔 주식형이 없어 저축으로 현금성 <b>{won(peak.short)}</b> 채우기</>}
-              <span className="text-xs"> — {cashShortText(peak, start.outflow)}{peak.left > 0.5 && peak.fromEquity > 0.5 ? ` 주식형을 다 팔아도 ${won(peak.left)} 모자라니 나머지는 저축으로 채우세요${saveFillNote(peak)}.` : peak.fromEquity <= 0.5 && peak.fill ? ` 저축으로 채우는 데 ${saveFillText(peak)}.` : ''}{pensionEquityOutNote(peak)}</span>
+              <span className="text-xs"> — {cashShortText(peak, start.outflow)}{peak.left > 0.5 && peak.fromEquity > 0.5 ? ` 주식형을 다 팔아도 ${won(peak.left)} 모자라니 나머지는 저축으로 채우세요${saveFillShort(peak)}.` : peak.fromEquity <= 0.5 && peak.fill ? (peak.fill.months === null ? ' 저축으로 채우려면 지출부터 줄이기.' : ` 저축으로 채우는 데 ${saveFillText(peak)}.`) : ''}{pensionEquityOutNote(peak)}</span>
             </div>
           )}
           {rule.state === 'normal' && normal && (
             <div className="mt-1">
               {normal.fromBond > 0.5 ? <>{normal.when} 때 채권형에서 현금성 <b>{won(normal.fromBond)}</b> 옮기기</> : <>{normal.when} 때 옮길 채권형이 없어 저축으로 현금성 <b>{won(normal.short)}</b> 채우기</>}
-              <span className="text-xs"> — {cashShortText(normal, start.outflow)}{normal.left > 0.5 && normal.fromBond > 0.5 ? ` 채권형을 다 옮겨도 ${won(normal.left)} 모자라니 나머지는 저축으로 채우세요${saveFillNote(normal)}.` : normal.fromBond <= 0.5 && normal.fill ? ` 저축으로 채우는 데 ${saveFillText(normal)}.` : ''}{pensionBondOutNote(normal)}</span>
+              <span className="text-xs"> — {cashShortText(normal, start.outflow)}{normal.left > 0.5 && normal.fromBond > 0.5 ? ` 채권형을 다 옮겨도 ${won(normal.left)} 모자라니 나머지는 저축으로 채우세요${saveFillShort(normal)}.` : normal.fromBond <= 0.5 && normal.fill ? (normal.fill.months === null ? ' 저축으로 채우려면 지출부터 줄이기.' : ` 저축으로 채우는 데 ${saveFillText(normal)}.`) : ''}{pensionBondOutNote(normal)}</span>
             </div>
           )}
           {bearYears.length > 0 && (
