@@ -10,7 +10,7 @@ import { compareStrategy, DEFAULT_GUARDRAIL, type StrategyKey, type WithdrawInpu
 export function withdrawInputOf(
   inp: PlanInput,
   start: { age: number; retired: boolean },
-  o: { endAge: number; inflation: number; startBalance: number; percentRate?: number; guardrail?: WithdrawInput['guardrail'] },
+  o: { endAge: number; inflation: number; startBalance: number; percentRate?: number; guardrail?: WithdrawInput['guardrail']; bucket?: WithdrawInput['bucket'] },
 ): WithdrawInput {
   const startAge = start.age;
   return {
@@ -32,6 +32,7 @@ export function withdrawInputOf(
     debts: (inp.debts ?? []).filter((x) => x.endAge > startAge),
     extras: inp.goals.filter((g) => g.age >= startAge && !g.pensionTax),
     guardrail: o.guardrail ?? DEFAULT_GUARDRAIL,
+    ...(o.bucket ? { bucket: o.bucket } : {}),
   };
 }
 

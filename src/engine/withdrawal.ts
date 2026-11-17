@@ -20,6 +20,17 @@ export interface GuardrailOptions {
   cutOnly: boolean; // 감액만: 계획 인출액보다 늘리지 않음(줄였던 만큼만 되돌림)
 }
 
+export interface BucketOptions {
+  cashYears: number; // 현금 바구니: 다음 해 인출의 몇 년치
+  bondYears: number; // 채권 바구니: 몇 년치
+}
+
+export const DEFAULT_BUCKET: BucketOptions = { cashYears: 2, bondYears: 5 };
+
+/** 3-버킷 전략 설명(현금·채권 연수 반영) */
+export const bucketDesc = (b: BucketOptions = DEFAULT_BUCKET) =>
+  `현금(${b.cashYears}년치)·채권(${b.bondYears}년치)·성장자산으로 나눠, 현금 바구니에서 인출하고 성장자산이 오른 해에만 채워 넣어 하락장 매도를 피합니다.`;
+
 export const DEFAULT_GUARDRAIL: GuardrailOptions = { band: 0.15, cut: 0.1, raise: 0.1, floor: 0.7, ceil: 1.3, cutOnly: true };
 
 /**
@@ -49,6 +60,7 @@ export interface WithdrawInput {
   debts?: Debt[]; // 은퇴 후에도 남은 대출 상환
   extras?: { age: number; amount: number; flow?: boolean }[]; // 은퇴 후 목적자금·매년 반복 지출(flow: 해마다 나가는 지출 — 첫해는 남은 달만큼)
   guardrail?: GuardrailOptions;
+  bucket?: BucketOptions; // 3-버킷 현금·채권 연수(없으면 2·5년치)
   expenseGrowth?: number; // 생활비 명목 증가율 %(없으면 물가 연동)
   expenseSteps?: ExpenseStep[]; // 나이 구간별 생활비 배율
   fixedDraw?: number; // 자산 인출액 명목 고정(연, 인출 시작 시점 금액)
@@ -78,6 +90,10 @@ export interface StrategyResult {
   schedule: ScheduleRow[];
   adjustRate: number; // 가드레일: 한 번이라도 인출을 줄인 시나리오 비율
   minMultiplier: number; // 가드레일: 하위 10% 시나리오의 최저 배율
+  /** 시나리오 중앙값: 해마다 자산 인출이 필요 인출액을 채운 비율(최대 100%)의 평균, % */
+  medianCoverage: number;
+  /** 시나리오 중앙값: 자산 인출이 필요 인출액의 90%에 못 미친 연수 */
+  medianShortYears: number;
 }
 
 const pensionAt = (inp: WithdrawInput, age: number) => inp.pensions.reduce((a, p) => a + incomeValue(p, age, inp.inflation), 0);
@@ -131,13 +147,17 @@ function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, base
   let ok = true;
   let depleted = false;
   let depletedAge: number | null = null;
+  let shortYears = 0;
+  let coverSum = 0;
+  let coverN = 0;
   const mu = inp.meanReturn / 100;
   const sg = inp.volatility / 100;
 
   // 버킷 초기 배분
+  const bk = inp.bucket ?? DEFAULT_BUCKET;
   const firstNeed = needAt(inp, inp.startAge);
-  let b1 = Math.min(inp.startBalance, firstNeed * 2);
-  let b2 = Math.min(inp.startBalance - b1, firstNeed * 5);
+  let b1 = Math.min(inp.startBalance, firstNeed * bk.cashYears);
+  let b2 = Math.min(inp.startBalance - b1, firstNeed * bk.bondYears);
   let b3 = inp.startBalance - b1 - b2;
   let bal = inp.startBalance;
   const g = inp.guardrail ?? DEFAULT_GUARDRAIL;
@@ -186,10 +206,10 @@ function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, base
       const nextNeed = needAt(inp, age + 1);
       const fill = (target: number, cur: number, from: number) => Math.max(0, Math.min(target - cur, from));
       if (rEq > 0) {
-        let t = fill(nextNeed * 2, b1, b3); b1 += t; b3 -= t;
-        t = fill(nextNeed * 5, b2, b3); b2 += t; b3 -= t;
+        let t = fill(nextNeed * bk.cashYears, b1, b3); b1 += t; b3 -= t;
+        t = fill(nextNeed * bk.bondYears, b2, b3); b2 += t; b3 -= t;
       } else {
-        const t = fill(nextNeed * 2, b1, b2); b1 += t; b2 -= t;
+        const t = fill(nextNeed * bk.cashYears, b1, b2); b1 += t; b2 -= t;
       }
       bal = b1 + b2 + b3;
     } else {
@@ -202,10 +222,11 @@ function runOne(key: StrategyKey, inp: WithdrawInput, zEq: Draw, zBd: Draw, base
       bal = 0;
       if (need > 0 && !depleted) { depleted = true; depletedAge = age + 1; }
     }
-    if (withdrawal < need * 0.9 - 1e-6) ok = false;
+    if (withdrawal < need * 0.9 - 1e-6) { ok = false; shortYears++; }
+    if (need > 1e-6) { coverSum += Math.min(1, withdrawal / need); coverN++; }
     rows.push({ age, pension, withdrawal, income: pension + withdrawal, need: spendAt(inp, age, sh), endBalance: bal, inflow, ...(sh < 1 ? { share: sh } : {}) });
   }
-  return { rows, ok, depleted, depletedAge, minM };
+  return { rows, ok, depleted, depletedAge, minM, shortYears, coverage: coverN ? coverSum / coverN : 1 };
 }
 
 export function compareStrategy(key: StrategyKey, inp: WithdrawInput, runs = 1000, seed = 11): StrategyResult {
@@ -220,11 +241,15 @@ export function compareStrategy(key: StrategyKey, inp: WithdrawInput, runs = 100
   let cutCount = 0;
   const mins: number[] = [];
   const depAges: number[] = [];
+  const covers: number[] = [];
+  const shorts: number[] = [];
   // 기준선: 평균수익으로 정액 인출했을 때의 연초 잔액
   const baseline = key === 'guardrail' ? [inp.startBalance, ...runOne('fixed', inp, () => 0, () => 0).rows.map((r) => r.endBalance)] : undefined;
   const required = key === 'guardrail' ? requiredBalances(inp) : undefined;
   for (let r = 0; r < runs; r++) {
-    const { rows, ok, depleted, depletedAge, minM } = runOne(key, inp, g1, g2, baseline, required);
+    const { rows, ok, depleted, depletedAge, minM, shortYears, coverage } = runOne(key, inp, g1, g2, baseline, required);
+    covers.push(coverage);
+    shorts.push(shortYears);
     if (depletedAge !== null) depAges.push(depletedAge);
     rows.forEach((row, i) => { bals[i].push(row.endBalance); incs[i].push(row.income); });
     if (ok) okCount++;
@@ -248,6 +273,8 @@ export function compareStrategy(key: StrategyKey, inp: WithdrawInput, runs = 100
     schedule: det.rows,
     adjustRate: runs ? (cutCount / runs) * 100 : 0,
     minMultiplier: mins.length ? percentile(mins.sort((a, b) => a - b), 0.1) : 1,
+    medianCoverage: covers.length ? percentile(covers.sort((a, b) => a - b), 0.5) * 100 : 100,
+    medianShortYears: shorts.length ? Math.round(percentile(shorts.sort((a, b) => a - b), 0.5)) : 0,
   };
 }
 

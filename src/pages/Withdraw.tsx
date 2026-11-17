@@ -14,7 +14,7 @@ import { OrderCompare } from '../components/OrderCompare';
 import { CardLink, SetupLink, useCardTarget } from '../components/SetupLink';
 import type { CompareBase } from '../engine/orderCompare';
 import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
-import { compareStrategy, DEFAULT_GUARDRAIL, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
+import { bucketDesc, compareStrategy, DEFAULT_BUCKET, DEFAULT_GUARDRAIL, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
 import { pct, won, yearRanges } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
@@ -48,6 +48,8 @@ function WithdrawInner() {
   const [band, setBand] = useState(DEFAULT_GUARDRAIL.band * 100);
   const [cut, setCut] = useState(DEFAULT_GUARDRAIL.cut * 100);
   const [cutOnly, setCutOnly] = useState(DEFAULT_GUARDRAIL.cutOnly);
+  const [cashYears, setCashYears] = useState(DEFAULT_BUCKET.cashYears);
+  const [bondYears, setBondYears] = useState(DEFAULT_BUCKET.bondYears);
   const [selected, setSelected] = useState<StrategyKey>('guardrail');
 
   const retMean = planInput.retireMeanReturn ?? planInput.meanReturn;
@@ -63,9 +65,10 @@ function WithdrawInner() {
       inflation: p.inflation,
       percentRate: rate,
       guardrail: { ...DEFAULT_GUARDRAIL, band: band / 100, cut: cut / 100, raise: cut / 100, cutOnly },
+      bucket: { cashYears, bondYears },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [p, startAge, startBalance, planInput, rate, retMean, retVol, band, cut, cutOnly, retired],
+    [p, startAge, startBalance, planInput, rate, retMean, retVol, band, cut, cutOnly, retired, cashYears, bondYears],
   );
   const results = useMemo(() => KEYS.map((k) => compareStrategy(k, input, 1000)), [input]);
   const chart = results[0].ages.map((age, i) => ({ age, ...Object.fromEntries(results.map((r) => [r.key, r.p50[i]])) }));
@@ -140,7 +143,8 @@ function WithdrawInner() {
             </div>
           </Labeled>
           <div className="self-end">
-            <Slider label="정률 인출 비율" value={rate} min={2} max={8} step={0.5} display={`${rate}%`} onChange={setRate} />
+            <Slider label="정률 인출 비율" value={rate} min={2} max={12} step={0.5} display={`${rate}%`} onChange={setRate} />
+            <div className="mt-1 text-xs text-muted">정률 인출 카드에만 적용 · 3-버킷·가드레일 설정은 그 카드를 고르면 아래에 나옴</div>
           </div>
         </div>
 
@@ -180,7 +184,7 @@ function WithdrawInner() {
 
       <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {results.map((r) => (
-          <button key={r.key} onClick={() => setSelected(r.key)} className={`rounded-2xl border bg-surface p-4 text-left transition sm:p-5 ${selected === r.key ? 'border-brand ring-2 ring-brand-soft' : 'border-line hover:border-muted'}`}>
+          <button key={r.key} onClick={() => setSelected(r.key)} className={`flex flex-col justify-start rounded-2xl border bg-surface p-4 text-left transition sm:p-5 ${selected === r.key ? 'border-brand ring-2 ring-brand-soft' : 'border-line hover:border-muted'}`}>
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-2 text-[15px] font-semibold">
                 <span className="h-2.5 w-2.5 rounded-full" style={{ background: COLORS[r.key] }} />
@@ -192,13 +196,36 @@ function WithdrawInner() {
             <div className="text-xs text-muted">생활비 90% 이상 매년 충족 확률</div>
             <div className="mt-2 text-xs">자산 유지 확률 <b>{pct(100 - r.depletionRate)}</b> · 고갈 나이 중앙값 <b>{r.medianDepletionAge === null ? `${p.lifeExpectancy}세까지 유지` : `${r.medianDepletionAge}세`}</b></div>
             <div className="text-xs">첫해{firstShare < 1 ? `(${firstMonths}개월)` : ''} 인출 <b>{won(r.schedule[0]?.withdrawal ?? 0)}</b>{r.depletedMedianAge !== null && <> · 고갈 경로 중앙 <b>{r.depletedMedianAge}세</b></>}</div>
+            {r.key === 'percent' && (
+              // 충족 확률이 0%여도 얼마나 모자라는지 보이게: 시나리오 중앙값
+              <div className="mt-1 text-xs">필요 인출액 대비 평균 충족률 <b>{pct(r.medianCoverage)}</b> · 90% 미달 <b>{r.medianShortYears}년</b>/{r.ages.length}년 <span className="text-muted">(시나리오 중앙값)</span></div>
+            )}
+            {r.key === 'percent' && (() => {
+              // 평균수익에서도 생활비 90%를 못 채우는 첫 해: 정률은 잔액 비율이라 필요 지출이 그보다 크면 충족 확률이 0%가 됨
+              const short = r.schedule.find((x) => x.income < x.need * 0.9 - 0.5);
+              return short ? (
+                <div className="mt-1 text-xs text-bad">평균수익에서도 {short.age}세에 생활비 90% 미달 — 잔액의 {rate}%로는 그해 필요 지출을 못 채움(첫해 필요 인출률 {pct(wRate, 1)})</div>
+              ) : null;
+            })()}
             {r.key === 'guardrail' && (
               <div className="mt-1 text-xs">감액 발생 <b>{pct(r.adjustRate)}</b> · 나쁜 10% 경로 최저 <b>{Math.round(r.minMultiplier * 100)}%</b>까지 감액</div>
             )}
-            <p className="mt-2 text-xs leading-relaxed text-muted">{STRATEGIES[r.key].desc}</p>
+            <p className="mt-2 text-xs leading-relaxed text-muted">{r.key === 'bucket' ? bucketDesc({ cashYears, bondYears }) : STRATEGIES[r.key].desc}</p>
           </button>
         ))}
       </div>
+
+      {selected === 'bucket' && (
+        <Card title="3-버킷 설정" className="mt-4">
+          <div className="grid gap-4 md:grid-cols-3">
+            <Slider label="현금 바구니" value={cashYears} min={1} max={5} step={0.5} display={`${cashYears}년치`} onChange={setCashYears} />
+            <Slider label="채권 바구니" value={bondYears} min={0} max={10} step={1} display={`${bondYears}년치`} onChange={setBondYears} />
+          </div>
+          <p className="mt-3 text-xs text-muted">
+            시작할 때 첫해 인출액의 {cashYears}년치를 현금(연 2.5%), {bondYears}년치를 채권(연 4%)에 두고 나머지는 성장자산에 둡니다(전체 기대수익률이 같도록 성장자산 수익률을 맞춤). 현금 → 채권 → 성장 순서로 꺼내고, 성장자산이 오른 해에는 성장자산을 팔아 현금을 다음 해 인출 {cashYears}년치·채권을 {bondYears}년치로 다시 채우며, 떨어진 해에는 채권으로 현금만 채웁니다. 현금·채권을 늘리면 하락장 매도는 줄지만 기대수익이 낮은 돈이 많아집니다.
+          </p>
+        </Card>
+      )}
 
       {selected === 'guardrail' && (
         <Card title="가드레일 설정" className="mt-4">

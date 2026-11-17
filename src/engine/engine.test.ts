@@ -14,7 +14,7 @@ import { bearTodo, milestones, normalTodo, peakTodo, monthsUntil, pensionOpenMon
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, marketPrescription, normalPrescription, peakPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
 import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, marketChecks, retiredBasis, riskChecks } from './risk';
-import { baseBalanceAt, basePlanWithdrawal, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, rebaseDiff, refixBase, restoreBase, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
+import { baseBalanceAt, basePlanWithdrawal, bucketDesc, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, rebaseDiff, refixBase, restoreBase, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
 import type { Draw, Goal, PlanBase } from '../types';
 import { carryBefore, carryOverPlan, carryPatch, undoCarryPlan, undoPatch, drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws, yearEndAccounts } from './drawLog';
 import { balanceAt, checkAges, lumpGrid, lumpTotal, returnScenarios, runScenario, scaleLiving, scaleLumps } from './scenarios';
@@ -366,6 +366,26 @@ describe('인출 전략', () => {
     const f = compareStrategy('fixed', inp, 200);
     expect(f.schedule[0].withdrawal).toBeCloseTo(4000, 6);
     expect(f.schedule[5].withdrawal).toBeCloseTo(2500, 6);
+  });
+  it('정률 인출: 필요 인출액 대비 평균 충족률·90% 미달 연수(시나리오 중앙값)', () => {
+    const r = compareStrategy('percent', inp, 200);
+    // 잔액 4%(2,400)로 첫 5년 필요 4,000을 못 채워 충족 확률은 0%지만, 충족률·미달 연수로 정도를 봄
+    expect(r.successRate).toBe(0);
+    expect(r.medianShortYears).toBeGreaterThanOrEqual(5);
+    expect(r.medianShortYears).toBeLessThanOrEqual(40);
+    expect(r.medianCoverage).toBeGreaterThan(50);
+    expect(r.medianCoverage).toBeLessThanOrEqual(100);
+    // 자산이 넉넉하면 평균수익 정액 인출은 미달 연수 0, 충족률 100%
+    const f = compareStrategy('fixed', { ...inp, startBalance: 120000, volatility: 0 }, 10);
+    expect(f.medianShortYears).toBe(0);
+    expect(f.medianCoverage).toBeCloseTo(100, 6);
+  });
+  it('3-버킷 현금·채권 연수 설정: 기본은 2·5년치, 바꾸면 결과가 달라짐', () => {
+    const def = compareStrategy('bucket', inp, 200);
+    expect(compareStrategy('bucket', { ...inp, bucket: { cashYears: 2, bondYears: 5 } }, 200).successRate).toBe(def.successRate);
+    const other = compareStrategy('bucket', { ...inp, bucket: { cashYears: 4, bondYears: 8 } }, 200);
+    expect(other.p50).not.toEqual(def.p50);
+    expect(bucketDesc({ cashYears: 3, bondYears: 6 })).toContain('현금(3년치)·채권(6년치)');
   });
 });
 
