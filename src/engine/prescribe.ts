@@ -5,10 +5,10 @@ import type { InsuranceGap } from './insurance';
 import { debtAnnualAt, deterministicPath, expenseAt, nominalFactor, solveFor, weakestGuardrail, withdrawStart, type PlanInput } from './montecarlo';
 import type { Retax } from './pensionTaxPlan';
 import { RISK_PROFILES, type Summary } from './portfolio';
-import { emergencyMonths, emergencyRunway, withdrawLevel } from './risk';
+import { BUCKET_GUIDE_LINK, emergencyMonths, emergencyRunway, withdrawLevel } from './risk';
 import { EMERGENCY_LOCK_MONTHS, goalTimingGaps, type MaturityRow } from './maturity';
 import { ISA_SEP_TAX, type IsaTax } from './account';
-import { BEAR_DROP, bearPlan, peakPlan, pensionEquityOutNote, CASH_YEARS_TARGET, cashMoveRows, cashRunway, marketDateNote, pensionBondOutNote, pensionFrom55, type BondsOnHand, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
+import { BEAR_DROP, bearPlan, normalPlan, peakPlan, pensionEquityOutNote, CASH_YEARS_TARGET, cashMoveRows, cashShortText, cashRunway, marketDateNote, pensionBondOutNote, pensionFrom55, type BondsOnHand, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
 
 export interface Prescription {
   title: string;
@@ -17,6 +17,8 @@ export interface Prescription {
   area: '저축' | '투자' | '노후' | '비상금' | '부채' | '보장' | '목표';
   /** 배지 문구를 바꿀 때(예: 참고 항목은 ‘참고’) */
   badge?: string;
+  /** 설명 끝에 붙일 다른 화면 카드 바로가기(하락장·고점 부근·보통 구간 처방은 인출용 자산 배치 가이드) */
+  link?: { to: string; card: string; text: string };
 }
 
 /** 만원 → "3,500만" / "1.25억" (뒤에 '원'은 문장에서 붙임) */
@@ -144,11 +146,9 @@ export function marketPrescription(profile: Pick<Profile, 'marketDrawdown' | 'ma
   const dd = profile.marketDrawdown ?? 0;
   const b = bearPlan(dd, c.usable, yearDraw, bonds);
   if (!b) return null;
-  const { goal, usable, short, bond, fromBond, left } = b;
+  const { bond, fromBond, left } = b;
   const date = marketDateNote(profile.marketDrawdownDate, now);
-  const have = usable > 0.5
-    ? `바로 쓸 돈 ${fmt(usable)}원은 첫해 인출(연 ${fmt(yearDraw)}원) 기준 약 ${(usable / yearDraw).toFixed(1)}년치로 ${CASH_YEARS_TARGET}년치(${fmt(goal)}원)에 ${fmt(short)}원 모자랍니다.`
-    : `바로 쓸 현금성이 없어 첫해 인출(연 ${fmt(yearDraw)}원) 기준 ${CASH_YEARS_TARGET}년치(${fmt(goal)}원)가 모두 모자랍니다.`;
+  const have = cashShortText(b, yearDraw);
   const how = fromBond > 0.5
     ? ` 지금 주식형을 팔면 떨어진 값에 손실을 확정하니, 채권형(지금 ${fmt(bond)}원)에서 ${fmt(fromBond)}원을 먼저 꺼내 쓰세요.${left > 0.5 ? ` 채권형을 다 꺼내도 ${fmt(left)}원이 모자라니 회복할 때까지 인출을 줄이거나(가드레일), 올랐다면 금 ETF 같은 대체자산 일부로 채우세요.` : ''}`
     : ` 꺼낼 채권형도 없어, 회복할 때까지 인출을 줄이거나(가드레일) 올랐다면 금 ETF 같은 대체자산 일부로 채우세요.`;
@@ -156,6 +156,7 @@ export function marketPrescription(profile: Pick<Profile, 'marketDrawdown' | 'ma
   return {
     area: '노후', level: 'caution',
     title: fromBond > 0.5 ? `${BEAR_RX_TITLE} — 채권형에서 ${fmt(fromBond)}원 먼저 꺼내기` : `${BEAR_RX_TITLE} — 인출 줄이기`,
+    link: BUCKET_GUIDE_LINK,
     detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${dd}%${date ? `, ${date.text}` : ''})이 하락장 기준(−${BEAR_DROP}% 이하)입니다. ${have}${how}${outNote} 주식형이 회복하면 고점 부근에서 일부를 팔아 현금성 바구니를 다시 채웁니다.`,
   };
 }
@@ -173,18 +174,42 @@ export const PEAK_RX_NONE = '고점 부근: 팔 주식형이 없어';
 export function peakPrescription(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: Pick<CashOnHand, 'usable'>, yearDraw: number, equity: number | BondsOnHand, now: Date): Prescription | null {
   const b = peakPlan(profile.marketDrawdown, c.usable, yearDraw, equity);
   if (!b) return null;
-  const { goal, usable, short, equity: sell, fromEquity, left } = b;
+  const { short, equity: sell, fromEquity, left } = b;
   const date = marketDateNote(profile.marketDrawdownDate, now);
-  const have = usable > 0.5
-    ? `바로 쓸 돈 ${fmt(usable)}원은 첫해 인출(연 ${fmt(yearDraw)}원) 기준 약 ${(usable / yearDraw).toFixed(1)}년치로 ${CASH_YEARS_TARGET}년치(${fmt(goal)}원)에 ${fmt(short)}원 모자랍니다.`
-    : `바로 쓸 현금성이 없어 첫해 인출(연 ${fmt(yearDraw)}원) 기준 ${CASH_YEARS_TARGET}년치(${fmt(goal)}원)가 모두 모자랍니다.`;
+  const have = cashShortText(b, yearDraw);
   const how = fromEquity > 0.5
     ? ` 값이 오른 지금 주식형(지금 ${fmt(sell)}원) 가운데 ${fmt(fromEquity)}원을 팔아 입출금·파킹통장·MMF 같은 현금성 바구니에 채워 두면, 다음 하락장에 주식을 팔지 않고 버틸 수 있습니다.${left > 0.5 ? ` 주식형을 다 팔아도 ${fmt(left)}원이 모자라니 나머지는 저축으로 채우세요.` : ''}`
     : ' 팔 주식형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요.';
   return {
     area: '노후', level: 'caution',
     title: fromEquity > 0.5 ? `${PEAK_RX_TITLE} ${fmt(fromEquity)}원 채우기` : `${PEAK_RX_NONE} 저축으로 현금성 ${fmt(short)}원 채우기`,
+    link: BUCKET_GUIDE_LINK,
     detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${profile.marketDrawdown}%${date ? `, ${date.text}` : ''})이 고점 부근(0% 이상)입니다. ${have}${how}${pensionEquityOutNote(b)}`,
+  };
+}
+
+/** 보통 구간 처방 제목 앞부분(요약 보고 권장 대응에서 6개를 넘어도 남길 때 씀) */
+export const NORMAL_RX_TITLE = '보통: 1월 리밸런싱 때';
+
+/**
+ * 보통 구간 처방: 저장한 등락률이 0%와 −15% 사이이고 바로 쓸 돈이 첫해 인출(yearDraw) 기준 2년치에 못 미치면,
+ * 1월 리밸런싱 때 모자란 금액을 채권형에서 현금성 바구니로 옮기라고 안내(normalPlan, 55세 전 연금계좌 안 채권형 뺌).
+ * 등락률을 넣지 않았거나 보통이 아니거나 2년치가 있으면 null
+ */
+export function normalPrescription(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: Pick<CashOnHand, 'usable'>, yearDraw: number, bonds: number | BondsOnHand, now: Date): Prescription | null {
+  const b = normalPlan(profile.marketDrawdown, c.usable, yearDraw, bonds);
+  if (!b) return null;
+  const { short, bond, fromBond, left } = b;
+  const date = marketDateNote(profile.marketDrawdownDate, now);
+  const have = cashShortText(b, yearDraw);
+  const how = fromBond > 0.5
+    ? ` 1월 리밸런싱 때 채권형(지금 ${fmt(bond)}원) 가운데 ${fmt(fromBond)}원을 입출금·파킹통장·MMF 같은 현금성 바구니로 옮겨 두면, 하락장이 와도 주식을 팔지 않고 버틸 수 있습니다.${left > 0.5 ? ` 채권형을 다 옮겨도 ${fmt(left)}원이 모자라니 나머지는 저축으로 채우세요.` : ''}`
+    : ' 옮길 채권형이 없어 모자란 금액은 저축으로 현금성 바구니에 채우세요.';
+  return {
+    area: '노후', level: 'caution',
+    title: fromBond > 0.5 ? `${NORMAL_RX_TITLE} 채권형에서 현금성 ${fmt(fromBond)}원 옮기기` : `${NORMAL_RX_TITLE} 옮길 채권형이 없어 저축으로 현금성 ${fmt(short)}원 채우기`,
+    link: BUCKET_GUIDE_LINK,
+    detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${profile.marketDrawdown}%${date ? `, ${date.text}` : ''})이 보통(0%와 −15% 사이)입니다. ${have}${how}${pensionBondOutNote(b)}`,
   };
 }
 
@@ -480,6 +505,9 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
   // 고점 부근: 바로 쓸 돈이 2년치에 못 미치면 주식형 일부를 팔아 채울 금액
   const peakRx = cash ? peakPrescription(profile, cash, st.outflow, equity ?? s.byClass.find((x) => x.key === 'equity')?.value ?? 0, now) : null;
   if (peakRx) out.push(peakRx);
+  // 보통 구간: 바로 쓸 돈이 2년치에 못 미치면 1월 리밸런싱 때 채권형에서 옮길 금액
+  const normalRx = cash ? normalPrescription(profile, cash, st.outflow, bonds ?? s.byClass.find((x) => x.key === 'bond')?.value ?? 0, now) : null;
+  if (normalRx) out.push(normalRx);
 
   const debtRatio = s.totalAssets > 0 ? (s.totalDebt / s.totalAssets) * 100 : 0;
   if (debtRatio > c.debtRatioMax) {

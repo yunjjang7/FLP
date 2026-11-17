@@ -1,11 +1,11 @@
 import { won, pct } from '../lib/format';
 import type { Goal, Level, Liability, Profile } from '../types';
-import { cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearPlan, type CashOnHand, type PeakPlan } from './buckets';
+import { cashShortText, cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type BearPlan, type CashOnHand, type PeakPlan } from './buckets';
 import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
 import type { Retax } from './pensionTaxPlan';
-import { BEAR_RX_TITLE, PEAK_RX_NONE, PEAK_RX_TITLE, type Prescription } from './prescribe';
+import { BEAR_RX_TITLE, NORMAL_RX_TITLE, PEAK_RX_NONE, PEAK_RX_TITLE, type Prescription } from './prescribe';
 import type { RiskCheck } from './risk';
 import { round1, survivorBenefitText, type SurvivorWorst } from './survivor';
 
@@ -67,9 +67,9 @@ export function marketLine(p: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDa
   };
 }
 
-/** 2년치까지 모자란 금액과 지금 할 일 문장(앞에 띄어쓰기 포함) */
+/** 2년치까지 모자란 금액(buckets.ts cashShortText)과 지금 할 일 문장(앞에 띄어쓰기 포함) */
 const shortText = (b: { usable: number; goal: number; short: number }, how: string, out: string) =>
-  ` 바로 쓸 돈 ${won(b.usable)}이 첫해 인출 기준 2년치(${won(b.goal)})에 ${won(b.short)} 모자라니 지금 할 일: ${how}.${out}`;
+  ` ${cashShortText(b)} 지금 할 일: ${how}.${out}`;
 
 /** 55세 전이라 뺀 연금계좌 안 채권형 안내(앞에 띄어쓰기 포함) */
 const bondOut = (b: BearPlan) => b.out > 0.5 ? ` 55세 전 연금계좌 안 채권형 ${won(b.out)}은 연금계좌에서 꺼내기 어려워 옮길 금액에서 뺐습니다.` : '';
@@ -268,8 +268,9 @@ export function buildReport(x: ReportInput): ReportSection[] {
     .filter((r) => r.level !== 'good' && !r.badge && !shown.has(r.title))
     .sort((a, b) => (a.level === 'danger' ? 0 : 1) - (b.level === 'danger' ? 0 : 1));
   const top = pending.slice(0, 6);
-  // 하락장·고점 부근 처방은 지금 시장 상태에 맞춰 바로 할 일이라 6개를 넘어도 잘리지 않게 덧붙임
-  for (const r of pending.filter((x) => x.title.startsWith(BEAR_RX_TITLE) || x.title.startsWith(PEAK_RX_TITLE) || x.title.startsWith(PEAK_RX_NONE))) if (!top.includes(r)) top.push(r);
+  // 하락장·고점 부근·보통 구간 처방은 지금 시장 상태에 맞춰 바로 할 일이라 6개를 넘어도 잘리지 않게 덧붙임
+  const MARKET_RX = [BEAR_RX_TITLE, PEAK_RX_TITLE, PEAK_RX_NONE, NORMAL_RX_TITLE];
+  for (const r of pending.filter((x) => MARKET_RX.some((t) => x.title.startsWith(t)))) if (!top.includes(r)) top.push(r);
   const actions: ReportLine[] = top.map((r) => ({ text: `${r.title}: ${r.detail}`, level: r.level }));
 
   const limits: ReportLine[] = [

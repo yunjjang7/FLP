@@ -275,6 +275,19 @@ export function normalPlan(drawdown: number | undefined, usable: number, yearDra
   return { goal, usable: have, short, bond, fromBond, left: short - fromBond, out: b.out, outParts: b.outParts };
 }
 
+/**
+ * 바로 쓸 돈이 첫해 인출 기준 2년치에 못 미치는 금액 문장(홈 점검·맞춤 처방·요약 보고 공통, 하락장·고점 부근·보통 구간).
+ * yearDraw 를 넘기면 ‘바로 쓸 돈 ○원은 첫해 인출(연 ○원) 기준 약 ○년치로 2년치(○원)에 ○원 모자랍니다.’
+ * (바로 쓸 돈이 없으면 ‘바로 쓸 현금성이 없어 … 2년치(○원)가 모두 모자랍니다.’),
+ * 넘기지 않으면 요약 보고 문장 앞부분 ‘바로 쓸 돈 ○원이 첫해 인출 기준 2년치(○원)에 ○원 모자라니’
+ */
+export function cashShortText(b: Pick<BearPlan, 'usable' | 'goal' | 'short'>, yearDraw?: number): string {
+  if (yearDraw === undefined) return `바로 쓸 돈 ${won(b.usable)}이 첫해 인출 기준 ${CASH_YEARS_TARGET}년치(${won(b.goal)})에 ${won(b.short)} 모자라니`;
+  return b.usable > 0.5
+    ? `바로 쓸 돈 ${won(b.usable)}은 첫해 인출(연 ${won(yearDraw)}) 기준 약 ${(b.usable / yearDraw).toFixed(1)}년치로 ${CASH_YEARS_TARGET}년치(${won(b.goal)})에 ${won(b.short)} 모자랍니다.`
+    : `바로 쓸 현금성이 없어 첫해 인출(연 ${won(yearDraw)}) 기준 ${CASH_YEARS_TARGET}년치(${won(b.goal)})가 모두 모자랍니다.`;
+}
+
 /** 55세 전이라 뺀 연금계좌 안 채권형 안내(뺀 금액이 없으면 빈 문자열) */
 export const pensionBondOutNote = (b: Pick<BondsOnHand, 'out' | 'outParts'>) => outNote('채권형', b.out, b.outParts);
 

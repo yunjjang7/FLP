@@ -4,7 +4,7 @@ import { buildPlanInput, planGoals } from './goals';
 import { insuranceGap } from './insurance';
 import { deterministicPath, retirementNeed, simulate, withdrawStart } from './montecarlo';
 import { summarize } from './portfolio';
-import { marketPrescription, peakPrescription, prescriptions, type Prescription } from './prescribe';
+import { marketPrescription, normalPrescription, peakPrescription, prescriptions, type Prescription } from './prescribe';
 import { bearPlan, bondsOnHand, cashOnHand, normalPlan, peakPlan, withPensionCash } from './buckets';
 import { buildReport, cashLine, depletionText, depletionWithReturn, livingText, marketLine } from './report';
 import { bulletChecks, marketChecks, retiredBasis, riskChecks } from './risk';
@@ -142,6 +142,27 @@ describe('요약 보고 시장 상태 문장', () => {
     const none = peakPrescription(p, { usable: 0 }, 1000, 0, now)!;
     const rep2 = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [...others, none], nowYear: 2026, now });
     expect(rep2.find((x) => x.title === '5. 권장 대응')!.lines.at(-1)!.text.startsWith('고점 부근: 팔 주식형이 없어 저축으로 현금성 2,000만원 채우기: ')).toBe(true);
+  });
+
+  it('권장 대응: 보통 구간 처방도 6개가 넘어도 잘리지 않고 55세 전 채권형 제외 안내까지', () => {
+    const d = sampleData(2026);
+    const p = { ...d.profile, marketDrawdown: -5, marketDrawdownDate: '2026-11-10' };
+    const s = summarize(p, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+    const inp = buildPlanInput(p, d.assets, d.liabilities, d.goals, s);
+    // 본인 52세라 연금계좌 안 채권형 300만원은 빼고 700만원만 옮길 수 있음
+    const normal = normalPrescription(p, { usable: 800 }, 1000, bondsOnHand(1000, { self: 300, spouse: 0 }, { self: 52 }), now)!;
+    const others: Prescription[] = Array.from({ length: 7 }, (_, i) => ({ area: '노후', level: 'danger', title: `위험 처방 ${i + 1}`, detail: '설명' }));
+    const rep = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [...others, normal], nowYear: 2026, now });
+    const lines = rep.find((x) => x.title === '5. 권장 대응')!.lines;
+    expect(lines).toHaveLength(7);
+    expect(lines[6].level).toBe('caution');
+    expect(lines[6].text).toBe(`${normal.title}: ${normal.detail}`);
+    expect(lines[6].text.startsWith('보통: 1월 리밸런싱 때 채권형에서 현금성 700만원 옮기기: ')).toBe(true);
+    expect(lines[6].text.endsWith(' 연금계좌 안 채권형 300만원은 55세 전에는 연금계좌에서 꺼내기 어려워 제외했습니다.')).toBe(true);
+    // 옮길 채권형이 없는 제목도 잘리지 않음
+    const none = normalPrescription(p, { usable: 0 }, 1000, 0, now)!;
+    const rep2 = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [...others, none], nowYear: 2026, now });
+    expect(rep2.find((x) => x.title === '5. 권장 대응')!.lines.at(-1)!.text.startsWith('보통: 1월 리밸런싱 때 옮길 채권형이 없어 저축으로 현금성 2,000만원 채우기: ')).toBe(true);
   });
 
   it('자산과 부채 섹션에 들어감', () => {

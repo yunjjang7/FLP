@@ -2,7 +2,7 @@ import { Fragment, useMemo, useState } from 'react';
 import { Slider } from '../components/fields';
 import { LifeChart } from '../components/LifeChart';
 import { PlanCompare } from '../components/PlanCompare';
-import { SetupLink } from '../components/SetupLink';
+import { CardLink, SetupLink } from '../components/SetupLink';
 import { Badge, Bar, Button, Card, Disclaimer, EmptyState, PageHeader, Stat } from '../components/ui';
 import { db } from '../db/db';
 import { GOAL_CATEGORY } from '../db/schema';
@@ -79,7 +79,7 @@ function PrescribeInner() {
                   <span className="text-[15px] font-semibold">{r.title}</span>
                   <Badge level={r.level}>{r.badge}</Badge>
                 </div>
-                <p className="mt-0.5 text-sm text-muted">{r.detail}</p>
+                <p className="mt-0.5 text-sm text-muted">{r.detail}{r.link && <> <CardLink to={r.link.to} card={r.link.card}>{r.link.text}</CardLink></>}</p>
               </div>
             </li>
           ))}
