@@ -6,6 +6,7 @@ import { canMaturity, emergencyLockedOf, goalTimingGaps, maturities, maturityLab
 import { milestones, yearTodos } from './milestones';
 import { summarize } from './portfolio';
 import { rebalance } from './rebalance';
+import { cashOnHand, cashYears } from './buckets';
 import { maturityPrescriptions } from './prescribe';
 import { emergencyDetail } from './risk';
 
@@ -173,5 +174,26 @@ describe('리밸런싱: 만기 전 예금·적금', () => {
     const rp = rebalance(past, 60, Y, 5, 'pensionFirst', undefined, M);
     expect(rp.early).toEqual([]);
     expect(rp.general.sell.map((m) => Math.round(m.change))).toEqual([-1667, -333]);
+  });
+});
+
+describe('인출 바구니: 만기 전 예금·적금은 바로 쓸 돈과 따로', () => {
+  it('연금계좌 밖 현금·예금·적금을 바로 쓸 돈과 만기가 3개월 넘게 남은 돈으로 나눔', () => {
+    const list = [
+      asset('파킹통장', 'cash', 'short', 1000),
+      asset('정기예금', 'deposit', 'short', 2000, { maturityYear: 2027, maturityMonth: 9 }), // 10개월 → 묶임
+      asset('곧 만기 적금', 'savings', 'mid', 500, { maturityYear: 2027, maturityMonth: 1 }), // 2개월 → 바로 씀
+      asset('만기 없는 예금', 'deposit', 'short', 500),
+      asset('채권', 'bond', 'mid', 3000),
+      asset('IRP', 'pension', 'long', 5000),
+    ];
+    const c = cashOnHand(list, Y, M);
+    expect(c).toMatchObject({ total: 4000, usable: 2000, locked: 2000 });
+    expect(c.lockedRows.map((r) => r.name)).toEqual(['정기예금']);
+    // 첫해 인출 1,000 기준: 바로 쓸 돈만 2년, 만기 전 예금까지 깨면 4년
+    expect(cashYears(c, 1000)).toEqual({ usable: 2, all: 4 });
+    expect(cashYears(c, 0)).toBeUndefined();
+    // 만기가 없으면 모두 바로 쓸 돈
+    expect(cashOnHand(list.filter((a) => a.name !== '정기예금'), Y, M)).toMatchObject({ total: 2000, usable: 2000, locked: 0 });
   });
 });

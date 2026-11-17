@@ -13,7 +13,7 @@ import { ACCOUNT_KEY_LABEL, ACCOUNT_KEYS, accountMismatch, ASSET_TYPES, groupNam
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, MoveButtons, PageHeader } from '../components/ui';
 import { appendOrders, byOrder, moveItem, moveRow, nextOrder } from '../db/order';
-import { loadFolded, pruneFolded, rowSummary, saveFolded, toggleFolded } from '../db/fold';
+import { loadFolded, pruneFolded, cardSummary, saveFolded, toggleFolded } from '../db/fold';
 import { canMaturity, EMERGENCY_LOCK_MONTHS, maturityLabel, monthsToMaturity } from '../engine/maturity';
 import { CardLink, jumpToTarget, SetupLink } from '../components/SetupLink';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
@@ -839,7 +839,7 @@ function Guide({ items }: { items: React.ReactNode[] }) {
 
 /** 접은 카드 머리의 요약: 유형·금액, 자산은 계좌 구분·만기도 */
 function foldSummary(table: ListTable, r: Record<string, unknown>) {
-  const base = rowSummary(table, r);
+  const base = cardSummary(table, r);
   if (table !== 'assets') return base;
   const a = r as unknown as Asset;
   const extra = [canAcctKind(a) && a.acctKind ? ACCT_KIND_LABEL[a.acctKind] : '', canMaturity(a) && (a.maturityYear ?? 0) > 0 ? `만기 ${maturityLabel(a)}` : ''].filter(Boolean);

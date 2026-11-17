@@ -1,5 +1,5 @@
 import { Fragment, useMemo, useState } from 'react';
-import { accountBuckets, BEAR_DROP, bucketGap, IRP_RISK_CAP, marketRule, safeYears } from '../engine/buckets';
+import { accountBuckets, BEAR_DROP, bucketGap, cashOnHand, cashYears, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
 import { classAmounts, hasAlloc } from '../engine/allocation';
 import { useFlp } from '../store/FlpContext';
 import { SetupLink } from './SetupLink';
@@ -24,6 +24,10 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
   });
   const [drawdown, setDrawdown] = useState(0);
   const rule = marketRule(drawdown);
+  const now = new Date();
+  // 연금계좌 밖 현금·예금·적금: 바로 쓸 돈과 만기가 3개월 넘게 남은 예금·적금
+  const hand = useMemo(() => cashOnHand(assets, now.getFullYear(), now.getMonth() + 1), [assets]); // eslint-disable-line react-hooks/exhaustive-deps
+  const handYears = cashYears(hand, firstNeed);
   const alt0 = Math.min(50, Math.max(0, altPct)) / 100;
   const cash = Math.min(balance, firstNeed * 2);
   const bond = Math.min(balance - cash, firstNeed * 3);
@@ -56,6 +60,22 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
         ))}
       </div>
 
+      {hand.total > 0.5 && (
+        <p className="mt-3 rounded-lg bg-sunken px-3 py-2 text-sm">
+          지금 연금계좌 밖 현금성(현금·예금·적금) <b>{won(hand.total)}</b> 가운데 바로 쓸 수 있는 돈 <b>{won(hand.usable)}</b>
+          {hand.locked > 0.5 ? (
+            <>
+              , 만기가 3개월 넘게 남은 예금·적금 <b className="text-warn">{won(hand.locked)}</b>
+              <span className="text-muted">({hand.lockedRows.map((r) => `${r.name} ${maturityLabel({ maturityYear: r.year, maturityMonth: r.month })} 만기`).join(', ')})</span>
+              . 만기 전에 깨면 약정 이자 대신 중도해지 이율을 받으니, ① 현금성 목표 {won(cash)}는 바로 쓸 돈으로 채우는 편이 안전합니다.
+            </>
+          ) : (
+            <>입니다.</>
+          )}
+          {handYears && <span className="text-muted"> 첫해 인출 기준 바로 쓸 돈만으로 약 {handYears.usable.toFixed(1)}년치입니다.</span>}
+        </p>
+      )}
+
       <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,180px)_minmax(0,220px)_minmax(0,1fr)]">
         <Labeled label="대체자산 목표 비중" hint="금·리츠 ETF 등, 평가액 대비">
           <NumberField value={altPct} unit="%" min={0} onChange={setAltPct} />
@@ -75,6 +95,12 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
                 </span>
               ))}
               {bearYears.some((b) => b.years < 2) && ' — 2년이 안 되는 계좌는 회복을 기다리기 어려우니 다음 고점에 현금성을 먼저 채우세요.'}
+            </div>
+          )}
+          {rule.state === 'bear' && handYears && hand.total > 0.5 && (
+            <div className="mt-1 text-xs">
+              연금계좌 밖 현금성으로 버틸 수 있는 기간(첫해 인출 기준): 바로 쓸 돈만 <b className={handYears.usable < 2 ? 'text-bad' : ''}>약 {handYears.usable.toFixed(1)}년</b>
+              {hand.locked > 0.5 && <>, 만기 전 예금·적금 {won(hand.locked)}까지 깨면 약 {handYears.all.toFixed(1)}년(중도해지 이율)</>}
             </div>
           )}
         </div>

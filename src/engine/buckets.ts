@@ -2,6 +2,10 @@ import type { Alloc, Asset } from '../types';
 import { accountName } from './portfolio';
 import { classAmounts, hasAlloc, IRP_RISK_CAP, isCappedAsset, isRiskCappedName } from './allocation';
 import type { TaxResult } from './tax';
+import { isLocked } from './goals';
+import { EMERGENCY_LOCK_MONTHS, maturities, maturityLabel, type MaturityRow } from './maturity';
+
+export { maturityLabel };
 
 export { IRP_RISK_CAP };
 /** 하락장 기준: 주식형 지수가 고점보다 이만큼(%) 넘게 떨어지면 주식 매도를 멈춤 */
@@ -85,4 +89,32 @@ export function marketRule(drawdown: number) {
   if (state === 'bear') return { state, text: `하락장(고점 대비 ${drawdown}%): 주식형 매도를 멈추고 현금성 바구니에서만 인출, 리밸런싱 보류. 금 ETF가 올랐다면 그 일부로 현금성을 채웁니다.` };
   if (state === 'peak') return { state, text: '고점 부근: 주식형 일부를 팔아 현금성 바구니를 목표(약 2년치)까지 채웁니다.' };
   return { state, text: `보통(고점 대비 ${drawdown}%): 계획대로 인출하고 1년에 한 번(1월) 리밸런싱합니다.` };
+}
+
+/** 연금계좌 밖 현금성으로 보는 유형: 현금·입출금, 예금, 적금 */
+export const CASH_TYPES: Asset['type'][] = ['cash', 'deposit', 'savings'];
+
+export interface CashOnHand {
+  total: number; // 연금계좌 밖 현금성 합계(수령 전 묶인 자산 제외)
+  usable: number; // 바로 쓸 수 있는 돈: 현금·만기 없는 예금·적금·만기가 3개월 안에 오거나 지난 예금·적금
+  locked: number; // 만기가 3개월 넘게 남은 예금·적금(깨면 중도해지 이율)
+  lockedRows: MaturityRow[];
+}
+
+/**
+ * 인출 바구니 ① 현금성 가운데 연금계좌 밖 현금·예금·적금을 ‘바로 쓸 수 있는 돈’과 ‘만기 전 예금·적금’으로 나눔.
+ * 만기 연월을 넣은 예금·적금 중 만기가 EMERGENCY_LOCK_MONTHS(3개월)보다 더 남은 것만 묶인 돈으로 봄(비상금 점검과 같은 기준)
+ */
+export function cashOnHand(assets: Asset[], nowYear: number, nowMonth = 1): CashOnHand {
+  const rows = assets.filter((a) => CASH_TYPES.includes(a.type) && a.amount > 0 && !isLocked(a, nowYear));
+  const total = rows.reduce((s, a) => s + a.amount, 0);
+  const lockedRows = maturities(rows, nowYear, nowMonth).filter((r) => r.monthsLeft > EMERGENCY_LOCK_MONTHS);
+  const locked = lockedRows.reduce((s, r) => s + r.amount, 0);
+  return { total, usable: total - locked, locked, lockedRows };
+}
+
+/** 하락장에 연금계좌 밖 현금성으로 버틸 햇수(한 해 인출 yearDraw 기준): 바로 쓸 돈만, 만기 전 예금·적금까지 깰 때. 인출이 없으면 undefined */
+export function cashYears(c: CashOnHand, yearDraw: number) {
+  if (!(yearDraw > 0)) return undefined;
+  return { usable: c.usable / yearDraw, all: c.total / yearDraw };
 }
