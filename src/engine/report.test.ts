@@ -6,8 +6,36 @@ import { deterministicPath, retirementNeed, simulate, withdrawStart } from './mo
 import { summarize } from './portfolio';
 import { prescriptions } from './prescribe';
 import { cashOnHand, withPensionCash } from './buckets';
-import { buildReport, cashLine, depletionText, depletionWithReturn, livingText } from './report';
+import { buildReport, cashLine, depletionText, depletionWithReturn, livingText, marketLine } from './report';
 import { bulletChecks, retiredBasis, riskChecks } from './risk';
+
+describe('요약 보고 시장 상태 문장', () => {
+  const now = new Date(2026, 10, 17);
+  it('저장한 등락률·입력 날짜로 시장 상태와 적용할 규칙, 30일이 지나면 다시 넣으라는 안내', () => {
+    expect(marketLine({}, now)).toBeUndefined();
+    const bear = marketLine({ marketDrawdown: -18, marketDrawdownDate: '2026-11-10' }, now)!;
+    expect(bear.level).toBe('caution');
+    expect(bear.text).toBe('인출용 자산 배치 가이드에 넣은 주식형 등락률은 고점 대비 -18%(11월 10일 기준)로 지금 시장 상태는 하락장입니다. 지금 적용할 규칙: 하락장(고점 대비 -18%): 주식형 매도를 멈추고 현금성 바구니에서만 인출, 리밸런싱 보류. 금 ETF가 올랐다면 그 일부로 현금성을 채웁니다.');
+    const normal = marketLine({ marketDrawdown: -5, marketDrawdownDate: '2026-11-10' }, now)!;
+    expect(normal.level).toBeUndefined();
+    expect(normal.text).toContain('지금 시장 상태는 보통입니다. 지금 적용할 규칙: 보통(고점 대비 -5%)');
+    expect(marketLine({ marketDrawdown: 0 }, now)!.text).toContain('고점 대비 0%로 지금 시장 상태는 고점 부근입니다.');
+    const old = marketLine({ marketDrawdown: -5, marketDrawdownDate: '2026-09-01' }, now)!;
+    expect(old.level).toBe('caution');
+    expect(old.text).toContain('(9월 1일 기준)로');
+    expect(old.text).toContain('넣은 지 77일이 지났으니 인출 계획 ‘인출용 자산 배치 가이드’에 지금 지수로 다시 넣어 주세요.');
+  });
+
+  it('자산과 부채 섹션에 들어감', () => {
+    const d = sampleData(2026);
+    const p = { ...d.profile, marketDrawdown: -20, marketDrawdownDate: '2026-11-10' };
+    const s = summarize(p, d.assets, d.liabilities, d.cashflows, 2026, d.insurance);
+    const inp = buildPlanInput(p, d.assets, d.liabilities, d.goals, s);
+    const rep = buildReport({ profile: p, summary: s, planInput: inp, sim: simulate(inp, 50), start: withdrawStart(inp), need: retirementNeed(inp), liabilities: d.liabilities, goals: d.goals, checks: [], rx: [], nowYear: 2026, now });
+    const sec = rep.find((x) => x.title === '2. 자산과 부채')!;
+    expect(sec.lines.some((l) => l.level === 'caution' && l.text.includes('지금 시장 상태는 하락장입니다.'))).toBe(true);
+  });
+});
 
 describe('요약 보고', () => {
   const d = sampleData(2026);

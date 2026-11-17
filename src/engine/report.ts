@@ -1,6 +1,6 @@
 import { won, pct } from '../lib/format';
 import type { Goal, Level, Liability, Profile } from '../types';
-import { cashYears, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
+import { cashYears, MARKET_STATE_LABEL, marketDateNote, marketRule, maturityLabel, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
 import { bulletNoMaturity, bulletOpenEnded, isRecurring } from './goals';
 import { deterministicPath, incomeValue, type PlanInput, type SimResult } from './montecarlo';
 import type { Summary } from './portfolio';
@@ -36,6 +36,23 @@ export interface ReportInput {
   /** 연금계좌 밖 현금성(buckets.ts cashOnHand): 바로 쓸 수 있는 돈과 만기 전 예금·적금 */
   cash?: CashOnHand;
   retax?: Retax; // 수익률 ±2%p 고갈 나이에서 연금 인출 세금을 바뀐 수익률로 다시 계산
+  /** 오늘 날짜(등락률 입력이 30일 지났는지 판단). 없으면 지금 */
+  now?: Date;
+}
+
+/**
+ * 시장 상태 문장: 인출용 자산 배치 가이드에 저장한 등락률과 입력 날짜로 지금 시장 상태와 적용할 규칙.
+ * 하락장이거나 넣은 지 30일이 지났으면 주의. 등락률을 넣지 않았으면 undefined
+ */
+export function marketLine(p: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, now: Date): ReportLine | undefined {
+  if (p.marketDrawdown === undefined) return undefined;
+  const rule = marketRule(p.marketDrawdown);
+  const date = marketDateNote(p.marketDrawdownDate, now);
+  const stale = date?.stale ? ` 넣은 지 ${date.days}일이 지났으니 인출 계획 ‘인출용 자산 배치 가이드’에 지금 지수로 다시 넣어 주세요.` : '';
+  return {
+    text: `인출용 자산 배치 가이드에 넣은 주식형 등락률은 고점 대비 ${p.marketDrawdown}%${date ? `(${date.label})` : ''}로 지금 시장 상태는 ${MARKET_STATE_LABEL[rule.state]}입니다. 지금 적용할 규칙: ${rule.text}${stale}`,
+    level: rule.state === 'bear' || date?.stale ? 'caution' : undefined,
+  };
 }
 
 /**
@@ -147,6 +164,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
       return { text: `${l.name}: 잔액 ${won(l.balance)}, 금리 ${l.rate}%, 월 ${won(l.monthlyPayment)} · ${how}.`, level: noEnd && !open ? ('caution' as Level) : undefined };
     });
   const cash = x.cash ? cashLine(x.cash, start.outflow, p) : undefined;
+  const market = marketLine(p, x.now ?? new Date());
   const assetLines: ReportLine[] = [
     { text: `총자산 ${won(s.totalAssets)}, 부채 ${won(s.totalDebt)}, 순자산 ${won(s.netWorth)}입니다. 금융자산 ${won(s.financialAssets)}, 부동산 ${won(s.realEstate)}입니다.` },
     ...(s.financialAssets > 0 && s.byClass.length
@@ -156,6 +174,7 @@ export function buildReport(x: ReportInput): ReportSection[] {
       ? [{ text: `주식·펀드·ETF는 ${s.byAcct.map((g) => `${g.label} ${won(g.value)}`).join(', ')}입니다.` }]
       : []),
     ...(cash ? [cash] : []),
+    ...(market ? [market] : []),
     {
       text: `노후 계산은 지금 꺼내 쓸 수 있는 금융자산 ${won(inp.startBalance)}에서 시작합니다(기대수익률 ${inp.meanReturn.toFixed(1)}%, 변동성 ${inp.volatility.toFixed(1)}%${inp.retireMeanReturn !== undefined ? `, 은퇴 후 ${inp.retireMeanReturn.toFixed(1)}%` : ''}).`,
     },

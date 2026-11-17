@@ -6,7 +6,7 @@ import { insuranceGap, type InsuranceGap } from '../engine/insurance';
 import { retirementNeed, simulate, withdrawStart, type PathTax, type PlanInput, type SimResult } from '../engine/montecarlo';
 import { summarize, type Summary } from '../engine/portfolio';
 import { makePathTax, makeRetax, type Retax } from '../engine/pensionTaxPlan';
-import { bulletChecks, cashRunwayChecks, financialScore, retiredBasis, riskChecks, type RiskCheck } from '../engine/risk';
+import { bulletChecks, cashRunwayChecks, marketChecks, financialScore, retiredBasis, riskChecks, type RiskCheck } from '../engine/risk';
 import { cashMoveRows, cashOnHand, cashRunway, pensionCashParts, startAges, withPensionCash, type CashOnHand } from '../engine/buckets';
 import type { MaturityRow } from '../engine/maturity';
 import type { Asset, Cashflow, Goal, Insurance, Liability, Profile, Snapshot, YearEnd, Draw } from '../types';
@@ -89,7 +89,7 @@ export function FlpProvider({ children }: { children: ReactNode }) {
       goalPlans: planGoals(goals, assets, summary.age),
       ins,
       cash, runCash, cashMove: cashMoveRows(runCash, run),
-      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start), ...cashRunwayChecks(runCash, run, profile)],
+      checks: [...bulletChecks(liabilities, summary.age), ...riskChecks(profile, assets, basis, start), ...cashRunwayChecks(runCash, run, profile), ...marketChecks(profile, runCash, start.outflow, new Date())],
       score: financialScore(profile, assets, basis, sim.successRate, ins, start),
     };
   }, [raw]);

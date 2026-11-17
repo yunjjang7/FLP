@@ -1,6 +1,6 @@
 import { Fragment, useMemo } from 'react';
 import { db } from '../db/db';
-import { accountBuckets, BEAR_DROP, MARKET_INPUT_HELP, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
+import { accountBuckets, BEAR_DROP, MARKET_INPUT_HELP, marketDateNote, ymd, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
 import { classAmounts, hasAlloc } from '../engine/allocation';
 import { useFlp } from '../store/FlpContext';
 import { SetupLink } from './SetupLink';
@@ -27,7 +27,9 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
   const altPct = profile.bucketAltPct ?? altDefault;
   const drawdown = profile.marketDrawdown ?? 0;
   const setAltPct = (v: number) => db.profile.put({ ...profile, bucketAltPct: Math.min(50, Math.max(0, v)) });
-  const setDrawdown = (v: number) => db.profile.put({ ...profile, marketDrawdown: Math.max(-100, Math.min(100, v)) });
+  // 등락률을 넣은 날짜도 함께 저장: 칸 아래 ‘○월 ○일 기준’, 30일이 지나면 다시 넣으라고 안내
+  const setDrawdown = (v: number) => db.profile.put({ ...profile, marketDrawdown: Math.max(-100, Math.min(100, v)), marketDrawdownDate: ymd(new Date()) });
+  const dateNote = marketDateNote(profile.marketDrawdownDate, new Date());
   const rule = marketRule(drawdown);
   // 연금계좌 밖 현금·예금·적금(hand): 바로 쓸 돈과 만기가 3개월 넘게 남은 예금·적금.
   // 버틸 햇수는 홈 점검과 같은 숫자: 점검기준 설정이 예면 연금계좌 안 현금성도 더한 runCash 를 노후 진단 첫해 인출(start.outflow)로 나눔
@@ -88,6 +90,7 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
         </Labeled>
         <Labeled label="주식형 지수 고점 대비 등락률" hint={`예: −18 = 고점보다 18% 하락. ${MARKET_INPUT_HELP}`}>
           <NumberField value={drawdown} unit="%" onChange={setDrawdown} />
+          {dateNote && <div className={`mt-1 text-xs ${dateNote.stale ? 'font-semibold text-warn' : 'text-muted'}`}>{dateNote.text}</div>}
         </Labeled>
         <div className={`self-start rounded-xl px-3 py-2.5 text-sm sm:col-span-2 ${rule.state === 'bear' ? 'bg-bad-soft' : rule.state === 'peak' ? 'bg-good-soft' : 'bg-sunken'}`}>
           <b>지금 적용할 규칙</b> — {rule.text}

@@ -8,7 +8,7 @@ import { RISK_PROFILES, type Summary } from './portfolio';
 import { emergencyMonths, emergencyRunway, withdrawLevel } from './risk';
 import { EMERGENCY_LOCK_MONTHS, goalTimingGaps, type MaturityRow } from './maturity';
 import { ISA_SEP_TAX, type IsaTax } from './account';
-import { CASH_YEARS_TARGET, cashMoveRows, cashRunway, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
+import { BEAR_DROP, CASH_YEARS_TARGET, cashMoveRows, cashRunway, marketDateNote, marketState, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
 
 export interface Prescription {
   title: string;
@@ -128,6 +128,35 @@ export function pensionOutPrescription(c: CashOnHand, run?: { usable: number; al
     area: '노후', level: 'caution',
     title: `55세 전 현금성 부족 — 연금계좌 밖 현금성 ${fmt(Math.max(0, goal - c.usable))}원 더 필요`,
     detail: `바로 쓸 수 있는 돈 ${fmt(c.usable)}원은 ${run.retired ? '올해' : '은퇴 첫해'} 인출(연 ${fmt(run.yearDraw)}원) 기준 약 ${run.usable.toFixed(1)}년치로 ${CASH_YEARS_TARGET}년치(${fmt(goal)}원)에 못 미칩니다.${pensionOutNote(c)}${from} 그때까지 하락장에 주식을 팔지 않고 버티려면 모자란 ${fmt(Math.max(0, goal - c.usable))}원을 저축이나 고점 부근에 연금계좌 밖 주식형 일부를 팔아 입출금·파킹통장·MMF 같은 현금성 바구니에 채우세요.`,
+  };
+}
+
+/**
+ * 하락장 처방: 인출용 자산 배치 가이드에 저장한 등락률(profile.marketDrawdown)이 −15% 이하이고 바로 쓸 돈(c.usable)이
+ * 첫해 인출(yearDraw) 기준 2년치에 못 미치면, 주식형을 팔지 말고 모자란 금액을 채권형(bonds, 금융자산 안 채권형 금액)에서 먼저 꺼내라는 처방.
+ * 채권형으로도 모자라면 남는 금액과 인출을 줄이는 방안을 덧붙임. 넣은 지 30일이 지났으면 다시 넣으라는 안내
+ */
+export function marketPrescription(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: Pick<CashOnHand, 'usable'>, yearDraw: number, bonds: number, now: Date): Prescription | null {
+  const dd = profile.marketDrawdown ?? 0;
+  if (marketState(dd) !== 'bear' || !(yearDraw > 0)) return null;
+  const goal = yearDraw * CASH_YEARS_TARGET;
+  const usable = Math.max(0, c.usable);
+  if (usable >= goal) return null;
+  const short = goal - usable;
+  const bond = Math.max(0, bonds);
+  const fromBond = Math.min(short, bond);
+  const left = short - fromBond;
+  const date = marketDateNote(profile.marketDrawdownDate, now);
+  const have = usable > 0.5
+    ? `바로 쓸 돈 ${fmt(usable)}원은 첫해 인출(연 ${fmt(yearDraw)}원) 기준 약 ${(usable / yearDraw).toFixed(1)}년치로 ${CASH_YEARS_TARGET}년치(${fmt(goal)}원)에 ${fmt(short)}원 모자랍니다.`
+    : `바로 쓸 현금성이 없어 첫해 인출(연 ${fmt(yearDraw)}원) 기준 ${CASH_YEARS_TARGET}년치(${fmt(goal)}원)가 모두 모자랍니다.`;
+  const how = fromBond > 0.5
+    ? ` 지금 주식형을 팔면 떨어진 값에 손실을 확정하니, 채권형(지금 ${fmt(bond)}원)에서 ${fmt(fromBond)}원을 먼저 꺼내 쓰세요.${left > 0.5 ? ` 채권형을 다 꺼내도 ${fmt(left)}원이 모자라니 회복할 때까지 인출을 줄이거나(가드레일), 올랐다면 금 ETF 같은 대체자산 일부로 채우세요.` : ''}`
+    : ` 꺼낼 채권형도 없어, 회복할 때까지 인출을 줄이거나(가드레일) 올랐다면 금 ETF 같은 대체자산 일부로 채우세요.`;
+  return {
+    area: '노후', level: 'caution',
+    title: fromBond > 0.5 ? `하락장: 주식형 매도 멈춤 — 채권형에서 ${fmt(fromBond)}원 먼저 꺼내기` : '하락장: 주식형 매도 멈춤 — 인출 줄이기',
+    detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률(고점 대비 ${dd}%${date ? `, ${date.text}` : ''})이 하락장 기준(−${BEAR_DROP}% 이하)입니다. ${have}${how} 주식형이 회복하면 고점 부근에서 일부를 팔아 현금성 바구니를 다시 채웁니다.`,
   };
 }
 
@@ -327,7 +356,7 @@ export function guardrailPrescription(input: PlanInput, successRate: number, tar
 }
 
 /** retax: 저축·수익률·은퇴 나이·생활비를 바꿔 역산할 때 연금 인출 세금도 바뀐 계획으로 다시 계산(없으면 지금 세금 그대로) */
-export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap, retax?: Retax, cash?: CashOnHand): Prescription[] {
+export function prescriptions(profile: Profile, s: Summary, input: PlanInput, successRate: number, goalPlans: GoalPlan[], ins: InsuranceGap, retax?: Retax, cash?: CashOnHand, now: Date = new Date()): Prescription[] {
   const c = profile.criteria;
   const rt: Retax = retax ?? ((x) => x);
   const out: Prescription[] = [];
@@ -417,6 +446,9 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
     const outRx = cash ? pensionOutPrescription(cash, cashRunway(cash, st, input.currentAge), profile) : null;
     if (outRx) out.push(outRx);
   }
+  // 하락장: 바로 쓸 돈이 2년치에 못 미치면 채권형부터 꺼낼 금액
+  const bearRx = cash ? marketPrescription(profile, cash, st.outflow, s.byClass.find((x) => x.key === 'bond')?.value ?? 0, now) : null;
+  if (bearRx) out.push(bearRx);
 
   const debtRatio = s.totalAssets > 0 ? (s.totalDebt / s.totalAssets) * 100 : 0;
   if (debtRatio > c.debtRatioMax) {

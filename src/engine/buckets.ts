@@ -87,6 +87,30 @@ export const marketState = (drawdown: number): MarketState => (drawdown <= -BEAR
 /** 등락률 칸 설명: 어떤 값이 어느 규칙이 되고 무엇에 쓰이는지 */
 export const MARKET_INPUT_HELP = `시세를 자동으로 가져오지 않아 직접 넣는 값입니다. 쓰는 주식형 지수(예: 코스피·S&P500)가 그동안의 최고점보다 몇 % 아래인지 넣으면 0% 이상은 고점 부근, 0%와 −${BEAR_DROP}% 사이는 보통, −${BEAR_DROP}% 이하는 하락장으로 보고 ‘지금 적용할 규칙’을 바꿉니다. 하락장이면 지금 가진 현금성으로 버틸 햇수도 함께 보여 줍니다. 바구니 목표 금액·노후 진단·인출 스케줄 계산에는 쓰지 않습니다.`;
 
+/** 등락률을 넣고 이만큼(일) 지나면 다시 넣으라고 안내 */
+export const MARKET_STALE_DAYS = 30;
+
+/** 날짜를 YYYY-MM-DD(현지 날짜)로 */
+export const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/**
+ * 등락률 입력 날짜 안내: ‘11월 17일 기준’, 30일이 지났으면 다시 넣으라는 문장을 덧붙이고 stale=true.
+ * 날짜가 없거나 잘못됐으면 undefined
+ */
+export function marketDateNote(date: string | undefined, now: Date): { text: string; label: string; stale: boolean; days: number } | undefined {
+  const m = date ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(date) : null;
+  if (!m) return undefined;
+  const at = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const days = Math.round((today.getTime() - at.getTime()) / 86400000);
+  const stale = days > MARKET_STALE_DAYS;
+  const label = `${at.getFullYear() !== now.getFullYear() ? `${at.getFullYear()}년 ` : ''}${at.getMonth() + 1}월 ${at.getDate()}일 기준`;
+  return { text: stale ? `${label} — ${days}일이 지났으니 지금 지수로 다시 넣어 주세요.` : label, label, stale, days };
+}
+
+/** 시장 상태 이름(요약 보고 문장용) */
+export const MARKET_STATE_LABEL: Record<MarketState, string> = { bear: '하락장', peak: '고점 부근', normal: '보통' };
+
 /** 시장 상태별 지금 적용할 규칙(엑셀 ‘투자배분’ 시트) */
 export function marketRule(drawdown: number) {
   const state = marketState(drawdown);

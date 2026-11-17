@@ -261,6 +261,7 @@ export interface Profile {
   slotFillFrom?: number; // 꽉 채우기 시작 연도(0이면 올해)
   yuDedFullYear?: boolean; // 노란우산 올해 소득공제를 실제 세법처럼 1~12월 전체 납입액 기준으로(기본 아니오: 남은 달 납입액만). 적립금·지출은 늘 남은 달 기준
   bucketAltPct?: number; // 인출용 자산 배치 가이드 대체자산 목표 비중(%, 없으면 연금계좌 지금 대체자산 비중 또는 10)
+  marketDrawdownDate?: string; // 위 등락률을 넣은 날짜(YYYY-MM-DD): 30일이 지나면 다시 넣으라고 안내
   marketDrawdown?: number; // 인출용 자산 배치 가이드 주식형 지수 고점 대비 등락률(%, 직접 넣는 값, 없으면 0): 지금 적용할 규칙만 바꿈
   cashRunwayPension?: boolean; // 하락장 버틸 햇수(홈 점검·처방·이정표)에 연금계좌 안 현금성(계좌 안 자산배분 비율)도 셈(기본 아니오: 연금계좌 밖 현금·예금·적금만)
   planPensionTax?: boolean; // 노후 진단(성공확률·고갈 나이)에 연금 인출 세금 반영(기본 예, false면 엑셀처럼 세금 없이)

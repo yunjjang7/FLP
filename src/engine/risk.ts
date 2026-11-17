@@ -6,7 +6,7 @@ import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
 import { EMERGENCY_LOCK_MONTHS } from './maturity';
-import { CASH_YEARS_TARGET, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
+import { CASH_YEARS_TARGET, cashSourceLabel, cashYears, marketDateNote, marketRule, pensionFrom55, pensionFrom55Note, pensionOutNote, type CashOnHand } from './buckets';
 import { goalBreakdownAt, pensionAt, retireOutflowAt, type PlanInput } from './montecarlo';
 
 /**
@@ -186,6 +186,26 @@ export function cashRunwayChecks(c: CashOnHand, run?: { usable: number; all: num
   return [{
     key: 'cashRunway', label: '하락장 버틸 햇수(바로 쓸 돈)', value: `${run.usable.toFixed(1)}년치`, level: short ? 'caution' : 'good',
     detail: `${c.pension ? `연금계좌 밖 현금·예금·적금 가운데 바로 쓸 수 있는 돈 ${won(c.usable - c.pension)}과 연금계좌 안 현금성 ${won(c.pension)}, 모두 ${won(c.usable)}을` : `연금계좌 밖 현금·예금·적금 가운데 바로 쓸 수 있는 돈 ${won(c.usable)}을`} ${run.retired ? '올해' : '은퇴 첫해'} 인출(연 ${won(run.yearDraw)})로 나눈 값입니다. 하락장에 주식을 팔지 않고 버티려면 ${CASH_YEARS_TARGET}년치 이상 권장.${c.locked > 0.5 ? ` 만기가 ${EMERGENCY_LOCK_MONTHS}개월 넘게 남은 예금·적금 ${won(c.locked)}은 넣지 않았습니다(깨면 중도해지 이율, 넣으면 약 ${run.all.toFixed(1)}년치).` : ''}${pensionOutNote(c)}${births ? pensionFrom55Note(pensionFrom55(c, births.birthYear, births.spouseBirthYear)) : ''}`,
+  }];
+}
+
+/**
+ * 하락장 안내(홈 주요 점검 사항): 인출용 자산 배치 가이드에 저장한 등락률(profile.marketDrawdown)이 −15% 이하이면
+ * ‘하락장: 주식형 매도 멈춤’ 주의와 함께 바로 쓸 돈으로 버틸 햇수(첫해 인출 yearDraw 기준)를 보여 줌. 재무점수에는 넣지 않음.
+ * 넣은 지 30일이 지났으면 다시 넣으라는 안내를 붙임
+ */
+export function marketChecks(profile: Pick<Profile, 'marketDrawdown' | 'marketDrawdownDate'>, c: CashOnHand, yearDraw: number, now: Date): RiskCheck[] {
+  const dd = profile.marketDrawdown ?? 0;
+  const rule = marketRule(dd);
+  if (rule.state !== 'bear') return [];
+  const y = cashYears(c, yearDraw);
+  const date = marketDateNote(profile.marketDrawdownDate, now);
+  const years = c.total > 0.5 && y
+    ? ` 지금 ${cashSourceLabel(c)} 가운데 바로 쓸 돈 ${won(c.usable)}으로 첫해 인출(연 ${won(yearDraw)}) 기준 약 ${y.usable.toFixed(1)}년치 버틸 수 있습니다${y.usable < CASH_YEARS_TARGET ? `(${CASH_YEARS_TARGET}년치에 못 미침)` : ''}.`
+    : ' 바로 쓸 현금성이 없어 인출할 때 주식형을 팔아야 할 수 있으니 채권형부터 꺼내세요.';
+  return [{
+    key: 'marketBear', label: '하락장: 주식형 매도 멈춤', value: `고점 대비 ${dd}%`, level: 'caution',
+    detail: `인출 계획 ‘인출용 자산 배치 가이드’에 넣은 등락률${date ? `(${date.text})` : ''} 기준 ${rule.text}${years}`,
   }];
 }
 
