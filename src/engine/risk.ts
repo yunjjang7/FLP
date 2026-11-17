@@ -5,6 +5,7 @@ import { bulletMissingMaturity } from './goals';
 import { scale } from './finance';
 import type { InsuranceGap } from './insurance';
 import { ASSET_TYPES, RISK_PROFILES, type Summary } from './portfolio';
+import { EMERGENCY_LOCK_MONTHS } from './maturity';
 import { goalBreakdownAt, pensionAt, retireOutflowAt, type PlanInput } from './montecarlo';
 
 /**
@@ -58,7 +59,9 @@ export function emergencyCap(s: Pick<Summary, 'savings' | 'emergencyFund'>, targ
 /** 비상금 설명. 부족분이 있으면 ‘지금처럼 가면 몇 개월 뒤 바닥나는지’를 덧붙임 */
 export function emergencyDetail(s: Summary, target: number, retired = false) {
   const em = emergencyMonths(s);
-  const base = `단기·비상금 용도 유동자산이 ${retired ? '은퇴 후 월 지출(생활비 + 대출 상환 + 보험료)' : '월 지출'}의 ${em.toFixed(1)}개월분입니다. 목표 ${target}개월.`;
+  const locked = s.emergencyLocked ?? 0;
+  const lockNote = locked > 0.5 ? ` 이 가운데 ${Math.round(locked).toLocaleString()}만원은 만기가 ${EMERGENCY_LOCK_MONTHS}개월 넘게 남은 예금·적금이라, 급히 깨면 약정 이자 대신 중도해지 이율을 받습니다(바로 쓸 수 있는 돈은 ${emergencyMonths({ ...s, emergencyFund: s.emergencyFund - locked }).toFixed(1)}개월분).` : '';
+  const base = `단기·비상금 용도 유동자산이 ${retired ? '은퇴 후 월 지출(생활비 + 대출 상환 + 보험료)' : '월 지출'}의 ${em.toFixed(1)}개월분입니다. 목표 ${target}개월.${lockNote}`;
   // 인출 중에는 소득보다 많은 지출을 자산 인출로 메우는 것이 계획이라 ‘몇 개월 뒤 바닥’ 경고 대신 현금성 바구니를 안내
   if (retired) return `${base} 인출 중에는 앞으로 1~2년치 인출분을 현금성으로 두면 하락장에 주식을 팔지 않아도 됩니다(인출 계획 → 인출용 자산 배치 가이드).`;
   const run = emergencyRunway(s);

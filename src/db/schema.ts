@@ -29,6 +29,8 @@ export interface FieldDef {
   acctOnly?: boolean;
   /** CSV 선택 열: 계좌 구분이 ISA 인 주식·펀드·ETF 행에만 쓰는 값 */
   isaOnly?: boolean;
+  /** CSV 선택 열: 예금·적금 행에만 쓰는 값(만기 연월) */
+  matOnly?: boolean;
 }
 
 export const GOAL_CATEGORY: Record<string, string> = {
@@ -66,6 +68,10 @@ const assetCsvExtra: FieldDef[] = [
   { key: 'pensionKind', label: '연금 계좌 종류', kind: 'select', options: PENSION_KIND_LABEL, penOnly: true },
   { key: 'acctKind', label: '계좌 구분', kind: 'select', options: ACCT_KIND_LABEL, acctOnly: true },
   { key: 'isaEndYear', label: 'ISA 만기 연도', kind: 'number', isaOnly: true },
+  { key: 'isaPaid', label: 'ISA 납입 원금', kind: 'number', unit: '만원', isaOnly: true },
+  { key: 'isaType', label: 'ISA 유형', kind: 'select', options: { general: '일반형', low: '서민형·농어민' }, isaOnly: true },
+  { key: 'maturityYear', label: '만기 연도', kind: 'number', matOnly: true },
+  { key: 'maturityMonth', label: '만기 월', kind: 'number', matOnly: true },
   { key: 'alloc.equity', label: '주식형 비율', kind: 'number', unit: '%', allocOnly: true },
   { key: 'alloc.bond', label: '채권형 비율', kind: 'number', unit: '%', allocOnly: true },
   { key: 'alloc.alt', label: '대체자산 비율', kind: 'number', unit: '%', allocOnly: true },
@@ -104,9 +110,9 @@ export const TABLES: Record<ListTable, { label: string; fields: FieldDef[]; exam
     example: { name: '정기예금', type: 'deposit', amount: 1000, purpose: 'short', nature: 'safe', expectedReturn: 3, volatility: 0.5 },
     csvExtra: assetCsvExtra,
     csvExamples: [
-      { name: '정기예금', type: 'deposit', amount: 1000, purpose: 'short', nature: 'safe', expectedReturn: 3, volatility: 0.5 },
+      { name: '정기예금', type: 'deposit', amount: 1000, purpose: 'short', nature: 'safe', expectedReturn: 3, volatility: 0.5, maturityYear: 2027, maturityMonth: 3 },
       { name: '임대 오피스텔', type: 'realestate', amount: 30000, purpose: 'long', nature: 'invest', expectedReturn: 3, volatility: 8, owner: 'joint', ownerShare: 50, reUse: 'rental', rent: 100, deposit: 5000, renewCycle: 2, renewRate: 5, rentCost: 10, lockYear: 2045, lockTax: 5 },
-      { name: 'ISA 중개형', type: 'etf', amount: 2000, purpose: 'long', nature: 'invest', expectedReturn: 6.2, volatility: 13, acctKind: 'isa', isaEndYear: 2028, alloc: { equity: 80, bond: 20, alt: 0, cash: 0 } },
+      { name: 'ISA 중개형', type: 'etf', amount: 2000, purpose: 'long', nature: 'invest', expectedReturn: 6.2, volatility: 13, acctKind: 'isa', isaEndYear: 2028, isaPaid: 1800, alloc: { equity: 80, bond: 20, alt: 0, cash: 0 } },
       { name: '퇴직 IRP', type: 'pension', amount: 5000, purpose: 'long', nature: 'invest', expectedReturn: 5.6, volatility: 11.7, pensionKind: 'irp', alloc: { equity: 60, bond: 25, alt: 5, cash: 10 } },
       { name: '노란우산', type: 'other', amount: 3000, purpose: 'long', nature: 'safe', expectedReturn: 3, volatility: 0.5, lockYear: 2040, yu: true, yuPay: 600, yuPayTo: 2039, yuLastMonths: 3, yuJoin: 2016, yuJoinMonth: 9, yuPayoutMonth: 3 },
     ],

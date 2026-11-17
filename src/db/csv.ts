@@ -3,13 +3,14 @@ import { parseMonth } from '../engine/drawLog';
 import { ASSET_TYPES } from '../engine/portfolio';
 import { allocSum, canAlloc, natureOfAlloc, normalizeAlloc } from '../engine/allocation';
 import { canAcctKind } from '../engine/account';
+import { canMaturity } from '../engine/maturity';
 import type { AssetType } from '../types';
 import type { Draw } from '../types';
 import type { ListTable } from './db';
 import { ORDER_FIELD, TABLES, type FieldDef } from './schema';
 
-/** 1~12만 받는 노란우산 열(마지막 해 납입 개월·가입 월·수령 월) */
-const MONTH_KEYS = ['yuLastMonths', 'yuJoinMonth', 'yuPayoutMonth'];
+/** 1~12만 받는 열(노란우산 마지막 해 납입 개월·가입 월·수령 월, 예금·적금 만기 월) */
+const MONTH_KEYS = ['yuLastMonths', 'yuJoinMonth', 'yuPayoutMonth', 'maturityMonth'];
 
 type Row = Record<string, unknown>;
 
@@ -21,7 +22,7 @@ const yuRow = (r: Row) => r.yu === true || r.yu === 'true' || r.yu === '예';
 /** 부동산·연금 계좌·노란우산 전용 열인데 그 유형이 아닌 행 */
 const notFor = (f: FieldDef, r: Row) =>
   (f.reOnly && r.type !== 'realestate') || (f.penOnly && r.type !== 'pension') || (f.yuOnly && !yuRow(r)) || (f.penOrYu && r.type !== 'pension' && !yuRow(r)) ||
-  (f.allocOnly && !canAlloc({ type: r.type as AssetType })) || (f.acctOnly && !canAcctKind({ type: r.type as AssetType })) ||
+  (f.allocOnly && !canAlloc({ type: r.type as AssetType })) || (f.acctOnly && !canAcctKind({ type: r.type as AssetType })) || (f.matOnly && !canMaturity({ type: r.type as AssetType })) ||
   (f.isaOnly && !(canAcctKind({ type: r.type as AssetType }) && (r.acctKind === 'isa' || r.acctKind === 'ISA')));
 
 /** 'alloc.equity' 처럼 점으로 나눈 키 읽기·쓰기(자산배분 비율 열) */
@@ -108,6 +109,8 @@ export function fromCSV(table: ListTable, text: string): { rows: Row[]; errors: 
           rec.nature = natureOfAlloc(normalizeAlloc(x)!);
         }
       }
+      // ISA 유형 ‘일반형’은 값 없음(기본)으로
+      if (rec.isaType === 'general') delete rec.isaType;
       if (rec.yu === 'true') rec.yu = true;
       if (rec.yu && (rec.type === 'pension' || rec.type === 'realestate')) delete rec.yu;
       // 노란우산 월·개월 수 열은 1~12 정수만(그 밖은 빈칸으로 읽음)

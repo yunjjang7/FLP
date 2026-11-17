@@ -31,6 +31,8 @@ const link = 'font-semibold text-brand hover:underline';
 export function AllocEditor({ a, assets }: { a: Asset; assets: Asset[] }) {
   const on = hasAlloc(a);
   const [open, setOpen] = useState(on);
+  // 비율을 넣은 뒤 칸을 감춰 카드를 짧게(한 줄 요약만)
+  const [fold, setFold] = useState(false);
   if (a.id === undefined) return null;
   const id = a.id;
   const save = (patch: Partial<Asset>) => void db.assets.update(id, patch);
@@ -40,6 +42,18 @@ export function AllocEditor({ a, assets }: { a: Asset; assets: Asset[] }) {
       <button type="button" className="mt-2 mr-4 text-xs font-medium text-brand hover:underline" onClick={() => setOpen(true)}>
         + 자산배분 비율(주식형·채권형·대체·현금성)
       </button>
+    );
+  }
+
+  if (on && fold) {
+    const n = normalizeAlloc({ equity: 0, bond: 0, alt: 0, cash: 0, ...a.alloc } as Alloc);
+    return (
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
+        <span>
+          자산배분 비율: {ASSET_CLASSES.filter((k) => (n?.[k] ?? 0) > 0.05).map((k) => `${CLASS_LABEL[k]} ${pct(n![k])}`).join(' · ')}
+        </span>
+        <button type="button" className="font-medium text-brand hover:underline" aria-expanded={false} onClick={() => setFold(false)}>펼치기</button>
+      </div>
     );
   }
 
@@ -63,6 +77,8 @@ export function AllocEditor({ a, assets }: { a: Asset; assets: Asset[] }) {
     <div className="mt-3 rounded-xl bg-sunken p-3">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <div className="text-xs font-semibold">자산배분 비율 <span className="font-normal text-muted">· 이 계좌 안에서 담은 비중(%)</span></div>
+        <span className="flex items-center gap-3">
+        {on && <button type="button" className="text-xs font-medium text-brand hover:underline" aria-expanded onClick={() => setFold(true)}>접기</button>}
         <button
           type="button"
           className="text-xs font-medium text-muted hover:text-bad hover:underline"
@@ -73,6 +89,7 @@ export function AllocEditor({ a, assets }: { a: Asset; assets: Asset[] }) {
         >
           비율 지우기
         </button>
+        </span>
       </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         {ASSET_CLASSES.map((k) => (

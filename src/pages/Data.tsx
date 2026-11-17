@@ -7,12 +7,14 @@ import { housePension, HP_LOAN, HP_MARKET_CAP, hpEstate, hpEstimate, hpLoanOf, n
 import { JoinAccount, UndoBar } from '../components/JoinAccount';
 import { AllocEditor } from '../components/AllocEditor';
 import { canAlloc, hasAlloc, isRiskCappedName, PENSION_KIND_LABEL } from '../engine/allocation';
-import { ACCT_KIND_LABEL, canAcctKind, isaTransferBase } from '../engine/account';
+import { ACCT_KIND_LABEL, canAcctKind, isaLimitOf, isaTax, isaTransferBase } from '../engine/account';
 import { alignAccount, setAccountKey, setGroupInDb } from '../db/accountOps';
 import { ACCOUNT_KEY_LABEL, ACCOUNT_KEYS, accountMismatch, ASSET_TYPES, groupNames, groupNotes, groupOf, insuredBirthYear, type AccountKey, isInsuranceCashflow, isPaying, payEndSelfAge, pensionOverlap, RISK_PROFILES, volCheck, volMid, volRange } from '../engine/portfolio';
 import { Labeled, NumberField, SelectField, TextField } from '../components/fields';
 import { Button, Card, MoveButtons, PageHeader } from '../components/ui';
 import { appendOrders, byOrder, moveItem, moveRow, nextOrder } from '../db/order';
+import { loadFolded, pruneFolded, rowSummary, saveFolded, toggleFolded } from '../db/fold';
+import { canMaturity, EMERGENCY_LOCK_MONTHS, maturityLabel, monthsToMaturity } from '../engine/maturity';
 import { CardLink, jumpToTarget, SetupLink } from '../components/SetupLink';
 import { isRecurring, lockedInflow, spouseToSelf } from '../engine/goals';
 import { pct, won } from '../lib/format';
@@ -94,7 +96,7 @@ export default function Data() {
       {tab === 'profile' && <ProfileForm />}
       {tab === 'criteria' && <CriteriaForm />}
       {tab === 'backup' && <BackupPanel />}
-      {tab !== 'profile' && tab !== 'criteria' && tab !== 'backup' && <ListEditor table={tab} />}
+      {tab !== 'profile' && tab !== 'criteria' && tab !== 'backup' && <ListEditor key={tab} table={tab} />}
     </>
   );
 }
@@ -835,6 +837,15 @@ function Guide({ items }: { items: React.ReactNode[] }) {
   );
 }
 
+/** 접은 카드 머리의 요약: 유형·금액, 자산은 계좌 구분·만기도 */
+function foldSummary(table: ListTable, r: Record<string, unknown>) {
+  const base = rowSummary(table, r);
+  if (table !== 'assets') return base;
+  const a = r as unknown as Asset;
+  const extra = [canAcctKind(a) && a.acctKind ? ACCT_KIND_LABEL[a.acctKind] : '', canMaturity(a) && (a.maturityYear ?? 0) > 0 ? `만기 ${maturityLabel(a)}` : ''].filter(Boolean);
+  return [base, ...extra].join(' · ');
+}
+
 function ListEditor({ table }: { table: ListTable }) {
   const data = useFlp();
   // 화면은 카드 순서(order, 없으면 추가한 순서)로 보여 줌. 계산은 이 순서를 쓰지 않음
@@ -851,6 +862,14 @@ function ListEditor({ table }: { table: ListTable }) {
     !it.hiPropAuto && '건보료 재산분을 ‘부동산 자산으로 추정’으로 바꾸기',
     !it.hiLoanDeduct && '‘주택 구입 대출 공제’를 ‘예’로 바꾸기',
   ].filter(Boolean).join(' · ');
+  // 접은 카드(브라우저에 저장). 접어도 순서 바꾸기·삭제는 카드 머리에서 그대로
+  const [foldedRaw, setFoldedRaw] = useState<number[]>(() => loadFolded(table));
+  const folded = pruneFolded(foldedRaw, rows);
+  const setFolded = (ids: number[]) => {
+    setFoldedRaw(ids);
+    saveFolded(table, ids);
+  };
+  const allFolded = rows.length > 0 && folded.length === rows.length;
 
   const update = (row: { id?: number }, key: string, v: unknown) => {
     let patch: Record<string, unknown> = { [key]: v };
@@ -894,7 +913,14 @@ function ListEditor({ table }: { table: ListTable }) {
         <div className="text-sm text-muted">
           {label} {rows.length}건{amountKey && <> · 합계 <b className="text-ink">{won(total)}</b></>}
         </div>
-        <Button onClick={() => tbl.add({ ...example, name: `새 ${label}`, order: nextOrder(rows) })}>+ {label} 추가</Button>
+        <span className="flex flex-wrap items-center gap-2">
+          {rows.length > 1 && (
+            <Button variant="ghost" onClick={() => setFolded(allFolded ? [] : rows.map((r) => r.id!))}>
+              {allFolded ? '모두 펼치기' : '모두 접기'}
+            </Button>
+          )}
+          <Button onClick={() => tbl.add({ ...example, name: `새 ${label}`, order: nextOrder(rows) })}>+ {label} 추가</Button>
+        </span>
       </div>
       {table === 'assets' && <UndoBar />}
       {table === 'assets' && (
@@ -936,8 +962,33 @@ function ListEditor({ table }: { table: ListTable }) {
         />
       )}
       {rows.length === 0 && <Card><p className="py-6 text-sm text-muted">등록된 {label}이(가) 없습니다. ‘추가’를 누르거나 ‘백업·복원’ 탭에서 CSV로 한 번에 불러오세요.</p></Card>}
-      {rows.map((r, idx) => (
+      {rows.map((r, idx) => {
+        const isFolded = folded.includes(r.id!);
+        const name = String(r.name ?? '') || `이름 없는 ${label}`;
+        return (
         <Card key={r.id} className={table === 'liabilities' && bulletMissingMaturity(r as unknown as Liability, data.summary.age) ? 'border-warn! ring-1 ring-warn' : ''}>
+          <div className={`flex items-center justify-between gap-3 ${isFolded ? '' : 'mb-3 border-b border-line pb-2'}`}>
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-lg py-1 text-left hover:text-brand"
+              aria-expanded={!isFolded}
+              aria-label={`${name} ${isFolded ? '펼치기' : '접기'}`}
+              onClick={() => setFolded(toggleFolded(folded, r.id!))}
+            >
+              <svg aria-hidden="true" viewBox="0 0 16 16" className={`h-4 w-4 shrink-0 transition-transform ${isFolded ? '-rotate-90' : ''}`} fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 6l4 4 4-4" /></svg>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-semibold">{name}</span>
+                <span className="block truncate text-xs text-muted">{foldSummary(table, r as Record<string, unknown>)}</span>
+              </span>
+            </button>
+            <span className="flex shrink-0 items-center gap-3">
+              <MoveButtons name={String(r.name ?? '')} index={idx} count={rows.length} onMove={(dir) => void moveRow(table, r.id!, dir)} />
+              <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
+                삭제
+              </button>
+            </span>
+          </div>
+          {!isFolded && (<>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-7">
             {fieldsOf(r).map((f) => (
               <div key={f.key} id={`field-${table}-${r.id}-${f.key}`} className={f.key === 'name' ? 'col-span-2 md:col-span-1' : ''}>
@@ -1011,7 +1062,8 @@ function ListEditor({ table }: { table: ListTable }) {
               </span>
             </div>
           )}
-          <div className="mt-3 flex items-center justify-between gap-3">
+          {table !== 'assets' && table !== 'cashflows' && (
+          <div className="mt-3">
             {table === 'liabilities' && bulletMissingMaturity(r as unknown as Liability, data.summary.age) ? (
               // 만기 나이가 빈 만기일시 대출: 경고색 안내, 누르면 상환 종료 나이 입력칸으로 이동
               <button
@@ -1029,15 +1081,12 @@ function ListEditor({ table }: { table: ListTable }) {
             ) : (
             <span className="text-xs text-muted">{table === 'liabilities' && loanNote(r as unknown as Liability, data.summary.age, data.profile.retireAge)}{table === 'goals' && goalNote(r as unknown as Goal)}{table === 'insurance' && insuranceNote(r as unknown as Insurance, data.profile, data.summary.age, data.profile.retireAge)}</span>
             )}
-            <span className="flex shrink-0 items-center gap-3">
-              <MoveButtons name={String(r.name ?? '')} index={idx} count={rows.length} onMove={(dir) => void moveRow(table, r.id!, dir)} />
-              <button className="text-xs font-medium text-bad hover:underline" onClick={() => confirm(`'${r.name}'을(를) 삭제할까요?`) && tbl.delete(r.id!)}>
-                삭제
-              </button>
-            </span>
           </div>
+          )}
+          </>)}
         </Card>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1091,15 +1140,19 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
   // 노란우산: 소득공제 비율·절세액은 종합소득세 추정 행에서(사업소득은 프로필 ‘그 밖의 소득’, 법인 대표는 세전 총급여)
   const taxRows = useMemo(() => (yu ? incomeTaxSchedule(p, nowYear, undefined, assets, liabilities, summary.yearShare ?? 1) : undefined), [yu, p, nowYear, assets, liabilities, summary.yearShare]);
   const acct = canAcctKind(a);
-  const [open, setOpen] = useState(pension || locked || yu || (a.owner ?? 'self') !== 'self' || (acct && !!a.acctKind));
+  const mat = canMaturity(a);
+  const nowMonth = new Date().getMonth() + 1;
+  const [open, setOpen] = useState(pension || locked || yu || (a.owner ?? 'self') !== 'self' || (acct && !!a.acctKind) || (mat && (a.maturityYear ?? 0) > 0));
   if (!open) {
     return (
       <button className="mt-2 text-xs font-medium text-brand hover:underline" onClick={() => setOpen(true)}>
-        + 명의·수령 시점{pension ? '·연금 재원' : ''}{acct ? '·계좌 구분' : ''} 설정
+        + 명의·수령 시점{pension ? '·연금 재원' : ''}{acct ? '·계좌 구분' : ''}{mat ? '·만기' : ''} 설정
       </button>
     );
   }
   const isa = acct && a.acctKind === 'isa';
+  const isaT = isa ? isaTax(a, nowYear) : undefined;
+  const left = mat && (a.maturityYear ?? 0) > 0 ? monthsToMaturity(a, nowYear, nowMonth) : undefined;
   const inflow = locked ? lockedInflow(a, p, nowYear, taxRows, summary.yearShare ?? 1) : null;
   // 이 계좌의 그 해 납입액(올해는 남은 달만큼)과 그중 소득공제 받는 금액(공제 기준 납입액 × 명의자 공제 비율)
   // 프로필 ‘올해 소득공제 1~12월 기준’이면 올해 공제는 1~12월 전체 납입액 기준 — 종합소득세 카드·이정표와 같은 행에서
@@ -1114,6 +1167,10 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
   const yuPaying = yu && (a.yuPay ?? 0) > 0;
   return (
     <div className="mt-3 rounded-xl bg-sunken p-3">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <div className="text-xs font-semibold">추가 설정</div>
+        <button type="button" className="text-xs font-medium text-brand hover:underline" aria-expanded onClick={() => setOpen(false)}>접기</button>
+      </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
         {hasSpouse && (
           <Labeled label="명의">
@@ -1122,12 +1179,32 @@ function AssetExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asset, v:
         )}
         {acct && (
           <Labeled label="계좌 구분" hint={a.acctKind === 'isa' ? '리밸런싱 때 일반 계좌보다 먼저 바꿈' : a.acctKind === 'general' ? '팔 때 세금이 붙을 수 있어 리밸런싱 때 나중에' : '비우면 일반과 같이 계산'}>
-            <SelectField value={a.acctKind ?? ''} onChange={(v) => { onChange('acctKind', v || undefined); if (v !== 'isa' && a.isaEndYear) onChange('isaEndYear', undefined); }} options={{ '': '구분 안 함', ...ACCT_KIND_LABEL }} />
+            <SelectField value={a.acctKind ?? ''} onChange={(v) => { onChange('acctKind', v || undefined); if (v !== 'isa') for (const k of ['isaEndYear', 'isaPaid', 'isaType'] as const) if (a[k] !== undefined) onChange(k, undefined); }} options={{ '': '구분 안 함', ...ACCT_KIND_LABEL }} />
           </Labeled>
         )}
         {isa && (
           <Labeled label="ISA 만기 연도" hint={(a.isaEndYear ?? 0) > 0 ? `연금계좌로 옮기면 세액공제 대상 ${won(isaTransferBase(a.amount))} 추가` : '넣으면 처방에 연금 이전 효과 표시'}>
             <NumberField plain value={a.isaEndYear ?? 0} onChange={(v) => onChange('isaEndYear', v > 0 ? v : undefined)} />
+          </Labeled>
+        )}
+        {isa && (
+          <Labeled label="ISA 납입 원금(만원)" hint={isaT ? (isaT.taxable > 0.5 ? `만기 수익 약 ${won(isaT.gain)} · 한도 넘는 ${won(isaT.taxable)}에 9.9% 약 ${won(isaT.tax)}` : `만기 수익 약 ${won(Math.max(0, isaT.gain))} · 비과세 한도 안`) : '넣으면 만기 세금(9.9% 분리과세) 추정'}>
+            <NumberField value={a.isaPaid ?? 0} min={0} onChange={(v) => onChange('isaPaid', v > 0 ? v : undefined)} />
+          </Labeled>
+        )}
+        {isa && (
+          <Labeled label="ISA 유형" hint={`비과세 한도 ${won(isaLimitOf(a))} · 서민형은 총급여 5,000만(종합소득 3,800만) 이하`}>
+            <SelectField value={a.isaType ?? ''} onChange={(v) => onChange('isaType', v === 'low' ? 'low' : undefined)} options={{ '': '일반형(200만)', low: '서민형·농어민(400만)' }} />
+          </Labeled>
+        )}
+        {mat && (
+          <Labeled label="만기 연도" hint={left === undefined ? '넣으면 비상금·목적자금 시점 점검' : left < 0 ? '만기가 지났음 · 재예치했으면 새 만기로' : left === 0 ? '이번 달 만기' : `${left}개월 남음${left > EMERGENCY_LOCK_MONTHS && a.purpose === 'short' ? ' · 비상금으로는 묶인 돈' : ''}`}>
+            <NumberField plain value={a.maturityYear ?? 0} onChange={(v) => { onChange('maturityYear', v > 0 ? v : undefined); if (!(v > 0) && a.maturityMonth) onChange('maturityMonth', undefined); }} />
+          </Labeled>
+        )}
+        {mat && (a.maturityYear ?? 0) > 0 && (
+          <Labeled label="만기 월" hint="비우면 그 해 12월로 봄">
+            <SelectField value={String(a.maturityMonth ?? 0)} onChange={(v) => onChange('maturityMonth', Number(v) || undefined)} options={MONTH_OPTIONS} />
           </Labeled>
         )}
         <Labeled label="수령 연도" hint={locked ? `${nowYear}~${a.lockYear! - 1}년 인출 불가` : '0이면 지금 인출 가능'}>
@@ -1252,8 +1329,20 @@ function RealEstateExtra({ a, onChange }: { a: Asset; onChange: (key: keyof Asse
   const sale = willSell(a, nowYear) ? saleInflow(a, p, nowYear) : null;
   const pastSale = (a.lockYear ?? 0) > 0 && !sale;
   const retireYear = p.birthYear + Math.max(p.retireAge, summary.age);
+  const [open, setOpen] = useState(true);
+  if (!open) {
+    return (
+      <button type="button" className="mt-2 text-xs font-medium text-brand hover:underline" aria-expanded={false} onClick={() => setOpen(true)}>
+        + 부동산 설정({RE_USE[use]}{(a.lockYear ?? 0) > 0 ? ` · ${a.lockYear}년 매각` : ''}) 펼치기
+      </button>
+    );
+  }
   return (
     <div className="mt-3 rounded-xl bg-sunken p-3">
+      <div className="mb-2 flex items-baseline justify-between gap-2">
+        <div className="text-xs font-semibold">부동산 설정</div>
+        <button type="button" className="text-xs font-medium text-brand hover:underline" aria-expanded onClick={() => setOpen(false)}>접기</button>
+      </div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-6">
         {hasSpouse && (
           <Labeled label="명의" hint={rental ? '임대소득 종소세를 지분대로 나눔' : undefined}>

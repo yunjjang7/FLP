@@ -62,6 +62,10 @@ export interface Asset {
   pensionKind?: PensionKind; // 연금계좌 종류(비우면 이름에 IRP·DC·퇴직이 들어가는지로 70% 한도 판단)
   acctKind?: AcctKind; // 주식·펀드·ETF 계좌 구분(비우면 구분 안 함): 리밸런싱 ‘세금 없는 계좌부터’ 순서, ISA 만기 연금 이전 처방
   isaEndYear?: number; // ISA 만기 연도(ISA 만): 만기 자금을 연금계좌로 옮길 때 추가 세액공제 처방
+  isaPaid?: number; // ISA 납입 원금(만원, ISA 만): 만기 수익 = 만기 평가액 − 원금, 비과세 한도를 넘는 수익에 9.9% 분리과세 추정
+  isaType?: 'low'; // ISA 서민형·농어민형(비과세 한도 400만, 비우면 일반형 200만)
+  maturityYear?: number; // 예금·적금 만기 연도: 비상금으로 바로 쓸 수 있는지, 목적자금이 목표 전에 돌아오는지 점검
+  maturityMonth?: number; // 예금·적금 만기 월(1~12, 비우면 그 해 12월로 봄)
   group?: string; // 연금계좌: 같은 계좌 이름(리밸런싱 ‘자산 탭에 반영’으로 나눈 줄). 값이 같은 줄은 한 계좌로 합쳐 세금·한도·인출 순서·이정표를 계산
 }
 

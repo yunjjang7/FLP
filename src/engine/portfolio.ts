@@ -3,6 +3,7 @@ import { depositOf, RE_USE, reUseOf } from './realestate';
 import { ASSET_CLASSES, CLASS_LABEL, classAmounts, hasAlloc, investAmountOf, mixAlloc, natureOfAlloc } from './allocation';
 import type { AcctKind, AssetClass } from '../types';
 import { acctAmounts, isaMaturities, type IsaMaturity } from './account';
+import { emergencyLockedOf, maturities, type MaturityRow } from './maturity';
 
 export const ASSET_TYPES: Record<AssetType, { label: string; ret: number; vol: number; purpose: Purpose; nature: Nature; liquid: boolean }> = {
   cash: { label: '현금·입출금', ret: 1.5, vol: 0, purpose: 'short', nature: 'safe', liquid: true },
@@ -218,6 +219,12 @@ export interface Summary {
   investShare: number; // 금융자산 중 투자형 비중 %
   liquidAssets: number;
   emergencyFund: number; // 단기 용도 + 유동성 자산
+  /** 비상금 가운데 만기가 3개월 넘게 남은 예금·적금(급히 깨면 중도해지 이율) */
+  emergencyLocked?: number;
+  /** 중기·목적자금 용도 금융자산 합계(목적자금 시점 맞추기) */
+  midFund?: number;
+  /** 만기 연도를 넣은 예금·적금(만기가 빠른 순, 지난 만기 포함) */
+  maturities?: MaturityRow[];
   age: number;
   /** 올해 남은 기간(이번 달 포함, 1 = 1년 전체). 없으면 1: 노후 계산의 첫해를 남은 달만큼만 셈 */
   yearShare?: number;
@@ -283,6 +290,8 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
   const cls = classAmounts(fin);
   const liquidAssets = sum(assets.filter((a) => ASSET_TYPES[a.type].liquid).map((a) => a.amount));
   const emergencyFund = sum(fin.filter((a) => a.purpose === 'short' && ASSET_TYPES[a.type].liquid).map((a) => a.amount));
+  const mat = maturities(fin, year, month);
+  const emergencyLocked = emergencyLockedOf(mat);
 
   return {
     totalAssets,
@@ -313,12 +322,15 @@ export function summarize(profile: Profile, assets: Asset[], liabilities: Liabil
       .filter((g) => g.value > 0.005),
     byClass: ASSET_CLASSES.map((k) => ({ key: k, label: CLASS_LABEL[k], value: cls[k] })).filter((g) => g.value > 0.005),
     byAcct: acctAmounts(fin),
-    isa: isaMaturities(fin, profile),
+    isa: isaMaturities(fin, profile, year),
     portfolioReturn: financialAssets > 0 ? w((a) => a.expectedReturn) : 3,
     portfolioVol: financialAssets > 0 ? w((a) => a.volatility) : 5,
     investShare: financialAssets > 0 ? (investAmt / financialAssets) * 100 : 0,
     liquidAssets,
     emergencyFund,
+    ...(emergencyLocked > 0 ? { emergencyLocked } : {}),
+    midFund: sum(fin.filter((a) => a.purpose === 'mid').map((a) => a.amount)),
+    ...(mat.length ? { maturities: mat } : {}),
     age,
     ...(yearShareOf(month) !== undefined ? { yearShare: yearShareOf(month) } : {}),
   };

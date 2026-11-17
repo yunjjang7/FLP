@@ -6,6 +6,8 @@ import { debtAnnualAt, deterministicPath, expenseAt, nominalFactor, solveFor, we
 import type { Retax } from './pensionTaxPlan';
 import { RISK_PROFILES, type Summary } from './portfolio';
 import { emergencyMonths, emergencyRunway, withdrawLevel } from './risk';
+import { EMERGENCY_LOCK_MONTHS, goalTimingGaps, type MaturityRow } from './maturity';
+import { ISA_SEP_TAX, type IsaTax } from './account';
 
 export interface Prescription {
   title: string;
@@ -18,6 +20,15 @@ export interface Prescription {
 
 /** 만원 → "3,500만" / "1.25억" (뒤에 '원'은 문장에서 붙임) */
 const fmt = (v: number) => won(v, false);
+
+/** ISA 만기 세금 문장(납입 원금을 넣었을 때만 계산, 아니면 넣으라는 안내) */
+export function isaTaxText(t?: IsaTax): string {
+  if (!t) return ' 납입 원금을 넣으면 만기 때 비과세 한도를 넘는 수익에 붙는 세금도 추정합니다.';
+  const est = `만기 평가액 약 ${fmt(t.value)}원(기대수익률로 불린 추정) − 원금 ${fmt(t.paid)}원`;
+  if (t.gain <= 0.5) return ` ${est}으로 수익이 없어 세금이 없습니다.`;
+  if (t.taxable <= 0.5) return ` 만기 수익 약 ${fmt(t.gain)}원(${est})이 비과세 한도 ${fmt(t.limit)}원 안이라 세금이 없습니다.`;
+  return ` 만기 수익 약 ${fmt(t.gain)}원(${est}) 중 비과세 한도 ${fmt(t.limit)}원을 넘는 ${fmt(t.taxable)}원에 ${ISA_SEP_TAX}% 분리과세 약 ${fmt(t.tax)}원이 붙습니다.`;
+}
 
 /**
  * ISA 만기 처방: 만기 연도를 넣은 ISA 마다, 만기 자금을 연금계좌로 옮기면 늘어나는 세액공제 대상(옮긴 금액의 10%, 최대 300만)과 예상 환급.
@@ -37,9 +48,52 @@ export function isaPrescriptions(s: Pick<Summary, 'isa'>, nowYear: number, fixed
     return {
       area: '투자' as const, level: soon ? ('caution' as const) : ('good' as const), ...(soon ? {} : { badge: '참고' }),
       title: `${x.name} ${x.endYear}년 만기 — 연금계좌로 옮기면 세액공제 대상 ${fmt(x.base)}원 추가`,
-      detail: `ISA 만기 후 60일 안에 연금저축·IRP로 옮기면 옮긴 금액의 10%(최대 300만원)를 그 해 연금계좌 세액공제 대상에 더합니다. 지금 평가액 ${fmt(x.amount)}원을 모두 옮기면 환급 ${credit}(그 해 낸 종합소득세까지만). 옮긴 돈은 55세 이후 연금으로 받고, 세액공제 받은 금액은 연금소득세 대상이 됩니다.`,
+      detail: `ISA 만기 후 60일 안에 연금저축·IRP로 옮기면 옮긴 금액의 10%(최대 300만원)를 그 해 연금계좌 세액공제 대상에 더합니다. 지금 평가액 ${fmt(x.amount)}원을 모두 옮기면 환급 ${credit}(그 해 낸 종합소득세까지만). 옮긴 돈은 55세 이후 연금으로 받고, 세액공제 받은 금액은 연금소득세 대상이 됩니다.${isaTaxText(x.tax)}`,
     };
   });
+}
+
+const matLabel = (r: Pick<MaturityRow, 'year' | 'month'>) => `${r.year}년${r.month ? ` ${r.month}월` : ''}`;
+
+/**
+ * 예금·적금 만기 처방: 만기가 지난 줄은 고치라는 안내, 비상금 가운데 만기가 3개월 넘게 남은 돈 때문에 바로 쓸 수 있는 돈이 목표에 못 미치면 주의,
+ * 목적자금이 목표 해보다 늦게 만기가 오는 예금·적금에 묶여 있으면 주의(목적자금 시점 맞추기)
+ */
+export function maturityPrescriptions(
+  s: Pick<Summary, 'maturities' | 'emergencyLocked' | 'emergencyFund' | 'expense' | 'midFund'>,
+  goalPlans: Pick<GoalPlan, 'goal' | 'years' | 'allocated'>[],
+  nowYear: number,
+  target: number,
+): Prescription[] {
+  const rows = s.maturities ?? [];
+  const out: Prescription[] = [];
+  for (const r of rows.filter((x) => x.monthsLeft < 0)) {
+    out.push({
+      area: r.purpose === 'short' ? '비상금' : r.purpose === 'mid' ? '목표' : '저축', level: 'caution',
+      title: `${r.name} 만기(${matLabel(r)})가 지났음`,
+      detail: '재예치했으면 자산 탭에서 새 만기로 고치세요. 찾았다면 받은 돈을 어디에 두었는지 자산 탭에 반영하세요. 지난 만기는 바로 쓸 수 있는 돈으로 봅니다.',
+    });
+  }
+  const locked = s.emergencyLocked ?? 0;
+  if (locked > 0.5) {
+    const usable = emergencyMonths({ ...s, emergencyFund: s.emergencyFund - locked } as Summary);
+    if (usable < target) {
+      const list = rows.filter((r) => r.purpose === 'short' && r.monthsLeft > EMERGENCY_LOCK_MONTHS);
+      out.push({
+        area: '비상금', level: 'caution',
+        title: `비상금 중 ${fmt(locked)}원은 만기 전 — 바로 쓸 수 있는 돈은 ${usable.toFixed(1)}개월분`,
+        detail: `${list.map((r) => `${r.name}(${matLabel(r)} 만기)`).join(', ')}은(는) 만기가 ${EMERGENCY_LOCK_MONTHS}개월 넘게 남아, 급할 때 깨면 약정 이자 대신 중도해지 이율을 받습니다. 목표 ${target}개월 가운데 일부는 입출금·파킹통장·MMF처럼 바로 꺼낼 수 있는 곳에 두거나, 만기를 나눠 몇 달마다 하나씩 돌아오게 하세요.`,
+      });
+    }
+  }
+  for (const g of goalTimingGaps(goalPlans, s.midFund ?? 0, rows, nowYear)) {
+    out.push({
+      area: '목표', level: 'caution',
+      title: `${g.name}(${g.goalYear}년) 목적자금 ${fmt(g.short)}원 — 예금·적금 만기가 목표보다 늦음`,
+      detail: `${g.late.map((r) => `${r.name}(${matLabel(r)} 만기, ${fmt(r.amount)}원)`).join(', ')}이(가) ${g.goalYear}년보다 늦게 돌아와, 중기·목적자금을 가까운 목표부터 쓰면 이 목표에 쓸 돈 가운데 ${fmt(g.short)}원은 중도해지해야 합니다(약정 이자 대신 중도해지 이율). 새로 들 때 만기를 목표 전으로 맞추거나, 목표 전에 만기가 오는 상품·입출금 자산으로 나눠 두세요.`,
+    });
+  }
+  return out;
 }
 
 /**
@@ -321,6 +375,7 @@ export function prescriptions(profile: Profile, s: Summary, input: PlanInput, su
 
   const emRx = emergencyPrescription(s, c.emergencyMonths, retired);
   if (emRx) out.push(emRx);
+  out.push(...maturityPrescriptions(s, goalPlans, profile.birthYear + s.age, c.emergencyMonths));
 
   const debtRatio = s.totalAssets > 0 ? (s.totalDebt / s.totalAssets) * 100 : 0;
   if (debtRatio > c.debtRatioMax) {

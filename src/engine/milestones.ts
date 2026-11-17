@@ -5,8 +5,10 @@ import { isFinancial, mergeAccounts, yearShareOf } from './portfolio';
 import { HP_OVER_NOTE, hpOverCap, isRealEstate, usesHp, willSell } from './realestate';
 import { PENSION_OPEN_AGE } from './tax';
 import { isYu, validMonths } from './yellowUmbrella';
+import { isaMaturities, type IsaMaturity } from './account';
+import { maturities, type MaturityRow } from './maturity';
 
-export type MilestoneKind = 'review' | 'open' | 'limit' | 'lump' | 'pension' | 'tax' | 'contrib' | 'estate' | 'loan' | 'goal';
+export type MilestoneKind = 'review' | 'open' | 'limit' | 'lump' | 'pension' | 'tax' | 'contrib' | 'estate' | 'loan' | 'goal' | 'maturity';
 
 /** 다가오는 이정표. month 가 0이면 그 해 중(달이 정해지지 않음) */
 export interface Milestone {
@@ -28,6 +30,7 @@ export const MILESTONE_KIND: Record<MilestoneKind, string> = {
   estate: '부동산',
   loan: '대출',
   goal: '목표',
+  maturity: '만기',
 };
 
 /** 지금부터 이정표까지 남은 개월(달이 없으면 그 해 1월 기준, 지났으면 0) */
@@ -58,6 +61,24 @@ export function pensionOpenMonth(year: number, birthYear: number, birthMonth?: n
 }
 
 const man = (v: number) => `${Math.round(v).toLocaleString('ko-KR')}만원`;
+
+/** 예금·적금 만기 때 할 일(용도별) */
+const MATURITY_TODO: Record<MaturityRow['purpose'], string> = {
+  short: '비상금은 바로 꺼낼 수 있는 통장이나 짧은 만기로',
+  mid: '목표 시점에 맞춰 다시 맡길 기간을 정함',
+  long: '다시 맡기거나 노후자금 배분에 맞춰 옮김',
+};
+const maturityName = (r: MaturityRow) => `${r.name} 만기(${r.type === 'savings' ? '적금' : '예금'})`;
+
+/** ISA 만기 때 할 일: 연금계좌 이전 세액공제 + 납입 원금을 넣었으면 분리과세 추정 */
+const isaName = (x: IsaMaturity) => `${x.name}${/isa/i.test(x.name) ? '' : ' ISA'} 만기`;
+const isaTodo = (x: IsaMaturity) => `60일 안에 연금저축·IRP로 옮기면 세액공제 대상 +${man(x.base)}`;
+const isaTaxNote = (x: IsaMaturity) =>
+  x.tax
+    ? x.tax.tax > 0.5
+      ? `만기 수익 약 ${man(x.tax.gain)} 중 비과세 한도 ${man(x.tax.limit)}을 넘는 ${man(x.tax.taxable)}에 9.9% 약 ${man(x.tax.tax)}`
+      : `만기 수익 약 ${man(Math.max(0, x.tax.gain))} — 비과세 한도 ${man(x.tax.limit)} 안`
+    : '납입 원금을 넣으면 만기 세금도 추정';
 
 /**
  * 노란우산 소득공제 종소세 추정 행(올해 부금은 남은 달 비율, 노후 진단과 같은 기준). 앞으로 낼 부금이 없으면 없음.
@@ -188,6 +209,14 @@ export function milestones(profile: Profile, assets: Asset[], liabilities: Liabi
     out.push({ year: profile.birthYear + g.targetAge, month: 0, kind: 'goal', label: `${g.name || '목표'} 지출(본인 ${g.targetAge}세)`, note: `오늘 기준 ${man(g.amountPV)}` });
   }
 
+  // 예금·적금 만기(만기 월을 비우면 그 해 중), ISA 만기(연도만)
+  for (const r of maturities(assets, nowYear, nowMonth)) {
+    out.push({ year: r.year, month: r.month ?? 0, kind: 'maturity', label: maturityName(r), note: `${man(r.amount)} · ${MATURITY_TODO[r.purpose]}` });
+  }
+  for (const x of isaMaturities(assets, profile, nowYear)) {
+    out.push({ year: x.endYear, month: 0, kind: 'maturity', label: `${isaName(x)} → ${isaTodo(x)}`, note: `지금 평가액 ${man(x.amount)} · ${isaTaxNote(x)}` });
+  }
+
   const lastYear = profile.birthYear + profile.lifeExpectancy;
   const future = (m: Milestone) => m.year <= lastYear && (m.year > nowYear || (m.year === nowYear && (m.month === 0 || m.month > nowMonth)));
   return out.filter(future).sort((a, b) => a.year - b.year || (a.month || 13) - (b.month || 13));
@@ -226,5 +255,12 @@ export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, ye
     ...(hasSpouse ? [{ who: '배우자', amount: profile.spousePension, year: profile.spouseBirthYear + profile.spousePensionAge }] : []),
   ];
   for (const x of np) if (x.amount > 0 && x.year === year) out.push(`${x.who} 국민연금 수령 신청(생일 다음 달부터 지급)`);
+  // 그 해 예금·적금 만기(올해는 이번 달 이후), ISA 만기
+  if (year >= nowYear) {
+    for (const r of maturities(assets, nowYear, nowMonth ?? 1).filter((r) => r.year === year && r.monthsLeft >= 0)) {
+      out.push(`${r.month ? `${r.month}월 ` : ''}${maturityName(r)} ${man(r.amount)} → ${MATURITY_TODO[r.purpose]}`);
+    }
+    for (const x of isaMaturities(assets, profile, nowYear).filter((x) => x.endYear === year)) out.push(`${isaName(x)} → ${isaTodo(x)}`);
+  }
   return out;
 }

@@ -2,6 +2,7 @@ import type { Alloc, Asset, Nature } from '../types';
 import { allocOf, allocReturn, hasAlloc, investAmountOf, IRP_RISK_CAP, isCappedAsset, natureOfAlloc, shiftAlloc } from './allocation';
 import { isIsa } from './account';
 import { isLocked } from './goals';
+import { hasMaturity, maturityLabel, monthsToMaturity } from './maturity';
 import { accountName, ASSET_TYPES, groupOf, isFinancial, mergeAccounts, NATURE_LABEL } from './portfolio';
 
 /** 목표와 이만큼(%p) 안쪽이면 그대로 둠: 작은 차이로 사고팔지 않게 */
@@ -13,6 +14,8 @@ export interface RebalanceMove {
   amount: number; // 지금 평가액
   change: number; // 사고팔 금액(+ 매수, − 매도)
   after: number;
+  /** 만기 전 예금·적금을 깨는 줄: "2027년 3월" */
+  maturity?: string;
 }
 
 /** 연금계좌 한 곳: 계좌 안에서 상품만 바꿈(돈이 계좌 밖으로 나가지 않아 세금 없음) */
@@ -50,23 +53,26 @@ export interface Rebalance {
   taxable: number;
   /** 움직일 수 있는 자산이 모자라 어떻게 해도 맞추지 못하는 금액 */
   short: number;
+  /** 일반계좌 팔 것 가운데 만기 전 예금·적금(중도해지): 팔 것 줄과 같음 */
+  early: RebalanceMove[];
 }
 
-/** 줄일 금액을 넘치는 쪽 자산에 나누는 방식: 'ratio' 바꿀 수 있는 금액 비례, 'pensionFirst' 세금 없는 계좌부터(연금계좌 → ISA → 그 밖) */
+/** 줄일 금액을 넘치는 쪽 자산에 나누는 방식: 'ratio' 바꿀 수 있는 금액 비례, 'pensionFirst' 세금 없는 계좌부터(연금계좌 → ISA → 그 밖 → 만기 전 예금·적금) */
 export type RebalanceMode = 'ratio' | 'pensionFirst';
 
 /**
  * 목표 투자형 비중에 맞추려면 무엇을 얼마나 사고팔지를 계좌별로 나눠 계산.
  * - 'ratio': 넘치는 쪽 자산을 바꿀 수 있는 금액에 비례해 줄임.
  * - 'pensionFirst': 연금계좌의 바꿀 수 있는 금액을 먼저 채우고(연금계좌끼리는 비례), 모자라면 ISA(계좌 구분 ISA, 운용 중 사고팔아도 바로 과세하지 않음),
- *   그래도 모자란 만큼만 나머지(일반·구분 안 함)에서 비례로 팖.
+ *   그래도 모자란 만큼만 나머지(일반·구분 안 함)에서 비례로 팖. 만기 연월을 넣은 예금·적금 가운데 만기 전인 것은
+ *   중도해지하면 약정 이자를 잃으므로 맨 마지막에 팖(early 로 따로 알려 줌).
  *   옮기는 합계·outside·short 는 두 방식이 같음.
  * - 일반계좌에서 판 돈은 일반계좌의 모자란 쪽 자산을 평가액에 비례해 삼(없으면 살 곳은 비워 둠).
  * - 연금계좌(자산 한 줄 = 계좌 하나)는 판 돈으로 같은 계좌 안에서 반대 성격 상품을 삼.
  *   퇴직연금 계좌(IRP·DC)는 투자형을 평가액의 70%까지만 담을 수 있어, 넘는 몫은 계좌 밖으로 빼야 맞춰짐(outside).
  * - 수령 연도 전이라 묶인 자산(노란우산 등)은 비중에는 넣되 사고팔지 않음.
  */
-export function rebalance(assets: Asset[], target: number, nowYear: number, band = REBALANCE_BAND, mode: RebalanceMode = 'ratio', prefer?: Alloc): Rebalance {
+export function rebalance(assets: Asset[], target: number, nowYear: number, band = REBALANCE_BAND, mode: RebalanceMode = 'ratio', prefer?: Alloc, nowMonth = 1): Rebalance {
   const fin = assets.filter((a) => isFinancial(a) && a.amount > 0);
   const total = fin.reduce((s, a) => s + a.amount, 0);
   // 자산배분 비율을 넣은 줄은 한 줄 안에서 위험자산(주식형+대체) 몫만 투자형
@@ -99,9 +105,10 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
   };
   const room = from.reduce((s, a) => s + limit(a), 0);
   const size = needed ? Math.min(Math.abs(want), room) : 0;
-  // 세금 없는 계좌부터: 연금계좌(0) → ISA(1) → 나머지(2) 순으로 각 단계 안에서는 limit 비례
-  const tier = (a: Asset) => (a.type === 'pension' ? 0 : isIsa(a) ? 1 : 2);
-  const tierRoom = [0, 1, 2].map((k) => from.filter((a) => tier(a) === k).reduce((s, a) => s + limit(a), 0));
+  // 세금 없는 계좌부터: 연금계좌(0) → ISA(1) → 나머지(2) → 만기 전 예금·적금(3) 순으로 각 단계 안에서는 limit 비례
+  const early = (a: Asset) => hasMaturity(a) && monthsToMaturity(a, nowYear, nowMonth) > 0;
+  const tier = (a: Asset) => (a.type === 'pension' ? 0 : isIsa(a) ? 1 : early(a) ? 3 : 2);
+  const tierRoom = [0, 1, 2, 3].map((k) => from.filter((a) => tier(a) === k).reduce((s, a) => s + limit(a), 0));
   const tierSize: number[] = [];
   let left = size;
   for (const r of tierRoom) {
@@ -121,7 +128,8 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
   const genTo = movable.filter((a) => !inAcct(a) && (a.nature === 'invest') === toInvest);
   const genAmount = genFrom.reduce((s, a) => s + part(a), 0);
   const genToSum = genTo.reduce((s, a) => s + a.amount, 0);
-  const row = (a: Asset, change: number): RebalanceMove => ({ name: a.name || '자산', amount: a.amount, change, after: a.amount + change });
+  const row = (a: Asset, change: number): RebalanceMove => ({ name: a.name || '자산', amount: a.amount, change, after: a.amount + change, ...(change < 0 && early(a) ? { maturity: maturityLabel(a) } : {}) });
+  const sell = genAmount > 0 ? genFrom.map((a) => row(a, -part(a))) : [];
 
   // 계좌 안 교체 한 줄. 비율을 넣은 줄은 amount = 평가액, keep = 넘치는 쪽에 남는 몫, next = 바꾼 뒤 비율
   const sw = (a: Asset): RebalanceSwitch => {
@@ -144,14 +152,15 @@ export function rebalance(assets: Asset[], target: number, nowYear: number, band
     needed,
     general: {
       amount: genAmount,
-      sell: genAmount > 0 ? genFrom.map((a) => row(a, -part(a))) : [],
+      sell,
       buy: genAmount > 0 && genToSum > 0 ? genTo.map((a) => row(a, (genAmount * a.amount) / genToSum)) : [],
     },
     pensions: size > 0 ? from.filter((a) => a.type === 'pension').map(sw) : [],
     accounts: size > 0 ? from.filter((a) => a.type !== 'pension' && hasAlloc(a)).map(sw) : [],
     outside,
-    taxable: from.filter((a) => tier(a) === 2).reduce((s, a) => s + part(a), 0),
+    taxable: from.filter((a) => tier(a) >= 2).reduce((s, a) => s + part(a), 0),
     short: rest - outside,
+    early: sell.filter((m) => m.maturity && m.change < -0.5),
   };
 }
 

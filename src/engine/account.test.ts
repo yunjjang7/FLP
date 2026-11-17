@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { fromCSV, toCSV } from '../db/csv';
 import type { Asset } from '../types';
-import { acctAmounts, canAcctKind, isaMaturities, isaTransferBase, isIsa } from './account';
+import { acctAmounts, canAcctKind, isaLimitOf, isaMaturities, isaTax, isaTransferBase, isIsa } from './account';
 import { summarize } from './portfolio';
-import { isaPrescriptions } from './prescribe';
+import { isaPrescriptions, isaTaxText } from './prescribe';
 import { rebalance, REBALANCE_BAND } from './rebalance';
 import { sampleData } from '../db/sample';
 
@@ -81,6 +81,36 @@ describe('ISA·일반 계좌 구분', () => {
     expect(isaPrescriptions({}, Y)).toEqual([]);
   });
 
+  it('ISA 만기 세금: 평가액을 만기까지 불린 수익 − 비과세 한도(일반 200·서민형 400)에 9.9%', () => {
+    expect(isaLimitOf({})).toBe(200);
+    expect(isaLimitOf({ isaType: 'low' })).toBe(400);
+    const a = asset('ISA', 'etf', 'invest', 3000, { acctKind: 'isa', isaEndYear: 2028, isaPaid: 2000, expectedReturn: 10 });
+    const t = isaTax(a, Y)!;
+    expect(t.value).toBeCloseTo(3630, 9); // 3,000 × 1.1²
+    expect(t.gain).toBeCloseTo(1630, 9);
+    expect(t.taxable).toBeCloseTo(1430, 9);
+    expect(t.tax).toBeCloseTo(141.57, 9);
+    const low = isaTax({ ...a, isaType: 'low' }, Y)!;
+    expect(low.taxable).toBeCloseTo(1230, 9);
+    // 연도를 안 주면 지금 평가액 그대로, 원금이 없으면 계산 안 함
+    expect(isaTax(a)!.gain).toBeCloseTo(1000, 9);
+    expect(isaTax({ ...a, isaPaid: undefined }, Y)).toBeUndefined();
+    // 손실·한도 안
+    expect(isaTax({ ...a, isaPaid: 5000 }, Y)!.taxable).toBe(0);
+    const m = isaMaturities([a], {}, Y);
+    expect(m[0].tax?.tax).toBeCloseTo(141.57, 9);
+  });
+
+  it('ISA 만기 처방에 세금 문장', () => {
+    const a = asset('ISA', 'etf', 'invest', 3000, { acctKind: 'isa', isaEndYear: 2028, isaPaid: 2000, expectedReturn: 10 });
+    const rx = isaPrescriptions({ isa: isaMaturities([a], {}, Y) }, Y);
+    expect(rx[0].detail).toContain('비과세 한도 200만원을 넘는');
+    expect(rx[0].detail).toContain('9.9% 분리과세 약 142만원');
+    expect(isaTaxText(undefined)).toContain('납입 원금을 넣으면');
+    expect(isaTaxText(isaTax({ ...a, isaPaid: 3500 }, Y))).toContain('비과세 한도 200만원 안이라 세금이 없습니다');
+    expect(isaTaxText(isaTax({ ...a, isaPaid: 5000 }, Y))).toContain('수익이 없어 세금이 없습니다');
+  });
+
   describe('리밸런싱 ‘세금 없는 계좌부터’: 연금계좌 → ISA → 나머지', () => {
     // 투자형 6,000(60%) → 목표 30%: 3,000을 안전형으로
     const list = [
@@ -141,5 +171,16 @@ describe('ISA·일반 계좌 구분', () => {
     expect(r.rows[1]).toMatchObject({ acctKind: 'general' });
     expect(r.rows[1].isaEndYear).toBeUndefined();
     expect(r.rows[2]).toMatchObject({ acctKind: 'isa', isaEndYear: 2028 });
+    // 납입 원금·유형: ISA 행만, ‘일반형’은 값 없음
+    const csv2 = ['이름,유형,금액,계좌 구분,ISA 납입 원금,ISA 유형', '중개형,ETF,100,ISA,80,서민형·농어민', '일반형,ETF,100,ISA,80,일반형', '위탁,주식,100,일반,80,서민형·농어민'].join('\n');
+    const r2 = fromCSV('assets', csv2);
+    expect(r2.errors).toEqual([]);
+    expect(r2.rows[0]).toMatchObject({ isaPaid: 80, isaType: 'low' });
+    expect(r2.rows[1].isaType).toBeUndefined();
+    expect(r2.rows[1].isaPaid).toBe(80);
+    expect(r2.rows[2].isaPaid).toBeUndefined();
+    expect(r2.rows[2].isaType).toBeUndefined();
+    const back2 = fromCSV('assets', toCSV('assets', r2.rows));
+    expect(back2.rows[0]).toMatchObject({ isaPaid: 80, isaType: 'low' });
   });
 });

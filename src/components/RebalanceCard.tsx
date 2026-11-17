@@ -12,7 +12,7 @@ import { JoinAccount, UndoBar } from './JoinAccount';
 
 const MODE_LABELS: Record<RebalanceMode, string> = {
   ratio: '바꿀 수 있는 금액에 비례',
-  pensionFirst: '세금 없는 계좌부터(연금 → ISA)',
+  pensionFirst: '세금 없는 계좌부터(연금 → ISA, 만기 전 예금은 맨 뒤)',
 };
 import { Badge, Card } from './ui';
 
@@ -62,10 +62,12 @@ export function RebalanceCard() {
   const target = goal ? riskPct(goal) : plain;
   const mode: RebalanceMode = p.rebalanceMode ?? 'ratio';
   const nowYear = p.birthYear + s.age;
+  const nowMonth = new Date().getMonth() + 1;
   // 연금계좌·ISA 밖(팔 때 세금이 붙을 수 있는 계좌)에서 파는 금액
-  const ratioGen = rebalance(assets, target, nowYear, REBALANCE_BAND, 'ratio', goal).taxable;
-  const firstGen = rebalance(assets, target, nowYear, REBALANCE_BAND, 'pensionFirst', goal).taxable;
-  const r = rebalance(assets, target, nowYear, REBALANCE_BAND, mode, goal);
+  const ratioGen = rebalance(assets, target, nowYear, REBALANCE_BAND, 'ratio', goal, nowMonth).taxable;
+  const firstGen = rebalance(assets, target, nowYear, REBALANCE_BAND, 'pensionFirst', goal, nowMonth).taxable;
+  const r = rebalance(assets, target, nowYear, REBALANCE_BAND, mode, goal, nowMonth);
+  const earlySum = r.early.reduce((a, m) => a - m.change, 0);
   const gaps = goal ? classGaps(assets.filter((a) => isFinancial(a) && a.amount > 0), goal) : [];
   const goalRaw = p.targetAlloc;
   const goalSum = goalRaw ? ASSET_CLASSES.reduce((a, k) => a + (goalRaw[k] || 0), 0) : 0;
@@ -86,7 +88,7 @@ export function RebalanceCard() {
             <tr key={`${m.name}-${i}`} className="border-t border-line">
               <td className="py-1.5 pr-2">
                 {m.name}
-                <div className="text-xs text-muted">{won(m.amount)} → {won(m.after)}</div>
+                <div className="text-xs text-muted">{won(m.amount)} → {won(m.after)}{m.maturity && <span className="text-warn"> · {m.maturity} 만기 전(중도해지)</span>}</div>
               </td>
               <td className={`whitespace-nowrap py-1.5 text-right font-semibold ${m.change < 0 ? 'text-bad' : 'text-good'}`}>{m.change < 0 ? '−' : '+'} {won(Math.abs(m.change))}</td>
             </tr>
@@ -257,6 +259,13 @@ export function RebalanceCard() {
             </div>
           )}
 
+          {earlySum > 0.5 && (
+            <p className="mt-4 rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn">
+              만기 전 예금·적금을 깨는 금액: <b>{won(earlySum)}</b>({r.early.map((m) => `${m.name} ${m.maturity} 만기`).join(', ')}). 중도해지하면 약정 이자 대신 낮은 중도해지 이율을 받습니다.
+              {mode === 'pensionFirst' ? ' 다른 자산으로 다 못 맞춘 몫이라, 만기까지 기다렸다 옮기거나 새로 넣는 돈으로 맞추는 편이 나을 수 있습니다.' : ' ‘세금 없는 계좌부터’로 바꾸면 만기 전 예금·적금은 맨 마지막에 줄입니다.'}
+            </p>
+          )}
+
           <p className={`mt-4 rounded-lg px-3 py-2 text-sm ${r.outside > 0.5 ? 'bg-warn-soft text-warn' : 'bg-sunken text-muted'}`}>
             {r.outside > 0.5 ? (
               <>연금계좌 밖으로 빼야 맞춰지는 금액: <b>{won(r.outside)}</b>. 퇴직연금 계좌(IRP·DC)는 투자형을 평가액의 {IRP_RISK_CAP * 100}%까지만 담을 수 있어 계좌 안에서는 더 바꿀 수 없습니다. 이 돈을 빼면 연금 외 수령으로 세금(16.5% 등)을 내므로, 빼지 않고 투자형 비중 <b>{pct(afterShare)}</b>에서 멈추는 편이 보통 유리합니다.</>
@@ -286,7 +295,7 @@ export function RebalanceCard() {
       <ul className="mt-3 list-disc space-y-1 pl-5 text-xs text-muted">
         <li>
           {mode === 'pensionFirst'
-            ? '넘치는 쪽 자산 가운데 세금 없는 연금계좌부터 바꿀 수 있는 만큼 먼저 바꾸고(연금계좌끼리는 바꿀 수 있는 금액에 비례), 모자라면 계좌 구분을 ISA로 고른 주식·펀드·ETF(계좌 안에서 사고팔아도 만기까지 과세하지 않음)에서, 그래도 모자란 만큼만 나머지 계좌에서 비례해 파는 계산입니다.'
+            ? '넘치는 쪽 자산 가운데 세금 없는 연금계좌부터 바꿀 수 있는 만큼 먼저 바꾸고(연금계좌끼리는 바꿀 수 있는 금액에 비례), 모자라면 계좌 구분을 ISA로 고른 주식·펀드·ETF(계좌 안에서 사고팔아도 만기까지 과세하지 않음)에서, 그래도 모자란 만큼만 나머지 계좌에서 비례해 파는 계산입니다. 만기 연월을 넣은 예금·적금 가운데 만기 전인 것은 중도해지 손해가 있어 맨 마지막에 줄입니다.'
             : '넘치는 쪽 자산을 바꿀 수 있는 금액에 비례해 줄이는 계산입니다.'}{' '}
           어느 상품을 사고팔지는 직접 정하면 되고, 상품 추천이 아닙니다.</li>
         <li>연금계좌는 자산 탭의 한 줄을 계좌 하나로 보고, 판 돈으로 <b>같은 계좌 안에서</b> 반대 성격 상품을 사는 것으로 계산합니다. 계좌에서 실제로 바꾼 뒤 ‘자산 탭에 반영’을 누르면 그 계좌를 투자형·안전형 두 줄로 나눠 저장합니다(새 줄 이름은 ‘계좌 이름 (안전형|투자형)’, 과세제외·퇴직금 재원은 금액 비례로 나누고 명의·연금수령 1년차·인출 순서 등은 그대로 복사, 새 줄의 기대수익률·변동성은 가진 같은 성격 자산의 평균).</li>

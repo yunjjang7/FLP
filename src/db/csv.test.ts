@@ -95,7 +95,8 @@ describe('CSV 입출력', () => {
     const { rows, errors } = fromCSV('assets', templateCSV('assets'));
     expect(errors).toEqual([]);
     expect(rows.map((r) => r.type)).toEqual(['deposit', 'realestate', 'etf', 'pension', 'other']);
-    expect(rows[2]).toMatchObject({ acctKind: 'isa', isaEndYear: 2028, alloc: { equity: 80, bond: 20, alt: 0, cash: 0 } });
+    expect(rows[0]).toMatchObject({ maturityYear: 2027, maturityMonth: 3 });
+    expect(rows[2]).toMatchObject({ acctKind: 'isa', isaEndYear: 2028, isaPaid: 1800, alloc: { equity: 80, bond: 20, alt: 0, cash: 0 } });
     expect(rows[3]).toMatchObject({ pensionKind: 'irp', alloc: { equity: 60, bond: 25, alt: 5, cash: 10 }, nature: 'invest' });
     expect(rows[3].acctKind).toBeUndefined();
     expect(rows[0].alloc).toBeUndefined(); // 예금은 비율 열을 읽지 않음
