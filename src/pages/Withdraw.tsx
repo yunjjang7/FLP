@@ -1,7 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { Labeled, NumberField, SelectField, Slider } from '../components/fields';
-import { Badge, Card, Disclaimer, EmptyState, PageHeader } from '../components/ui';
+import { Badge, Button, Card, Disclaimer, EmptyState, PageHeader } from '../components/ui';
 import { GuardrailCompare, StrategyCompare, YearEndReview } from '../components/YearEndReview';
 import { db } from '../db/db';
 import { withdrawLevel } from '../engine/risk';
@@ -14,7 +14,7 @@ import { OrderCompare } from '../components/OrderCompare';
 import { CardLink, SetupLink, useCardTarget } from '../components/SetupLink';
 import type { CompareBase } from '../engine/orderCompare';
 import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
-import { bucketDesc, bucketStart, compareStrategy, DEFAULT_BUCKET, DEFAULT_GUARDRAIL, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
+import { bucketDesc, bucketStart, compareStrategy, DEFAULT_GUARDRAIL, recommendBucket, withdrawSettingsOf, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
 import { pct, won, yearRanges } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
 import type { Level } from '../types';
@@ -44,12 +44,23 @@ function WithdrawInner() {
   // 기본은 평균수익 가정 자산: 투자 점검·노후 진단의 인출률과 같은 기준
   const [basis, setBasis] = useState<Basis>('avg');
   const [custom, setCustom] = useState(Math.round(retired ? planInput.startBalance : sim.balanceAtRetire.p50));
-  const [rate, setRate] = useState(4);
-  const [band, setBand] = useState(DEFAULT_GUARDRAIL.band * 100);
-  const [cut, setCut] = useState(DEFAULT_GUARDRAIL.cut * 100);
-  const [cutOnly, setCutOnly] = useState(DEFAULT_GUARDRAIL.cutOnly);
-  const [cashYears, setCashYears] = useState(DEFAULT_BUCKET.cashYears);
-  const [bondYears, setBondYears] = useState(DEFAULT_BUCKET.bondYears);
+  // 전략 설정은 프로필에 저장(다시 열어도 유지). 슬라이더는 바로 반응하고 저장은 잠깐 멈췄을 때 한 번
+  const saved = withdrawSettingsOf(p.withdrawSettings);
+  const [rate, setRate] = useState(saved.percentRate);
+  const [band, setBand] = useState(saved.band);
+  const [cut, setCut] = useState(saved.cut);
+  const [cutOnly, setCutOnly] = useState(saved.cutOnly);
+  const [cashYears, setCashYears] = useState(saved.cashYears);
+  const [bondYears, setBondYears] = useState(saved.bondYears);
+  const profileRef = useRef(p);
+  profileRef.current = p;
+  useEffect(() => {
+    const next = { percentRate: rate, cashYears, bondYears, band, cut, cutOnly };
+    const cur = withdrawSettingsOf(profileRef.current.withdrawSettings);
+    if ((Object.keys(next) as (keyof typeof next)[]).every((k) => next[k] === cur[k])) return;
+    const t = setTimeout(() => db.profile.put({ ...profileRef.current, withdrawSettings: next }), 500);
+    return () => clearTimeout(t);
+  }, [rate, cashYears, bondYears, band, cut, cutOnly]);
   const [selected, setSelected] = useState<StrategyKey>('guardrail');
 
   const retMean = planInput.retireMeanReturn ?? planInput.meanReturn;
@@ -57,7 +68,8 @@ function WithdrawInner() {
   const lateDebts = (planInput.debts ?? []).filter((x) => x.endAge > startAge);
   // 이미 은퇴했으면 지금 금융자산에서 바로 시작
   const startBalance = basis === 'custom' ? custom : basis === 'avg' ? start.balance : sim.balanceAtRetire[basis];
-  const input: WithdrawInput = useMemo(
+  // 3-버킷 연수만 빼고 만든 입력: 연수 추천은 연수를 바꿔도 다시 돌리지 않게
+  const baseInput: WithdrawInput = useMemo(
     // 노후 진단에 더한 연금 인출 세금은 여기서 직접 계산하므로 지출에서 뺌(withdrawInputOf)
     () => withdrawInputOf(planInput, { age: startAge, retired }, {
       endAge: p.lifeExpectancy,
@@ -65,15 +77,33 @@ function WithdrawInner() {
       inflation: p.inflation,
       percentRate: rate,
       guardrail: { ...DEFAULT_GUARDRAIL, band: band / 100, cut: cut / 100, raise: cut / 100, cutOnly },
-      bucket: { cashYears, bondYears },
     }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [p, startAge, startBalance, planInput, rate, retMean, retVol, band, cut, cutOnly, retired, cashYears, bondYears],
+    [p.lifeExpectancy, p.inflation, startAge, startBalance, planInput, rate, retMean, retVol, band, cut, cutOnly, retired],
   );
-  const results = useMemo(() => KEYS.map((k) => compareStrategy(k, input, 1000)), [input]);
+  const input: WithdrawInput = useMemo(() => ({ ...baseInput, bucket: { cashYears, bondYears } }), [baseInput, cashYears, bondYears]);
+  // 설정을 프로필에 저장하면 계획 입력 객체가 새로 만들어지므로, 내용이 같으면 다시 돌리지 않게 내용으로 비교
+  const inputKey = JSON.stringify(input);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const results = useMemo(() => KEYS.map((k) => compareStrategy(k, input, 1000)), [inputKey]);
   const chart = results[0].ages.map((age, i) => ({ age, ...Object.fromEntries(results.map((r) => [r.key, r.p50[i]])) }));
   const incomeChart = results[0].ages.map((age, i) => ({ age, need: livingOf(input, age) / 12, ...Object.fromEntries(results.map((r) => [r.key, r.medianIncome[i] / 12])) }));
   const sel = results.find((r) => r.key === selected)!;
+  // 3-버킷 연수 추천: 55개 조합을 200개 시나리오로 비교하고, 고른 조합은 화면과 같은 1,000개로 다시 계산.
+  // 버킷 카드를 골랐을 때만, 화면을 먼저 그린 뒤 계산. 정률·가드레일 설정은 버킷 결과와 무관해 키에서 뺌
+  const recKey = selected === 'bucket' ? JSON.stringify({ ...baseInput, percentRate: 0, guardrail: null }) : '';
+  const [rec, setRec] = useState<{ key: string; cashYears: number; bondYears: number; successRate: number; depletionRate: number } | null>(null);
+  useEffect(() => {
+    if (!recKey || rec?.key === recKey) return;
+    const t = setTimeout(() => {
+      const best = recommendBucket(baseInput, 200);
+      const r = compareStrategy('bucket', { ...baseInput, bucket: { cashYears: best.cashYears, bondYears: best.bondYears } }, 1000);
+      setRec({ key: recKey, cashYears: best.cashYears, bondYears: best.bondYears, successRate: r.successRate, depletionRate: r.depletionRate });
+    }, 50);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recKey]);
+  const recReady = rec && rec.key === recKey ? rec : null;
   const nowYear = p.birthYear + d.summary.age;
   const setup = useMemo(() => taxSetup(p, d.assets, nowYear, startBalance, retMean, p.birthYear + startAge, d.summary.yearShare ?? 1), [p, d.assets, nowYear, startBalance, retMean, startAge, d.summary.yearShare]);
   const tax = useMemo(() => (setup ? pensionTaxSchedule(sel.schedule, setup) : null), [setup, sel]);
@@ -243,6 +273,7 @@ function WithdrawInner() {
             <div className="text-xs text-muted">{startBalance > 0 ? pct((amount / startBalance) * 100) : '-'} · 연 {(ret * 100).toFixed(1)}%{sub}</div>
           </div>
         );
+        const same = recReady && recReady.cashYears === cashYears && recReady.bondYears === bondYears;
         return (
         <Card title="3-버킷 설정" className="mt-4">
           <div className="grid gap-4 md:grid-cols-3">
@@ -261,6 +292,31 @@ function WithdrawInner() {
             </div>
           </div>
           {bs.growth <= 0.5 && <p className="mt-2 text-xs text-warn">현금·채권 바구니만으로 자산을 다 써서 성장자산이 없습니다. 연수를 줄여 보세요.</p>}
+          {!recReady ? (
+            <div className="mt-3 rounded-xl border border-line px-3 py-2.5 text-sm text-muted">추천 연수 계산 중… (현금 1~5년치·채권 0~10년치 {5 * 11}가지 조합)</div>
+          ) : (
+            <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-line px-3 py-2.5 text-sm">
+              <span>
+                추천: <b>현금 {recReady.cashYears}년치 · 채권 {recReady.bondYears}년치</b> (충족 <b>{pct(recReady.successRate)}</b> · 자산 유지 {pct(100 - recReady.depletionRate)})
+                <span className="ml-1 text-xs text-muted">현금 1~5년치·채권 0~10년치 {5 * 11}가지 조합 가운데 충족 확률이 가장 높은 조합(같으면 자산 유지 → 평균 충족률 → 연수가 짧은 쪽)</span>
+              </span>
+              {same ? <span className="text-xs text-good">지금 설정과 같음</span> : <Button variant="ghost" onClick={() => { setCashYears(recReady.cashYears); setBondYears(recReady.bondYears); }}>추천 적용</Button>}
+            </div>
+          )}
+          <StrategyCompare
+            fixed={results[0]}
+            other={sel}
+            name="3-버킷"
+            lifeExpectancy={p.lifeExpectancy}
+            extra={[
+              { label: '필요 인출액 대비 평균 충족률(중앙값)', a: pct(results[0].medianCoverage), b: pct(sel.medianCoverage), diff: sel.medianCoverage - results[0].medianCoverage, unit: '%p' },
+              { label: '90% 미달 연수(중앙값)', a: `${results[0].medianShortYears}년`, b: `${sel.medianShortYears}년`, diff: sel.medianShortYears - results[0].medianShortYears, unit: '년', lowerBetter: true },
+              { label: '오른 해에 성장자산을 팔아 채운 해(중앙값)', a: '-', b: `${sel.medianGrowthSales}년`, diff: null, unit: '' },
+              { label: '떨어진 해에 채권으로 현금을 채운 횟수(중앙값)', a: '-', b: `${sel.medianBondRefills}회`, diff: null, unit: '' },
+              { label: '현금·채권이 모자라 성장자산에서 바로 꺼낸 해(중앙값)', a: '-', b: `${sel.medianForcedSales}년`, diff: null, unit: '' },
+            ]}
+            note="정액 인출은 시장과 상관없이 매년 같은 비율로 팔지만, 3-버킷은 오른 해에만 성장자산을 팔아 채웁니다. ‘성장자산에서 바로 꺼낸 해’가 많으면 현금·채권 바구니가 바닥나 하락장에도 팔았다는 뜻이니 연수를 늘려 보세요."
+          />
           <p className="mt-3 text-xs text-muted">
             시작할 때 첫해 인출액의 {cashYears}년치를 현금(연 2.5%), {bondYears}년치를 채권(연 4%)에 두고 나머지는 성장자산에 둡니다(전체 기대수익률이 같도록 성장자산 수익률을 맞춤). 현금 → 채권 → 성장 순서로 꺼내고, 성장자산이 오른 해에는 성장자산을 팔아 현금을 다음 해 인출 {cashYears}년치·채권을 {bondYears}년치로 다시 채우며, 떨어진 해에는 채권으로 현금만 채웁니다. 현금·채권을 늘리면 하락장 매도는 줄지만, 같은 전체 기대수익률을 내려고 성장자산 수익률·변동성이 높아집니다(성장자산 비중이 작을수록 변동성은 전체 변동성 × 전체 자산 ÷ 성장자산, 최대 30%).
           </p>

@@ -212,6 +212,16 @@ export interface PlanBase {
   share?: number; // 첫해를 남은 달만큼만 계산한 기준선이면 그 비율(balances[1] = 고정한 해 12월 말). 없으면 1년 단위
 }
 
+/** 인출 계획 전략 설정: 비어 있는 값은 기본값(정률 4%, 현금 2·채권 5년치, 가드레일 ±15%·10%·감액만) */
+export interface WithdrawSettings {
+  percentRate?: number; // 정률 인출 비율(%)
+  cashYears?: number; // 3-버킷 현금 바구니(년치)
+  bondYears?: number; // 3-버킷 채권 바구니(년치)
+  band?: number; // 가드레일 기준선에서 벗어나는 폭(%)
+  cut?: number; // 가드레일 한 번에 줄이는(되돌리는) 비율(%)
+  cutOnly?: boolean; // 가드레일 감액만
+}
+
 export interface Profile {
   id: 'me';
   name: string;
@@ -260,6 +270,7 @@ export interface Profile {
   slotFill?: boolean; // 1,500만 한도 매년 꽉 채우기: 과세재원을 1인 1,500만까지 꺼내고 남는 돈은 ISA·일반계좌로 재투자
   slotFillFrom?: number; // 꽉 채우기 시작 연도(0이면 올해)
   yuDedFullYear?: boolean; // 노란우산 올해 소득공제를 실제 세법처럼 1~12월 전체 납입액 기준으로(기본 아니오: 남은 달 납입액만). 적립금·지출은 늘 남은 달 기준
+  withdrawSettings?: WithdrawSettings; // 인출 계획 전략 설정(정률 비율·3-버킷 연수·가드레일): 다시 열어도 유지
   bucketAltPct?: number; // 인출용 자산 배치 가이드 대체자산 목표 비중(%, 없으면 연금계좌 지금 대체자산 비중 또는 10)
   marketDrawdownDate?: string; // 위 등락률을 넣은 날짜(YYYY-MM-DD): 30일이 지나면 다시 넣으라고 안내
   marketDrawdown?: number; // 인출용 자산 배치 가이드 주식형 지수 고점 대비 등락률(%, 직접 넣는 값, 없으면 0): 지금 적용할 규칙만 바꿈

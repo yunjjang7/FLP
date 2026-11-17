@@ -14,7 +14,7 @@ import { bearTodo, milestones, normalTodo, peakTodo, monthsUntil, pensionOpenMon
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
 import { bucketMap, emergencyPrescription, goalPrescription, guardrailPrescription, marketPrescription, normalPrescription, peakPrescription, prescriptions, recurringGoalPrescription, retiredGoalPrescription, savingsPrescription } from './prescribe';
 import { emergencyCap, emergencyDetail, emergencyRunway, emergencyScore, financialScore, marketChecks, retiredBasis, riskChecks } from './risk';
-import { baseBalanceAt, basePlanWithdrawal, bucketDesc, bucketStart, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, rebaseDiff, refixBase, restoreBase, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
+import { baseBalanceAt, basePlanWithdrawal, bucketDesc, bucketStart, recommendBucket, withdrawSettingsOf, compareStrategy, DEFAULT_GUARDRAIL, guardrailBaseline, needAt, nextGuardrail, rebaseDiff, refixBase, restoreBase, reviewYearEnds, shareAt, yearsToYearEnd } from './withdrawal';
 import type { Draw, Goal, PlanBase } from '../types';
 import { carryBefore, carryOverPlan, carryPatch, undoCarryPlan, undoPatch, drawTotal, drawYears, monthKey, OTHER_ACCOUNT, parseMonth, reviewDraws, yearEndAccounts } from './drawLog';
 import { balanceAt, checkAges, lumpGrid, lumpTotal, returnScenarios, runScenario, scaleLiving, scaleLumps } from './scenarios';
@@ -403,6 +403,35 @@ describe('인출 전략', () => {
     expect(big.growthVol).toBeCloseTo(0.3, 9);
     expect(big.capped).toBe(true);
     expect(big.totalReturn).toBeLessThan(0.05);
+  });
+  it('3-버킷 지표: 성장자산을 판 해·채권으로 현금을 채운 횟수·성장자산에서 바로 꺼낸 해(시나리오 중앙값)', () => {
+    const b = compareStrategy('bucket', inp, 200);
+    expect(b.medianGrowthSales).toBeGreaterThan(0);
+    expect(b.medianBondRefills).toBeGreaterThan(0);
+    expect(b.medianGrowthSales + b.medianBondRefills).toBeLessThanOrEqual(40);
+    expect(b.medianForcedSales).toBeGreaterThanOrEqual(0);
+    // 다른 전략은 0
+    const f = compareStrategy('fixed', inp, 50);
+    expect([f.medianGrowthSales, f.medianBondRefills, f.medianForcedSales]).toEqual([0, 0, 0]);
+    // 평균수익(변동 없음)이면 성장자산은 늘 올라 채권으로 채우는 해가 없음
+    const det = compareStrategy('bucket', { ...inp, volatility: 0 }, 5);
+    expect(det.medianBondRefills).toBe(0);
+  });
+  it('3-버킷 연수 추천: 55개 조합 가운데 충족 확률이 가장 높은 조합', () => {
+    const rec = recommendBucket(inp, 60);
+    expect(rec.cashYears).toBeGreaterThanOrEqual(1);
+    expect(rec.cashYears).toBeLessThanOrEqual(5);
+    expect(rec.bondYears).toBeGreaterThanOrEqual(0);
+    expect(rec.bondYears).toBeLessThanOrEqual(10);
+    // 어떤 조합도 추천보다 충족 확률이 높지 않음
+    for (const [c, b] of [[1, 0], [2, 5], [5, 10], [3, 3]]) {
+      expect(compareStrategy('bucket', { ...inp, bucket: { cashYears: c, bondYears: b } }, 60).successRate).toBeLessThanOrEqual(rec.successRate + 1e-9);
+    }
+  });
+  it('인출 전략 설정 저장값: 빈 값은 기본값, 범위 밖은 범위 안으로', () => {
+    expect(withdrawSettingsOf(undefined)).toEqual({ percentRate: 4, cashYears: 2, bondYears: 5, band: 15, cut: 10, cutOnly: true });
+    expect(withdrawSettingsOf({ percentRate: 6.5, cashYears: 3, bondYears: 0, band: 20, cut: 5, cutOnly: false })).toEqual({ percentRate: 6.5, cashYears: 3, bondYears: 0, band: 20, cut: 5, cutOnly: false });
+    expect(withdrawSettingsOf({ percentRate: 30, cashYears: 0, bondYears: 99, band: 1, cut: 50 })).toMatchObject({ percentRate: 12, cashYears: 1, bondYears: 10, band: 5, cut: 20, cutOnly: true });
   });
 });
 
