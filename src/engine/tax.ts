@@ -131,6 +131,7 @@ export interface TaxRow {
   reinvest: number; // 1,500만 한도 채우기·퇴직금 최소 인출로 생활비보다 더 꺼내 ISA·일반계좌로 옮긴 세후 금액(실질)
   contrib: number; // 연금계좌 추가 납입액(실질)
   otherDrawn: number; // 연금계좌 밖 자산(ISA·일반 등)에서 생활비로 꺼낸 금액(명목)
+  otherOut: number; // 위와 같은 금액(실질, 오늘 물가)
   isa: number; // 연말 연금계좌 밖 자산(ISA·일반 등, 실질)
   retireNo: number; // 퇴직금 연금 실수령연차(실제로 꺼낸 해만 셈): 11년차부터 감면 40%
   short: number; // 세금 때문에 모자란 금액(실질)
@@ -371,7 +372,12 @@ export function pensionTaxSchedule(schedule: ScheduleRow[], setup: TaxSetup): Ta
     if (short > 1e-6 && depletedAge === null && r.withdrawal > 0) depletedAge = r.age + 1;
     totalTax += tax;
     const limitOver = accounts.reduce((s, a) => s + a.over, 0);
-    rows.push({ age: r.age, year, net: r.withdrawal - short, gross, tax, slot, over, idle, accounts, limitOver, reinvest, contrib, otherDrawn: otherDrawn * defl, isa: other, retireNo, short, left });
+    rows.push({ age: r.age, year, net: r.withdrawal - short, gross, tax, slot, over, idle, accounts, limitOver, reinvest, contrib, otherDrawn: otherDrawn * defl, otherOut: otherDrawn, isa: other, retireNo, short, left });
   }
   return { rows, totalTax, overYears, limitWarnings: [...warn.values()], depletedAge };
+}
+
+/** 계획 기간 동안 연금계좌 밖 자산의 흐름 합계(오늘 물가): 생활비로 꺼낸 금액·재투자 세후 금액·연금계좌 추가 납입액 */
+export function otherFlowTotals(rows: Pick<TaxRow, 'otherOut' | 'reinvest' | 'contrib'>[]) {
+  return rows.reduce((a, r) => ({ out: a.out + r.otherOut, reinvest: a.reinvest + r.reinvest, contrib: a.contrib + r.contrib }), { out: 0, reinvest: 0, contrib: 0 });
 }

@@ -8,7 +8,7 @@ import { deterministicPath, expenseAt, expenseRatioAt, goalBreakdownAt, goalKind
 import { contribSchedule, creditInflows, hiDependent, hiPropMonthly, hiPropShare, incomeKindOf, incomeTaxAmount, incomeTaxSchedule, pensionIncomeAmount, personIncomeTax, wageIncomeAmount, wageTaxCredit, wageWithholding } from './incomeTax';
 import { CHECK_AGE, checkAge, checkAt, hasCompareOrder, orderCombos, runCombo, summarizeTax, type ComboResult } from './orderCompare';
 import { rentDuplicates, rentStreams } from './realestate';
-import { pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
+import { otherFlowTotals, pensionLimit, pensionTaxRate, pensionTaxSchedule, retireRateAt, retireTaxRate, taxSetup, type TaxResult } from './tax';
 import { accountBuckets, bearCutText, bearPlan, bondsOnHand, cashOnHand, cashShortText, normalPlan, peakPlan, pensionBondOutNote, rebalanceTiming, saveFill, saveFillNote, saveFillShort, saveFillText, pensionBondParts, pensionClassParts, isRiskCapped, MARKET_INPUT_HELP, marketDateNote, marketRule, marketState, ymd } from './buckets';
 import { bearTodo, milestones, normalTodo, peakTodo, monthsUntil, pensionOpenMonth, untilLabel, yearTodos } from './milestones';
 import { isPaying, payEndSelfAge, pensionOverlap, summarize, volCheck, volMid, volRange } from './portfolio';
@@ -2158,7 +2158,15 @@ describe('월별 실제 인출 기록(엑셀: 월별인출표)', () => {
       const defl = Math.pow(1.02, r.year - 2026);
       expect(r.accounts.reduce((a, x) => a + x.drawn, 0) + r.otherDrawn).toBeCloseTo(r.gross * defl, 6);
       expect(r.otherDrawn).toBeGreaterThan(0);
+      // 인출 스케줄 ‘연금 밖 자산’ 열의 꺼냄은 같은 금액을 오늘 물가로
+      expect(r.otherOut * defl).toBeCloseTo(r.otherDrawn, 6);
     }
+    // 연금 세금 점검 카드의 꺼냄 합계는 해마다 꺼낸 금액(오늘 물가)을 더한 값
+    const sum = otherFlowTotals(t.rows);
+    expect(sum.out).toBeCloseTo(t.rows[0].otherOut + t.rows[1].otherOut, 6);
+    expect(sum.out).toBeGreaterThan(0);
+    expect(sum.reinvest).toBe(0);
+    expect(sum.contrib).toBe(0);
     // 월별 기록 계획의 ISA·일반 칸은 이 금액
     expect(reviewDraws(t.rows[1], 2027, [], { nowYear: 2026, nowMonth: 11 }).accounts.at(-1)).toMatchObject({ name: OTHER_ACCOUNT, planYear: t.rows[1].otherDrawn });
   });

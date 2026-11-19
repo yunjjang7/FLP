@@ -13,7 +13,7 @@ import { IncomeTaxCard } from '../components/IncomeTaxCard';
 import { OrderCompare } from '../components/OrderCompare';
 import { CardLink, SetupLink, useCardTarget } from '../components/SetupLink';
 import type { CompareBase } from '../engine/orderCompare';
-import { OVER_RATE, PENSION_SLOT, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
+import { OVER_RATE, PENSION_SLOT, otherFlowTotals, pensionTaxSchedule, taxSetup, type TaxResult } from '../engine/tax';
 import { bucketDesc, bucketStart, compareStrategy, DEFAULT_GUARDRAIL, recommendBucket, withdrawSettingsOf, livingOf, needAt, shareAt, spendAt, STRATEGIES, type StrategyKey, type WithdrawInput } from '../engine/withdrawal';
 import { pct, won, yearRanges } from '../lib/format';
 import { useFlp } from '../store/FlpContext';
@@ -114,7 +114,7 @@ function WithdrawInner() {
   );
   const hasSpouse = p.spouseBirthYear > 0;
   const hasInflow = sel.schedule.some((r) => r.inflow > 0);
-  const hasIsa = !!tax && tax.rows.some((r) => r.reinvest > 0.5 || r.contrib > 0.5);
+  const hasIsa = !!tax && tax.rows.some((r) => r.isa > 0.5 || r.otherOut > 0.5 || r.reinvest > 0.5 || r.contrib > 0.5);
   const lvl = (v: number): Level => (v >= p.criteria.successTarget ? 'good' : v >= 60 ? 'caution' : 'danger');
   const saveProfile = (patch: Partial<typeof p>) => db.profile.put({ ...p, ...patch });
 
@@ -404,13 +404,13 @@ function WithdrawInner() {
                 <th className="font-medium">필요 지출<div className="font-normal">생활비·대출·목표</div></th>
                 <th className="font-medium">수지<div className="font-normal">소득 − 지출</div></th>
                 <th className="font-medium">→ 자산 인출{tax ? '(세후)' : ''}<div className="font-normal">금융자산에서</div></th>
-                {tax && <th className="font-medium">세금</th>}
-                {tax && <th className="font-medium">세전 인출</th>}
-                {hasIsa && <th className="font-medium">ISA 재투자<div className="font-normal">납입 · 연말 잔액</div></th>}
+                {tax && <th className="font-medium">세금<div className="font-normal">연금소득세 등</div></th>}
+                {tax && <th className="font-medium">세전 인출<div className="font-normal">세후 인출 + 세금</div></th>}
+                {hasIsa && <th className="font-medium">연금 밖 자산<div className="font-normal">연말 잔액 · 꺼냄·재투자</div></th>}
                 {tax && <th className="font-medium">1,500만 한도{hasSpouse ? ' 본인/배우자' : ''}<div className="font-normal">명목</div></th>}
                 {hasInflow && <th className="font-medium">일시금·매각·환급<div className="font-normal">자산에 더함</div></th>}
                 <th className="font-medium">쓸 수 있는 돈<div className="font-normal">소득 + 인출</div></th>
-                <th className="font-medium">연말 잔액</th>
+                <th className="font-medium">연말 잔액<div className="font-normal">금융자산 전체</div></th>
               </tr>
             </thead>
             <tbody>
@@ -441,8 +441,10 @@ function WithdrawInner() {
                   {t && <td>{won(t.gross)}{t.short > 0.5 && <span className="ml-1 text-xs text-bad">부족 {won(t.short)}</span>}</td>}
                   {hasIsa && t && (
                     <td className="whitespace-nowrap">
-                      {t.reinvest > 0.5 ? won(t.reinvest) : ''}
-                      <div className="text-xs text-muted">{t.contrib > 0.5 ? `납입 ${won(t.contrib)} · ` : ''}{won(t.isa)}</div>
+                      {won(t.isa)}
+                      {t.otherOut > 0.5 && <div className="text-xs text-muted">꺼냄 − {won(t.otherOut)}</div>}
+                      {t.reinvest > 0.5 && <div className="text-xs text-good">재투자 + {won(t.reinvest)}</div>}
+                      {t.contrib > 0.5 && <div className="text-xs text-muted">연금 납입 {won(t.contrib)}</div>}
                     </td>
                   )}
                   {t && <td className="whitespace-nowrap">{slotCell('self')}{hasSpouse && <> / {slotCell('spouse')}</>}{slotOver && <span className="ml-1 text-xs font-semibold text-bad">초과</span>}{limitOver && <span className="ml-1 text-xs font-semibold text-bad">수령한도↑</span>}</td>}
@@ -458,6 +460,7 @@ function WithdrawInner() {
         <p className="mt-2 text-xs text-muted">
           한 해씩 소득 − 필요 지출(생활비 + 남은 대출 상환 + 목표 탭 지출 + 만기일시 대출 원금 + 은퇴 후 보험료 + 국민연금 몫 세금·건보료) = 수지이고, 모자라는 만큼 금융자산에서 인출합니다.{firstShare < 1 ? ` 첫 행(올해)은 남은 ${firstMonths}개월분만 계산한 금액입니다(지난 달의 지출은 이미 지금 자산에 반영돼 있으므로).` : ''} 정률·가드레일 전략은 인출액이 부족분과 다를 수 있습니다. 일시금·매각·환급은 쓰지 않고 자산에 더합니다. 빨간 행은 쓸 수 있는 돈(소득 + 인출)이 필요 지출의 90%에 못 미치는 해입니다. 필요 지출 아래 작은 글씨는 그 가운데 목표 탭 지출, 만기에 한 번에 갚는 대출 원금, 은퇴 뒤까지 내는 보험료, 국민연금 때문에 늘어나는 세금·건보료입니다.
           {tax && ` 노란 행은 과세재원 인출이 1인 연 ${PENSION_SLOT.toLocaleString()}만원(세전, 명목)을 넘어 초과분에 ${OVER_RATE}% 분리과세가 붙거나, 계좌별 연금수령한도를 넘어 연금외수령이 생기는(‘수령한도↑’) 해입니다. 한도 열은 그 해 과세재원 인출액(만원, 명목)입니다. 세금·세전 인출은 오늘 물가 기준입니다.`}
+          {hasIsa && ' 연금 밖 자산 열의 위 숫자는 그 해 연말 연금계좌 밖 금융자산(ISA·일반계좌·예금·현금 등, 묶인 자산 제외) 잔액이고(오늘 물가), 아래 작은 글씨는 그 해 생활비로 꺼낸 금액(꺼냄: 연금계좌에서 한도 안으로 꺼내고도 모자란 몫), 1,500만 한도 채우기·퇴직금 최소 인출로 연금계좌에서 더 꺼내 옮긴 세후 금액(재투자), 연금계좌 추가 납입액(이 자산에서 먼저 냄)입니다.'}
         </p>
       </Card>
       <Disclaimer />
@@ -474,8 +477,7 @@ function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase, minDraw, mon
   const eff = first && first.gross > 0 ? (first.tax / first.gross) * 100 : 0;
   const overRows = tax.rows.filter((r) => r.over.self + r.over.spouse > 0.5);
   const ranges = yearRanges(tax.overYears);
-  const reinvest = tax.rows.reduce((a, r) => a + r.reinvest, 0);
-  const contrib = tax.rows.reduce((a, r) => a + r.contrib, 0);
+  const { out, reinvest, contrib } = otherFlowTotals(tax.rows);
   return (
     <Card
       title="연금 세금 점검"
@@ -546,9 +548,10 @@ function TaxSummary({ tax, scheduleDepleted, hasSpouse, retireBase, minDraw, mon
           </li>
         )}
         <li>자산 인출(세후)이 생활비로 쓰는 돈이고, 세금만큼 더 꺼내야 합니다. 성공확률·전략 비교는 세금을 빼고 계산한 값이니 이 카드의 ‘세금 반영 시 자산 고갈’과 함께 보세요.</li>
-        {(reinvest > 0.5 || contrib > 0.5) && (
+        {(out > 0.5 || reinvest > 0.5 || contrib > 0.5) && (
           <li>
-            {reinvest > 0.5 && `1,500만 한도 채우기·퇴직금 최소 인출로 생활비보다 더 꺼내 ISA·일반계좌로 옮긴 세후 금액은 계획 기간 합계 ${won(reinvest)}입니다(오늘 물가). `}
+            {out > 0.5 && `연금계좌에서 한도 안으로 꺼내고도 모자라 연금계좌 밖 자산(ISA·일반계좌·예금 등)에서 생활비로 꺼낸 금액은 계획 기간 합계 ${won(out)}입니다(오늘 물가, 인출 스케줄 ‘연금 밖 자산’ 열의 ‘꺼냄’). `}
+            {reinvest > 0.5 && `1,500만 한도 채우기·퇴직금 최소 인출로 생활비보다 더 꺼내 ISA·일반계좌로 옮긴 세후 금액은 계획 기간 합계 ${won(reinvest)}입니다(오늘 물가, 같은 열의 ‘재투자’). `}
             {contrib > 0.5 && `연금계좌 추가 납입은 합계 ${won(contrib)}이고, 세액공제 환급은 다음 해 ‘일시금·환급’으로 들어옵니다.`}
           </li>
         )}
