@@ -1,22 +1,23 @@
 import { useMemo, useState } from 'react';
 import { MILESTONE_KIND, milestones, untilLabel, yearTodos } from '../engine/milestones';
+import { rebalanceTiming, type BucketTotalGap } from '../engine/buckets';
 import { useFlp } from '../store/FlpContext';
 import { Card } from './ui';
 
 const SHOWN = 8;
 
 /** 엑셀 대시보드 ‘올해·내년 할 일’과 ‘다가오는 이정표’ */
-export function Milestones() {
+export function Milestones({ bucketGap }: { /** 계좌별 인출 바구니 합계의 목표와 차이(인출 계획): 1월 리밸런싱 할 일에 옮길 금액으로 */ bucketGap?: BucketTotalGap } = {}) {
   const { profile, assets, liabilities, goals, cashMove, runCash, bear, peak, normal } = useFlp();
   const [all, setAll] = useState(false);
   const now = new Date();
   const nowYear = now.getFullYear();
   const nowMonth = now.getMonth() + 1;
   const list = useMemo(() => milestones(profile, assets, liabilities, goals, nowYear, nowMonth, cashMove, runCash.pensionOutParts), [profile, assets, liabilities, goals, nowYear, nowMonth, cashMove, runCash.pensionOutParts]);
-  const todos = useMemo(
-    () => [nowYear, nowYear + 1].map((y) => ({ year: y, items: yearTodos(profile, assets, nowYear, y, liabilities, nowMonth, cashMove, runCash.pensionOutParts, bear, peak, normal) })).filter((t) => t.items.length > 0),
-    [profile, assets, liabilities, nowYear, nowMonth, cashMove, runCash.pensionOutParts, bear, peak, normal],
-  );
+  const todos = useMemo(() => {
+    const rebal = bucketGap ? { gap: bucketGap, ...rebalanceTiming(new Date(nowYear, nowMonth - 1, 1)) } : undefined;
+    return [nowYear, nowYear + 1].map((y) => ({ year: y, items: yearTodos(profile, assets, nowYear, y, liabilities, nowMonth, cashMove, runCash.pensionOutParts, bear, peak, normal, rebal) })).filter((t) => t.items.length > 0);
+  }, [profile, assets, liabilities, nowYear, nowMonth, cashMove, runCash.pensionOutParts, bear, peak, normal, bucketGap]);
   if (list.length === 0 && todos.length === 0) return null;
   const shown = all ? list : list.slice(0, SHOWN);
   return (

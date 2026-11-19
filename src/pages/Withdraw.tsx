@@ -22,6 +22,7 @@ import { debtAnnualAt, GOAL_KIND_LABEL, goalKind, incomeValue } from '../engine/
 import { goalItemsFrom } from '../engine/goals';
 import { withdrawInputOf } from '../engine/pensionTaxPlan';
 import { pensionOpenMonth } from '../engine/milestones';
+import { accountBuckets, bucketAltShare, bucketTotalGap } from '../engine/buckets';
 
 type Basis = 'avg' | 'p50' | 'p10' | 'custom';
 const basisLabel = (b: Basis, retired: boolean) => (b === 'avg' ? (retired ? '현재 자산' : '평균수익') : b === 'p50' ? '중앙값' : b === 'p10' ? '비관' : '직접');
@@ -133,6 +134,11 @@ function WithdrawInner() {
   // 첫해가 1년이 안 되면 해마다 나가는 지출(flow)은 남은 달만큼만
   const firstShare = shareAt(input, startAge);
   const firstMonths = Math.max(1, Math.round(firstShare * 12));
+  // 인출 바구니 합계의 목표와 차이(BucketGuide 와 같은 계산): 이정표의 1월 리밸런싱 할 일에 자산군별 옮길 금액으로
+  const bucketGap = useMemo(
+    () => (tax ? bucketTotalGap(accountBuckets(tax, bucketAltShare(p.bucketAltPct, d.assets), firstShare < 1, d.assets).filter((a) => a.balance > 0.5)) : undefined),
+    [tax, p.bucketAltPct, d.assets, firstShare],
+  );
   const part = (g: { age: number; amount: number; flow?: boolean }) => g.amount * (g.flow ? shareAt(input, g.age) : 1);
   const loanAt = (age: number) => loanRepays.filter((g) => g.age === age);
   const premiumAt = (age: number) => premiums.filter((g) => g.age === age).reduce((a, g) => a + part(g), 0);
@@ -380,7 +386,7 @@ function WithdrawInner() {
 
       <BucketGuide firstNeed={firstNeed} balance={startBalance} tax={tax} hasSpouse={hasSpouse} partialFirst={firstShare < 1} />
 
-      <Milestones />
+      <Milestones bucketGap={bucketGap} />
 
       {tax && setup && <TaxSummary tax={tax} scheduleDepleted={sel.schedule.find((r) => r.endBalance <= 0 && r.withdrawal > 0)?.age ?? null} hasSpouse={hasSpouse} retireBase={setup.retireBase} minDraw={setup.retireMinDraw} months={firstMonths} />}
       {tax && (retired || d.draws.length > 0) && <DrawLog tax={tax} firstMonths={firstMonths} hasSpouse={hasSpouse} />}

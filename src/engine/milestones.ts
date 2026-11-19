@@ -7,7 +7,7 @@ import { PENSION_OPEN_AGE } from './tax';
 import { isYu, validMonths } from './yellowUmbrella';
 import { isaMaturities, type IsaMaturity } from './account';
 import { maturities, type MaturityRow } from './maturity';
-import { bearCutText, saveFillShort, type BearPlan, type NormalPlan, type PeakPlan } from './buckets';
+import { bearCutText, saveFillShort, type BearPlan, type BucketTotalGap, type NormalPlan, type PeakPlan } from './buckets';
 
 export type MilestoneKind = 'review' | 'open' | 'limit' | 'lump' | 'pension' | 'tax' | 'contrib' | 'estate' | 'loan' | 'goal' | 'maturity';
 
@@ -264,7 +264,17 @@ export function normalTodo(b: NormalPlan): string {
   return `${head}${b.out > 0.5 ? `(55세 전 연금계좌 채권형 ${man(b.out)} 제외)` : ''}`;
 }
 
-export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, year: number, liabilities: Liability[] = [], nowMonth?: number, moveToCash: MoveRow[] = [], cashFrom55?: { self: number; spouse: number }, bear?: BearPlan | null, peak?: PeakPlan | null, normal?: NormalPlan | null): string[] {
+/** 1월 리밸런싱 때 계좌 안 바구니를 목표에 맞추는 할 일: 자산군별로 더 채울·줄일 금액(합계 평가액의 0.5% 미만 차이는 뺌). 맞출 게 없으면 undefined */
+export function bucketRebalanceTodo(g: BucketTotalGap, when: string): string | undefined {
+  const min = Math.max(0.5, g.balance * 0.005);
+  const parts = ([['cash', '현금성'], ['bond', '채권·배당'], ['growth', '성장'], ['alt', '대체']] as const)
+    .filter(([k]) => Math.abs(g.gap[k]) >= min)
+    .map(([k, label]) => `${label} ${man(Math.abs(g.gap[k]))} ${g.gap[k] > 0 ? '더 채우기' : '줄이기'}`);
+  if (!parts.length) return undefined;
+  return `${when} 때 연금계좌 바구니 맞추기: ${parts.join(' · ')}${g.all ? '' : `(비율을 넣은 ${g.count}개 계좌 기준)`}`;
+}
+
+export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, year: number, liabilities: Liability[] = [], nowMonth?: number, moveToCash: MoveRow[] = [], cashFrom55?: { self: number; spouse: number }, bear?: BearPlan | null, peak?: PeakPlan | null, normal?: NormalPlan | null, rebal?: { gap: BucketTotalGap; nextYear: boolean; when: string }): string[] {
   const out: string[] = [];
   // 하락장(저장한 등락률 −15% 이하)이고 바로 쓸 돈이 2년치에 못 미치면 올해 할 일 맨 앞에: 맞춤 처방과 같은 금액
   if (bear && year === nowYear) out.push(bearTodo(bear));
@@ -273,6 +283,11 @@ export function yearTodos(profile: Profile, assets: Asset[], nowYear: number, ye
   // 보통(0%와 −15% 사이)이고 바로 쓸 돈이 2년치에 못 미치면 1월 리밸런싱 때 채권형에서 옮길 금액:
   // 1월이면 올해 할 일 맨 앞에, 2월부터는 다음 1월이 내년이라 내년 할 일 맨 앞에
   if (normal && year === nowYear + (normal.nextYear ? 1 : 0)) out.push(normalTodo(normal));
+  // 계좌별 바구니 합계의 목표와 차이: 다음 1월 리밸런싱 때(2월부터는 내년 1월) 자산군별로 옮길 금액
+  if (rebal && year === nowYear + (rebal.nextYear ? 1 : 0)) {
+    const t = bucketRebalanceTodo(rebal.gap, rebal.when);
+    if (t) out.push(t);
+  }
   const hasSpouse = profile.spouseBirthYear > 0;
   const pensions = mergeAccounts(assets).filter((a) => a.type === 'pension' && a.amount > 0); // 같은 계좌로 묶인 줄은 한 계좌
   const age = year - profile.birthYear;

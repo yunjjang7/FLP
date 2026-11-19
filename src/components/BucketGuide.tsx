@@ -1,7 +1,6 @@
 import { Fragment, useMemo } from 'react';
 import { db } from '../db/db';
-import { accountBuckets, BEAR_DROP, bearCutText, cashShortText, saveFillShort, saveFillText, MARKET_INPUT_HELP, marketDateNote, pensionBondOutNote, pensionEquityOutNote, ymd, bucketGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
-import { classAmounts, hasAlloc } from '../engine/allocation';
+import { accountBuckets, BEAR_DROP, bearCutText, cashShortText, saveFillShort, saveFillText, MARKET_INPUT_HELP, marketDateNote, pensionBondOutNote, pensionEquityOutNote, ymd, bucketAltDefault, bucketGap, bucketTotalGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
 import { useFlp } from '../store/FlpContext';
 import { SetupLink } from './SetupLink';
 import type { TaxResult } from '../engine/tax';
@@ -17,13 +16,7 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
   const { assets, cash: hand, runCash, start, profile, bear, peak, normal } = useFlp();
   // 대체자산 목표 비중 기본값: 연금계좌에 비율을 넣었으면 지금 대체자산 비중(반올림), 아니면 10%
   // 두 칸은 프로필에 저장(화면을 옮겨도 유지). 넣은 적이 없으면 기본값
-  const altDefault = useMemo(() => {
-    const pen = assets.filter((a) => a.type === 'pension' && a.amount > 0);
-    const withAlloc = pen.filter(hasAlloc);
-    if (!withAlloc.length) return 10;
-    const amt = withAlloc.reduce((s, a) => s + a.amount, 0);
-    return amt > 0 ? Math.round((classAmounts(withAlloc).alt / amt) * 100) : 10;
-  }, [assets]);
+  const altDefault = useMemo(() => bucketAltDefault(assets), [assets]);
   const altPct = profile.bucketAltPct ?? altDefault;
   const drawdown = profile.marketDrawdown ?? 0;
   const setAltPct = (v: number) => db.profile.put({ ...profile, bucketAltPct: Math.min(50, Math.max(0, v)) });
@@ -54,6 +47,9 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
   const gapCls = (v: number) => (Math.abs(v) < 0.5 ? 'text-muted' : v > 0 ? 'text-warn' : 'text-muted');
   const total = (f: (a: (typeof accounts)[number]) => number) => accounts.reduce((s, a) => s + f(a), 0);
   const year = tax?.rows[0]?.year;
+  const tg = bucketTotalGap(accounts);
+  // 첫해에 꺼내지 않고 나중(55세가 된 해·인출 시작 연도)부터 꺼내는 계좌: ① 현금성은 그때 꺼낼 금액
+  const later = accounts.filter((a) => a.cash > 0.5 && year !== undefined && a.firstDraw !== undefined && a.firstDraw > year);
   return (
     <Card title="인출용 자산 배치 가이드" className="mt-4" action={<span className="text-xs text-muted">첫해 인출 연 {won(firstNeed)} 기준</span>}>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -160,9 +156,13 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
                       {a.name}
                       {hasSpouse && <span className="ml-1 text-xs text-muted">{a.owner === 'spouse' ? '배우자' : '본인'}</span>}
                       {a.capped && <span className="ml-1 text-xs text-muted">· 70% 한도</span>}
+                      {later.includes(a) && <span className="ml-1 text-xs text-muted">· {a.firstDraw}년부터 인출</span>}
                     </td>
                     <td>{won(a.balance)}</td>
-                    <td className="font-semibold">{won(a.cash)}</td>
+                    <td className="font-semibold">
+                      {won(a.cash)}
+                      {later.includes(a) && a.cashDraws.length > 0 && <div className="text-xs font-normal text-muted">{a.cashDraws.map((x) => `${x.year}년 ${won(x.amount)}`).join(' · ')}</div>}
+                    </td>
                     <td>{won(a.bond)}</td>
                     <td>{won(a.growth)}</td>
                     <td>{won(a.alt)}</td>
@@ -182,7 +182,7 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
                   </Fragment>
                   );
                 })}
-                <tr className="text-right font-semibold">
+                <tr className={`${tg ? 'border-b border-line' : ''} text-right font-semibold`}>
                   <td className="py-1.5 text-left">합계</td>
                   <td>{won(total((a) => a.balance))}</td>
                   <td>{won(total((a) => a.cash))}</td>
@@ -191,13 +191,27 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
                   <td>{won(total((a) => a.alt))}</td>
                   <td>{total((a) => a.balance) > 0 ? pct((total((a) => a.growth + a.alt) / total((a) => a.balance)) * 100) : '-'}</td>
                 </tr>
+                {tg && (
+                  <tr className="text-right text-xs">
+                    <td className="py-1 pl-3 text-left text-muted">
+                      지금 배분 · 목표와 차이
+                      {!tg.all && <div>비율을 넣은 {tg.count}개 계좌({won(tg.balance)})만</div>}
+                    </td>
+                    <td />
+                    <td>{won(tg.now.cash)}<div className={gapCls(tg.gap.cash)}>{sign(tg.gap.cash)}</div></td>
+                    <td>{won(tg.now.bond)}<div className={gapCls(tg.gap.bond)}>{sign(tg.gap.bond)}</div></td>
+                    <td>{won(tg.now.equity)}<div className={gapCls(tg.gap.growth)}>{sign(tg.gap.growth)}</div></td>
+                    <td>{won(tg.now.alt)}<div className={gapCls(tg.gap.alt)}>{sign(tg.gap.alt)}</div></td>
+                    <td>{pct(tg.riskShare)}</td>
+                  </tr>
+                )}
               </tbody>
             </table>
           </div>
           {anyNow && (
             <p className="mt-1 text-xs text-muted">
               ‘지금 배분’은 자산 탭에 넣은 계좌 안 자산배분 비율로 나눈 금액이고, 아래 숫자는 목표 − 지금입니다(+ 는 더 채울 금액, − 는 넘치는 금액). 비율이 없는 줄은 성격대로(투자형 = 주식형, 안전형 = 현금성) 셉니다.
-              {noAlloc.length > 0 && <> 비율을 넣지 않은 계좌({noAlloc.join('·')})는 목표만 보여 줍니다.</>}
+              {noAlloc.length > 0 && <> 비율을 넣지 않은 계좌({noAlloc.join('·')})는 목표만 보여 주고 합계의 지금 배분·차이에서도 뺍니다.</>}
             </p>
           )}
           {!anyNow && (
@@ -206,7 +220,7 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
             </p>
           )}
           <p className="mt-1 text-xs text-muted">
-            ‘연금 세금 점검’의 계좌별 인출 계획으로 계산했습니다. 인출 시작 전이라 5년 안에 꺼내지 않는 계좌는 현금성 없이 대부분 성장자산으로 둡니다. 계좌 종류가 IRP·DC이거나(비우면 이름에 IRP·DC·퇴직이 들어간 계좌) 퇴직연금으로 보고 위험자산(③+④, ETF는 주식형으로 봄)을 평가액의 {IRP_RISK_CAP * 100}%까지만 잡고 넘는 몫은 ②로 돌렸습니다. 상품 추천이 아닌 금액 배분 기준입니다.
+            ‘연금 세금 점검’의 계좌별 인출 계획으로 계산했습니다.{later.length > 0 && <> ‘○○년부터 인출’ 계좌는 그 사람이 55세가 되거나 정한 인출 시작 연도가 되어 그해부터 꺼내므로, ① 현금성은 앞 2년 가운데 그해부터 꺼낼 금액입니다. 위 ‘지금 적용할 규칙’은 지금 바로 팔아 쓸 수 있는 금액만 세므로 55세 전 연금계좌 안 자산을 뺍니다.</>} 인출 시작 전이라 5년 안에 꺼내지 않는 계좌는 현금성 없이 대부분 성장자산으로 둡니다. 계좌 종류가 IRP·DC이거나(비우면 이름에 IRP·DC·퇴직이 들어간 계좌) 퇴직연금으로 보고 위험자산(③+④, ETF는 주식형으로 봄)을 평가액의 {IRP_RISK_CAP * 100}%까지만 잡고 넘는 몫은 ②로 돌렸습니다. 상품 추천이 아닌 금액 배분 기준입니다.
           </p>
         </div>
       )}

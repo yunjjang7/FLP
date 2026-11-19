@@ -17,7 +17,8 @@ import {
   riskShareOf,
   shiftAlloc,
 } from './allocation';
-import { accountBuckets, bucketGap, safeYears } from './buckets';
+import { accountBuckets, bucketAltDefault, bucketAltShare, bucketGap, bucketTotalGap, safeYears } from './buckets';
+import { bucketRebalanceTodo, yearTodos } from './milestones';
 import { mergeAccounts, summarize } from './portfolio';
 import { allocSwitch, rebalance } from './rebalance';
 import { riskChecks } from './risk';
@@ -203,5 +204,56 @@ describe('자산배분 비율이 기능에 반영됨', () => {
     expect(accountBuckets(tax, 0.1, false, [asset('연금저축', 'pension', 'invest', 10000)])[0].now).toBeUndefined();
     // 계좌 종류로 70% 한도
     expect(accountBuckets(tax, 0.1, false, [{ ...assets[0], pensionKind: 'dc' }])[0].capped).toBe(true);
+  });
+
+  it('인출 바구니 합계: 비율을 넣은 계좌만 더한 지금 배분과 목표 차이, 첫 인출 연도', () => {
+    const acct = (name: string, start: number, drawn: number[]) => drawn.map((x, i) => ({ year: 2026 + i, x: { name, owner: 'self' as const, yearNo: 5, limit: Infinity, start, drawn: x, tax: 0, over: 0, freeLeft: 0, retireLeft: 0 } }));
+    const a = acct('연금저축', 10000, [1000, 1000, 500, 500, 500, 500]);
+    // 55세 전이라 2027년부터 꺼내는 IRP
+    const b = acct('배우자 IRP', 5000, [0, 400, 400, 400, 400, 400]);
+    const rows = a.map((r, i) => ({ year: r.year, accounts: [r.x, b[i].x] })) as unknown as TaxResult['rows'];
+    const tax = { rows, totalTax: 0, overYears: [], limitWarnings: [], depletedAge: null } as unknown as TaxResult;
+    const withAlloc = [asset('연금저축', 'pension', 'invest', 10000, { alloc: { equity: 70, bond: 10, alt: 10, cash: 10 } })];
+    const list = accountBuckets(tax, 0.1, false, withAlloc);
+    expect(list.map((x) => x.firstDraw)).toEqual([2026, 2027]);
+    expect(list[1].cash).toBe(400);
+    // ① 현금성 기간 가운데 실제로 꺼내는 해만(55세 전인 2026년은 없음)
+    expect(list[1].cashDraws).toEqual([{ year: 2027, amount: 400 }]);
+    expect(list[0].cashDraws).toEqual([{ year: 2026, amount: 1000 }, { year: 2027, amount: 1000 }]);
+    // 첫해가 일부면 3년치
+    expect(accountBuckets(tax, 0.1, true)[1].cashDraws.map((x) => x.year)).toEqual([2027, 2028]);
+    // 비율 없는 IRP는 합계 차이에서 뺌
+    const t = bucketTotalGap(list)!;
+    expect(t).toMatchObject({ count: 1, all: false, balance: 10000 });
+    expect(t.gap).toEqual(bucketGap(list[0]));
+    expect(t.riskShare).toBeCloseTo(80, 9);
+    // 둘 다 비율을 넣으면 두 계좌를 더함
+    const both = accountBuckets(tax, 0.1, false, [...withAlloc, asset('배우자 IRP', 'pension', 'invest', 5000, { alloc: { equity: 0, bond: 0, alt: 0, cash: 100 } })]);
+    const t2 = bucketTotalGap(both)!;
+    expect(t2.all).toBe(true);
+    expect(t2.now.cash).toBeCloseTo(6000, 9);
+    expect(t2.gap.cash).toBeCloseTo(2400 - 6000, 9);
+    expect(bucketTotalGap(accountBuckets(tax, 0.1))).toBeUndefined();
+  });
+
+  it('1월 리밸런싱 할 일: 바구니 합계 차이로 자산군별 더 채울·줄일 금액', () => {
+    const g = { count: 2, all: true, balance: 10000, now: { cash: 0, bond: 0, equity: 0, alt: 0 }, gap: { cash: 1200, bond: -30, growth: -1500, alt: 330 }, riskShare: 0 };
+    // 평가액의 0.5%(50만원) 미만 차이(채권 −30만원)는 뺌
+    expect(bucketRebalanceTodo(g, '1월 리밸런싱')).toBe('1월 리밸런싱 때 연금계좌 바구니 맞추기: 현금성 1,200만원 더 채우기 · 성장 1,500만원 줄이기 · 대체 330만원 더 채우기');
+    expect(bucketRebalanceTodo({ ...g, all: false, count: 1 }, '1월 리밸런싱')!.endsWith('(비율을 넣은 1개 계좌 기준)')).toBe(true);
+    expect(bucketRebalanceTodo({ ...g, gap: { cash: 10, bond: -10, growth: 0, alt: 0 } }, '1월 리밸런싱')).toBeUndefined();
+    // 이정표: 2월부터는 내년 할 일에
+    const p = sampleData().profile;
+    const rebal = { gap: g, nextYear: true, when: '내년 1월 리밸런싱(2027년 1월)' };
+    expect(yearTodos(p, [], 2026, 2026, [], 3, [], undefined, null, null, null, rebal).some((x) => x.includes('바구니 맞추기'))).toBe(false);
+    expect(yearTodos(p, [], 2026, 2027, [], 3, [], undefined, null, null, null, rebal)).toContain('내년 1월 리밸런싱(2027년 1월) 때 연금계좌 바구니 맞추기: 현금성 1,200만원 더 채우기 · 성장 1,500만원 줄이기 · 대체 330만원 더 채우기');
+  });
+
+  it('바구니 대체자산 비중: 저장값이 없으면 연금계좌 비율의 대체자산 비중, 비율이 없으면 10%', () => {
+    expect(bucketAltDefault([])).toBe(10);
+    const xs = [asset('연금저축', 'pension', 'invest', 1000, { alloc: { equity: 60, bond: 20, alt: 20, cash: 0 } })];
+    expect(bucketAltDefault(xs)).toBe(20);
+    expect(bucketAltShare(undefined, xs)).toBeCloseTo(0.2, 9);
+    expect(bucketAltShare(80, xs)).toBe(0.5);
   });
 });

@@ -29,6 +29,40 @@ export interface AccountBucket {
   now?: Alloc;
   /** 그 계좌에서 한 해에 빠져나가는 금액(앞 2년 평균, 명목): 하락장에 버틸 햇수 계산용 */
   yearDraw: number;
+  /** 그 계좌에서 처음 꺼내는 해(세금 계획 기준, 55세 전이거나 인출 시작 연도 전이면 그 뒤). 끝까지 안 꺼내면 없음 */
+  firstDraw?: number;
+  /** ① 현금성 기간(앞 2년, 첫해가 일부면 3년) 가운데 실제로 꺼내는 해와 금액(명목) */
+  cashDraws: { year: number; amount: number }[];
+}
+
+/** 대체자산 목표 비중 기본값(%): 연금계좌에 비율을 넣었으면 지금 대체자산 비중(반올림), 아니면 10% */
+export function bucketAltDefault(assets: Asset[]): number {
+  const withAlloc = assets.filter((a) => a.type === 'pension' && a.amount > 0 && hasAlloc(a));
+  if (!withAlloc.length) return 10;
+  const amt = withAlloc.reduce((s, a) => s + a.amount, 0);
+  return amt > 0 ? Math.round((classAmounts(withAlloc).alt / amt) * 100) : 10;
+}
+
+/** 인출 바구니에 쓰는 대체자산 비중(0~0.5): 프로필에 저장한 값, 없으면 기본값 */
+export const bucketAltShare = (bucketAltPct: number | undefined, assets: Asset[]) => Math.min(50, Math.max(0, bucketAltPct ?? bucketAltDefault(assets))) / 100;
+
+export type BucketTotalGap = NonNullable<ReturnType<typeof bucketTotalGap>>;
+
+/** 비율을 넣은 계좌(now 있음)들의 목표·지금 배분 합계와 차이(목표 − 지금). 그런 계좌가 없으면 undefined */
+export function bucketTotalGap(list: AccountBucket[]) {
+  const has = list.filter((b) => b.now);
+  if (!has.length) return undefined;
+  const sum = (f: (b: AccountBucket) => number) => has.reduce((s, b) => s + f(b), 0);
+  const now = { cash: sum((b) => b.now!.cash), bond: sum((b) => b.now!.bond), equity: sum((b) => b.now!.equity), alt: sum((b) => b.now!.alt) };
+  const balance = sum((b) => b.balance);
+  return {
+    count: has.length,
+    all: has.length === list.length,
+    balance,
+    now,
+    gap: { cash: sum((b) => b.cash) - now.cash, bond: sum((b) => b.bond) - now.bond, growth: sum((b) => b.growth) - now.equity, alt: sum((b) => b.alt) - now.alt },
+    riskShare: balance > 0 ? ((now.equity + now.alt) / balance) * 100 : 0,
+  };
 }
 
 /** 바구니 목표와 지금 배분의 차이: + 면 더 채워야 함, − 면 넘침 */
@@ -65,7 +99,9 @@ export function accountBuckets(tax: TaxResult, altShare = 0.1, partialFirst = fa
     const now = nowAlloc(rows, balance);
     const growth = Math.max(0, capped ? Math.min(free - alt, IRP_RISK_CAP * balance - alt) : free - alt);
     const bond = Math.max(0, balance - cash - growth - alt);
-    return { name: a.name, owner: a.owner, balance, cash, bond, growth, alt, capped, riskShare: balance > 0 ? ((growth + alt) / balance) * 100 : 0, yearDraw: drawn(i, k, 2 + k) / 2, ...(now ? { now } : {}) };
+    const cashDraws = tax.rows.slice(0, 2 + k).map((r) => ({ year: r.year, amount: r.accounts[i]?.drawn ?? 0 })).filter((x) => x.amount > 0.5);
+    const firstDraw = tax.rows.find((r) => (r.accounts[i]?.drawn ?? 0) > 0.5)?.year;
+    return { name: a.name, owner: a.owner, balance, cash, bond, growth, alt, capped, riskShare: balance > 0 ? ((growth + alt) / balance) * 100 : 0, yearDraw: drawn(i, k, 2 + k) / 2, cashDraws, ...(now ? { now } : {}), ...(firstDraw !== undefined ? { firstDraw } : {}) };
   });
 }
 
