@@ -17,7 +17,7 @@ import {
   riskShareOf,
   shiftAlloc,
 } from './allocation';
-import { accountBuckets, bucketAltDefault, bucketAltShare, bucketGap, bucketTotalGap, safeYears } from './buckets';
+import { accountBuckets, cashOnHand, cashWindow, pensionCashSkipped, bucketAltDefault, bucketAltShare, bucketGap, bucketTotalGap, safeYears } from './buckets';
 import { bucketRebalanceTodo, yearTodos } from './milestones';
 import { mergeAccounts, summarize } from './portfolio';
 import { allocSwitch, rebalance } from './rebalance';
@@ -247,6 +247,23 @@ describe('자산배분 비율이 기능에 반영됨', () => {
     const rebal = { gap: g, nextYear: true, when: '내년 1월 리밸런싱(2027년 1월)' };
     expect(yearTodos(p, [], 2026, 2026, [], 3, [], undefined, null, null, null, rebal).some((x) => x.includes('바구니 맞추기'))).toBe(false);
     expect(yearTodos(p, [], 2026, 2027, [], 3, [], undefined, null, null, null, rebal)).toContain('내년 1월 리밸런싱(2027년 1월) 때 연금계좌 바구니 맞추기: 현금성 1,200만원 더 채우기 · 성장 1,500만원 줄이기 · 대체 330만원 더 채우기');
+  });
+
+  it('① 현금성 기간의 해마다 꺼낼 세전 금액과 규칙 상자가 세지 않은 연금계좌 안 현금성', () => {
+    const row = (year: number, drawn: number[], reinvest = 0) => ({ year, reinvest, accounts: drawn.map((d) => ({ drawn: d })) });
+    const tax = { rows: [row(2026, [100, 0]), row(2027, [600, 400], 300), row(2028, [700, 400]), row(2029, [800, 400])] } as unknown as TaxResult;
+    expect(cashWindow(tax)).toEqual([{ year: 2026, amount: 100, other: 0, partial: false, reinvest: false }, { year: 2027, amount: 1000, other: 0, partial: false, reinvest: true }]);
+    // 올해 남은 달만 계산한 해면 그 해 + 2년
+    expect(cashWindow(tax, true).map((w) => [w.year, w.partial])).toEqual([[2026, true], [2027, false], [2028, false]]);
+    const xs = [
+      asset('연금저축', 'pension', 'invest', 1000, { alloc: { equity: 50, bond: 0, alt: 0, cash: 50 } }),
+      asset('배우자 IRP', 'pension', 'invest', 400, { owner: 'spouse', alloc: { equity: 0, bond: 0, alt: 0, cash: 100 } }),
+    ];
+    const hand = cashOnHand([], 2026);
+    // 배우자가 55세 전이면 배우자 몫 400은 더하지 않음
+    expect(pensionCashSkipped(hand, xs, true, { self: 60, spouse: 50 })).toEqual({ total: 900, add: 500, out: 400 });
+    expect(pensionCashSkipped(hand, xs, true, { self: 60, spouse: 56 })).toEqual({ total: 900, add: 900, out: 0 });
+    expect(pensionCashSkipped(hand, [asset('연금저축', 'pension', 'invest', 1000)], true)).toBeUndefined();
   });
 
   it('바구니 대체자산 비중: 저장값이 없으면 연금계좌 비율의 대체자산 비중, 비율이 없으면 10%', () => {

@@ -1,6 +1,6 @@
 import { Fragment, useMemo } from 'react';
 import { db } from '../db/db';
-import { accountBuckets, BEAR_DROP, bearCutText, cashShortText, saveFillShort, saveFillText, MARKET_INPUT_HELP, marketDateNote, pensionBondOutNote, pensionEquityOutNote, ymd, bucketAltDefault, bucketGap, bucketTotalGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
+import { accountBuckets, BEAR_DROP, bearCutText, cashShortText, saveFillShort, saveFillText, MARKET_INPUT_HELP, marketDateNote, pensionBondOutNote, pensionEquityOutNote, ymd, bucketAltDefault, cashWindow, pensionCashSkipped, startAges, bucketGap, bucketTotalGap, cashSourceLabel, cashYears, pensionFrom55, pensionFrom55Note, pensionOutNote, IRP_RISK_CAP, marketRule, maturityLabel, safeYears } from '../engine/buckets';
 import { useFlp } from '../store/FlpContext';
 import { SetupLink } from './SetupLink';
 import type { TaxResult } from '../engine/tax';
@@ -48,6 +48,12 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
   const total = (f: (a: (typeof accounts)[number]) => number) => accounts.reduce((s, a) => s + f(a), 0);
   const year = tax?.rows[0]?.year;
   const tg = bucketTotalGap(accounts);
+  // ① 현금성 목표가 규칙 상자의 2년치(첫해 생활비 × 2)와 다른 까닭: 세금 계획이 연금계좌에서 꺼낼 세전·명목 금액을 해마다
+  const win = tax ? cashWindow(tax, partialFirst) : [];
+  const reinvestYears = win.filter((w) => w.reinvest).map((w) => w.year);
+  const winOther = win.reduce((s, w) => s + w.other, 0);
+  // 점검기준이 아니오라 규칙 상자의 ‘바로 쓸 현금성’에 세지 않은 연금계좌 안 현금성
+  const skipped = profile.cashRunwayPension ? undefined : pensionCashSkipped(hand, assets, hasSpouse, startAges(start.age, profile.birthYear, profile.spouseBirthYear));
   // 첫해에 꺼내지 않고 나중(55세가 된 해·인출 시작 연도)부터 꺼내는 계좌: ① 현금성은 그때 꺼낼 금액
   const later = accounts.filter((a) => a.cash > 0.5 && year !== undefined && a.firstDraw !== undefined && a.firstDraw > year);
   return (
@@ -109,6 +115,13 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
               <span className="text-xs"> — {cashShortText(normal, start.outflow)}{normal.left > 0.5 && normal.fromBond > 0.5 ? ` 채권형을 다 옮겨도 ${won(normal.left)} 모자라니 나머지는 저축으로 채우세요${saveFillShort(normal)}.` : normal.fromBond <= 0.5 && normal.fill ? (normal.fill.months === null ? ' 저축으로 채우려면 지출부터 줄이기.' : ` 저축으로 채우는 데 ${saveFillText(normal)}.`) : ''}{pensionBondOutNote(normal)}</span>
             </div>
           )}
+          {skipped && ((rule.state === 'bear' && bear) || (rule.state === 'peak' && peak) || (rule.state === 'normal' && normal)) && (
+            <div className="mt-1 text-xs">
+              위 금액은 연금계좌 <b>밖</b> 현금·예금·적금만 ‘바로 쓸 현금성’으로 셉니다. 연금계좌 안 현금성 {won(skipped.total)}은 세지 않았습니다(점검기준 ‘버틸 햇수에 연금계좌 안 현금성’이 아니오). 아래 계좌별 표처럼 연금계좌 안 현금으로 생활비를 꺼낼 계획이면{' '}
+              <SetupLink tab="criteria" card="점검기준" field="버틸 햇수에 연금계좌 안 현금성" inherit>예로 바꾸세요</SetupLink>
+              {skipped.add > 0.5 ? <> — 바로 쓸 돈이 {won(skipped.add)} 늘어납니다{skipped.out > 0.5 ? `(55세 전 연금계좌 ${won(skipped.out)}은 빼고)` : ''}.</> : <> — 다만 모두 55세 전 연금계좌라 지금은 더해지지 않습니다.</>}
+            </div>
+          )}
           {bearYears.length > 0 && (
             <div className="mt-1 text-xs">
               지금 담은 현금성+채권형으로 주식을 팔지 않고 버틸 수 있는 기간:{' '}
@@ -132,14 +145,14 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
 
       {accounts.length > 0 && (
         <div className="mt-4">
-          <div className="mb-1 text-xs font-medium text-muted">계좌별 바구니 목표 — 인출이 나가는 그 계좌 안에 현금성을 둠 ({year}년 초 평가액 · 그 해 금액)</div>
+          <div className="mb-1 text-xs font-medium text-muted">계좌별 바구니 목표 — 인출이 나가는 그 계좌 안에 현금성을 둠 ({year}년 초 평가액 · 그 해 금액, 세전·명목)</div>
           <div className="-mx-4 overflow-x-auto px-4 sm:-mx-5 sm:px-5">
             <table className="w-full min-w-[720px] text-sm num-table">
               <thead>
                 <tr className="border-b border-line text-right text-xs text-muted">
                   <th className="py-1.5 text-left font-medium">계좌</th>
                   <th className="font-medium">평가액</th>
-                  <th className="font-medium">① 현금성<div className="font-normal">앞 2년 인출분</div></th>
+                  <th className="font-medium">① 현금성<div className="font-normal">{partialFirst ? '올해 남은 달+2년 인출분' : '앞 2년 인출분'}</div></th>
                   <th className="font-medium">② 채권·배당<div className="font-normal">3~5년차 인출분</div></th>
                   <th className="font-medium">③ 성장<div className="font-normal">지수 ETF 등</div></th>
                   <th className="font-medium">④ 대체<div className="font-normal">금·리츠 ETF</div></th>
@@ -217,6 +230,15 @@ export function BucketGuide({ firstNeed, balance, tax, hasSpouse, partialFirst =
           {!anyNow && (
             <p className="mt-1 text-xs text-muted">
               <SetupLink tab="assets">자산 탭</SetupLink>에서 연금계좌의 자산배분 비율(주식형·채권형·대체·현금성)을 넣으면 계좌마다 지금 배분과 목표의 차이를 함께 보여 줍니다.
+            </p>
+          )}
+          {win.length > 0 && total((a) => a.cash) > 0.5 && (
+            <p className="mt-2 rounded-lg bg-sunken px-3 py-2 text-xs">
+              <b>① 현금성 합계({won(total((a) => a.cash))})</b>는 연금 세금 계획이 연금계좌에서 꺼낼 세전 금액(그 해 물가)입니다:{' '}
+              {win.map((w) => `${w.year}년${w.partial ? '(남은 달)' : ''} ${won(w.amount)}`).join(' · ')}. 위 ‘지금 적용할 규칙’의 2년치(첫해 생활비 × 2, 세후·오늘 물가, {won(start.outflow * 2)})와는 기준이 달라, 연금소득세·물가 상승{partialFirst ? '·올해 남은 달' : ''}이 더해져 있습니다
+              {winOther > 0.5 ? `. 같은 기간 연금계좌 밖 자산(ISA·일반계좌 등)에서 꺼내는 ${won(winOther)}은 빠져 있습니다` : ''}
+              {reinvestYears.length > 0 ? `. ${reinvestYears.join('·')}년은 1,500만원 한도를 채우거나 퇴직금 최소 인출로 생활비보다 더 꺼내 ISA·일반계좌로 옮기는 금액도 들어 있습니다` : ''}.
+              {skipped && <> 규칙 상자는 연금계좌 밖 현금만 세므로, 이 표의 ‘지금 배분’ 현금성({won(tg?.now.cash ?? skipped.total)})과도 따로 봅니다.</>}
             </p>
           )}
           <p className="mt-1 text-xs text-muted">

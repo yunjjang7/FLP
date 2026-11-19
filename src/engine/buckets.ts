@@ -105,6 +105,15 @@ export function accountBuckets(tax: TaxResult, altShare = 0.1, partialFirst = fa
   });
 }
 
+/**
+ * ① 현금성 기간(앞 2년, 첫해가 일부면 올해 남은 달 + 2년)에 연금 세금 계획이 연금계좌에서 꺼낼 세전 금액(명목)을 해마다.
+ * other: 같은 해 연금계좌 밖 자산(ISA·일반 등)에서 생활비로 꺼내는 금액(명목, 표에 없음), partial: 올해 남은 달만 계산한 해, reinvest: 1,500만 한도 채우기·퇴직금 최소 인출로 생활비보다 더 꺼내 ISA·일반계좌로 옮기는 해
+ */
+export function cashWindow(tax: TaxResult, partialFirst = false): { year: number; amount: number; other: number; partial: boolean; reinvest: boolean }[] {
+  const k = partialFirst ? 1 : 0;
+  return tax.rows.slice(0, 2 + k).map((r, i) => ({ year: r.year, amount: r.accounts.reduce((s, a) => s + a.drawn, 0), other: r.otherDrawn ?? 0, partial: k === 1 && i === 0, reinvest: r.reinvest > 0.5 }));
+}
+
 /** 계좌 줄들의 지금 자산군 금액을 balance(첫해 평가액)에 맞춰 늘리거나 줄임. 비율을 넣은 줄이 없으면 undefined */
 function nowAlloc(rows: Asset[], balance: number): Alloc | undefined {
   if (!rows.some(hasAlloc)) return undefined;
@@ -193,6 +202,18 @@ export function cashOnHand(assets: Asset[], nowYear: number, nowMonth = 1): Cash
 export function pensionCash(assets: Asset[]): number {
   const p = pensionCashParts(assets, true);
   return p.self + p.spouse;
+}
+
+/**
+ * 점검기준 ‘버틸 햇수에 연금계좌 안 현금성’이 아니오라 바로 쓸 돈(cash)에 세지 않은 연금계좌 안 현금성.
+ * total: 연금계좌 안 현금성 전체, add: 예로 바꾸면 바로 쓸 돈에 더해질 금액(55세 전 계좌 뺌), out: 55세 전이라 빼는 금액. 없으면 undefined
+ */
+export function pensionCashSkipped(cash: CashOnHand, assets: Asset[], hasSpouse: boolean, ages?: { self: number; spouse?: number }) {
+  const parts = pensionCashParts(assets, hasSpouse);
+  const total = parts.self + parts.spouse;
+  if (total <= 0.5) return undefined;
+  const w = withPensionCash(cash, parts, ages);
+  return { total, add: w.usable - cash.usable, out: w.pensionOut ?? 0 };
 }
 
 /** pensionCash 를 계좌 주인별로 나눔: 명의가 배우자이고 배우자가 있으면 배우자, 아니면 본인(같은 계좌로 묶인 줄은 명의가 같음) */
